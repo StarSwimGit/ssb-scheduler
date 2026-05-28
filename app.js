@@ -605,14 +605,23 @@ function App(){
       if(kind === 'lessonType'){
         const inserted = await insertRows('scheduler_lesson_types', { name: extra.name, bg_color: extra.bg, border_color: extra.bd, text_color: extra.tx, sort_order: options.lessonTypes.length + 1, is_active:true });
         const newId = inserted?.[0]?.id;
-        // Auto-relink: any decoupled sessions that still carry this exact name (and no link) reattach to the new type.
         if(newId){
+          // Auto-relink: any decoupled sessions that still carry this exact name (and no link) reattach to the new type.
           await rest(`weekly_sessions?lesson_type=eq.${encodeURIComponent(extra.name)}&lesson_type_id=is.null`, { method:'PATCH', headers:{ Prefer:'return=minimal' }, body: JSON.stringify({ lesson_type_id: newId }) });
+          // Seed the two default packages every lesson type ships with.
+          await insertRows('packages', [
+            { lesson_type_id: newId, name: 'Normal', sort_order: 1, is_active: true, billing_mode: 'monthly' },
+            { lesson_type_id: newId, name: 'Trial',  sort_order: 2, is_active: true, billing_mode: 'monthly' }
+          ]);
         }
         await loadSessions();
       }
       if(kind === 'pool') await insertRows('pools', { name: extra.name, capacity_total: Number(extra.capacity), sort_order: options.pools.length + 1, is_active:true });
-      if(kind === 'package') await insertRows('packages', { name: extra.name, pax: (extra.pax === '' || extra.pax == null) ? null : Number(extra.pax), amount: (extra.amount === '' || extra.amount == null) ? null : Number(extra.amount), billing_mode: extra.billingMode || 'monthly', billing_count: (extra.billingCount === '' || extra.billingCount == null) ? null : Number(extra.billingCount), is_group: !!extra.isGroup, fallback_per_pax: (extra.fallbackPerPax === '' || extra.fallbackPerPax == null) ? null : Number(extra.fallbackPerPax), sort_order: options.packages.length + 1, is_active:true });
+      if(kind === 'package'){
+        const ltId = extra.lessonTypeId || null;
+        const siblings = ltId ? options.packages.filter(p => p.lesson_type_id === ltId) : options.packages.filter(p => !p.lesson_type_id);
+        await insertRows('packages', { lesson_type_id: ltId, name: extra.name, pax: (extra.pax === '' || extra.pax == null) ? null : Number(extra.pax), amount: (extra.amount === '' || extra.amount == null) ? null : Number(extra.amount), billing_mode: extra.billingMode || 'monthly', billing_count: (extra.billingCount === '' || extra.billingCount == null) ? null : Number(extra.billingCount), is_group: !!extra.isGroup, fallback_per_pax: (extra.fallbackPerPax === '' || extra.fallbackPerPax == null) ? null : Number(extra.fallbackPerPax), sort_order: siblings.length + 1, is_active:true });
+      }
       await loadOptions();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to add option'); }
   }
@@ -989,6 +998,7 @@ function App(){
           groups={familyGroups}
           students={students}
           groupPackages={options.packages.filter(p => p.is_active !== false)}
+          lessonTypes={activeLessonTypes()}
           packageById={packageById}
           membersByGroup={membersByGroup}
           scheduleByStudent={scheduleByStudent}
@@ -1009,6 +1019,7 @@ function App(){
         poolById={poolById}
         colorsFor={colorsFor}
         gridBounds={gridBounds}
+        packages={options.packages}
         initialWeekStart={selectedWeekStart}
         onEnroll={openEnroll}
         onCreate={openCreateFor}
@@ -1362,6 +1373,37 @@ function SummaryView({ summary, pools }){
 function billingText(mode, count){ if(count === null || count === undefined || count === '') return ''; return `${count} ${mode === 'credit' ? 'credits' : 'monthly'}`; }
 function fmtMoney(n){ if(n === null || n === undefined) return '—'; return Number.isInteger(Number(n)) ? String(Number(n)) : Number(n).toFixed(2); }
 
+// Render package <option>s grouped by their lesson type, with any unassigned
+// (legacy) packages collected at the bottom. Reused by every package dropdown.
+function packageOptionGroups(packages, lessonTypes){
+  const pkgs = packages || [];
+  return React.createElement(React.Fragment, null,
+    (lessonTypes || []).map(lt => {
+      const inLt = pkgs.filter(p => p.lesson_type_id === lt.id);
+      if(!inLt.length) return null;
+      return React.createElement('optgroup', { key:lt.id, label:lt.name },
+        inLt.map(p => React.createElement('option', { key:p.id, value:p.id },
+          `${p.name}${p.pax!=null?` · ${p.pax}pax`:''}${p.amount!=null?` · RM${p.amount}`:''}${billingText(p.billing_mode,p.billing_count)?` · ${billingText(p.billing_mode,p.billing_count)}`:''}${p.is_group?' · family':''}`
+        ))
+      );
+    }),
+    (() => {
+      const orphans = pkgs.filter(p => !p.lesson_type_id);
+      if(!orphans.length) return null;
+      return React.createElement('optgroup', { key:'__unassigned__', label:'Unassigned' },
+        orphans.map(p => React.createElement('option', { key:p.id, value:p.id }, p.name))
+      );
+    })()
+  );
+}
+
+// Look up a lesson type's "Trial" package amount (its trial fee).
+function trialAmountFor(lt, packages){
+  if(!lt) return null;
+  const trial = (packages || []).find(p => p.lesson_type_id === lt.id && (p.name || '').toLowerCase() === 'trial' && p.is_active !== false);
+  return (trial && trial.amount != null) ? Number(trial.amount) : null;
+}
+
 // Live billing for a family group. The discount is NEVER stored per head: when
 // the group is at its required size it costs the bundled total; the moment it
 // drops below, it reverts to the standard per-pax rate — so a removed member
@@ -1479,6 +1521,7 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
   const [newPkgGroup, setNewPkgGroup] = useState(false);
   const [newPkgFallback, setNewPkgFallback] = useState('');
   const [editPkgId, setEditPkgId] = useState(null);
+  const [pkgPanelLtId, setPkgPanelLtId] = useState(null);
   const [editingLessonId, setEditingLessonId] = useState(null);
   const counts = lessonTypeCounts || {};
 
@@ -1554,48 +1597,7 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
       </div>
     </div>
 
-    {/* Packages */}
-    <div className="card" style={{marginTop:16}}>
-      <div style={{fontSize:16,fontWeight:800}}>Packages</div>
-      <div className="small subtle" style={{marginTop:4}}>Named price arrangements. Each swimmer picks one of these on the Swimmers page. Pax is how many swimmers the package covers.</div>
-      <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) 90px 130px',gap:10,marginTop:12}}>
-        <div className="field" style={{margin:0}}><label>Package name</label><input className="input" placeholder="e.g. LTS Family of 4" value={newPkgName} onChange={(e)=>setNewPkgName(e.target.value)} /></div>
-        <div className="field" style={{margin:0}}><label>Pax</label><input className="input" type="number" min="1" placeholder="4" value={newPkgPax} onChange={(e)=>setNewPkgPax(e.target.value)} /></div>
-        <div className="field" style={{margin:0}}><label>Amount (RM)</label><input className="input" type="number" min="0" step="0.01" placeholder="600" value={newPkgAmount} onChange={(e)=>setNewPkgAmount(e.target.value)} /></div>
-      </div>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-end',gap:12,marginTop:10,flexWrap:'wrap'}}>
-        <BillingControl mode={newPkgMode} count={newPkgCount} onMode={setNewPkgMode} onCount={setNewPkgCount} />
-        <button className="btn btn-primary" onClick={()=>{ const v = newPkgName.trim(); if(!v) return; addOption('package', { name:v, pax:newPkgPax, amount:newPkgAmount, billingMode:newPkgMode, billingCount:newPkgCount, isGroup:newPkgGroup, fallbackPerPax:newPkgFallback }); setNewPkgName(''); setNewPkgPax(''); setNewPkgAmount(''); setNewPkgMode('monthly'); setNewPkgCount(''); setNewPkgGroup(false); setNewPkgFallback(''); }}>Add</button>
-      </div>
-      <div style={{display:'flex',alignItems:'flex-end',gap:14,marginTop:8,flexWrap:'wrap'}}>
-        <label className="gb-check"><input type="checkbox" checked={newPkgGroup} onChange={e=>setNewPkgGroup(e.target.checked)} /> Family unit (single payer; Pax = required headcount, Amount = bundle total)</label>
-        {newPkgGroup ? <div className="field" style={{margin:0,maxWidth:260}}><label>Standard rate per pax if under-enrolled (RM)</label><input className="input" type="number" min="0" step="0.01" placeholder="200" value={newPkgFallback} onChange={e=>setNewPkgFallback(e.target.value)} /></div> : null}
-      </div>
-      <div className="settings-list">
-        {options.packages && options.packages.length ? options.packages.map((r, i) => editPkgId === r.id
-          ? <div key={r.id} className="row-item" style={{display:'block'}}>
-              <PackageEditor row={r} onCancel={()=>setEditPkgId(null)} onSave={(patch)=>{ patchOption('packages', r.id, patch); setEditPkgId(null); }} />
-            </div>
-          : <div key={r.id} className="row-item">
-              <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-                <div className="reorder">
-                  <button className="reorder-btn" disabled={i===0} title="Move up" onClick={()=>reorderOption('packages', options.packages, i, -1)}>↑</button>
-                  <button className="reorder-btn" disabled={i===options.packages.length-1} title="Move down" onClick={()=>reorderOption('packages', options.packages, i, 1)}>↓</button>
-                </div>
-                <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
-                <div style={{fontWeight:700}}>{r.name}</div>
-                <span className="small subtle">{r.pax != null ? `${r.pax}${r.is_group ? ' pax req.' : ' pax'}` : '—'} · {r.amount != null ? `RM${r.amount}${r.is_group ? ' bundle' : ''}` : 'no amount'}{billingText(r.billing_mode, r.billing_count) ? ` · ${billingText(r.billing_mode, r.billing_count)}` : ''}{r.is_group ? ` · 👪 family${r.fallback_per_pax != null ? `, RM${r.fallback_per_pax}/pax fallback` : ''}` : ''}</span>
-              </div>
-              <div style={{display:'flex',gap:6}}>
-                <button className="btn btn-ghost small" onClick={()=>setEditPkgId(r.id)}>Edit</button>
-                <button className="btn btn-ghost small" onClick={()=>toggleOption('packages',r)}>{r.is_active?'Hide':'Show'}</button>
-                <button className="btn btn-danger small" onClick={()=>deleteOption('packages',r,r.name)}>Delete</button>
-              </div>
-            </div>) : <div className="empty">No packages yet</div>}
-      </div>
-    </div>
-
-    {/* Lesson types — full width */}
+    {/* Lesson types — full width (packages now nested under each lesson type) */}
     <div className="card" style={{marginTop:16}}>
       <div style={{fontSize:18,fontWeight:800}}>Lesson Types</div>
       <div className="small subtle" style={{marginTop:4}}>Create a type and pick its colors. Click Edit on a row to rename it, set age range, ratio, billing, and default pool. Renaming or recoloring updates every class on the schedule.</div>
@@ -1621,16 +1623,112 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
               <span className="small subtle">ratio 1:{r.students_per_instructor || '?'} · {r.default_duration_minutes || '?'} min · {r.billing_model || '?'} · {(options.pools.find(p=>p.id===r.default_pool_id)?.name) || 'no pool'}</span>
             </div>
             <div style={{display:'flex',gap:6}}>
+              <button className="btn btn-ghost small" onClick={()=>setPkgPanelLtId(pkgPanelLtId===r.id?null:r.id)} title="Manage packages for this lesson type">Packages ({(options.packages||[]).filter(p=>p.lesson_type_id===r.id).length})</button>
               <button className="btn btn-ghost small" onClick={()=>setEditingLessonId(editingLessonId===r.id?null:r.id)}>{editingLessonId===r.id?'Close':'Edit'}</button>
               <button className="btn btn-ghost small" onClick={()=>toggleOption('scheduler_lesson_types',r)}>{r.is_active?'Hide':'Show'}</button>
               <button className="btn btn-danger small" onClick={()=>deleteLessonType(r)}>Delete</button>
             </div>
           </div>
           {editingLessonId === r.id ? <LessonTypeEditor row={r} pools={options.pools} onSave={(patch)=>{ saveLessonType(r, patch); setEditingLessonId(null); }} /> : null}
+          {pkgPanelLtId === r.id ? <LessonTypePackages
+            lessonType={r}
+            packages={(options.packages||[]).filter(p=>p.lesson_type_id===r.id).slice().sort((a,b)=>(a.sort_order||0)-(b.sort_order||0))}
+            editPkgId={editPkgId}
+            setEditPkgId={setEditPkgId}
+            addOption={addOption}
+            toggleOption={toggleOption}
+            deleteOption={deleteOption}
+            patchOption={patchOption}
+            reorderOption={reorderOption}
+          /> : null}
         </div>; }) : <div className="empty">No lesson types</div>}
       </div>
     </div>
+
+    {/* Legacy packages — pre-nesting orphans, with a reassign-to-lesson-type control */}
+    {(() => {
+      const orphans = (options.packages || []).filter(p => !p.lesson_type_id);
+      if(!orphans.length) return null;
+      return <div className="card" style={{marginTop:16}}>
+        <div style={{fontSize:16,fontWeight:800}}>Legacy Packages</div>
+        <div className="small subtle" style={{marginTop:4}}>These packages exist from before packages were nested under lesson types. Assign each to a lesson type, or delete it. Swimmers and family groups on these still work until you reassign.</div>
+        <div className="settings-list" style={{marginTop:10}}>{orphans.map(r => <div key={r.id} className="row-item">
+          <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+            <span className="pill" style={{background:'#FEF3C7',color:'#92400E',borderColor:'#FCD34D'}}>Unassigned</span>
+            <div style={{fontWeight:700}}>{r.name}</div>
+            <span className="small subtle">{r.pax != null ? `${r.pax} pax` : '—'}{r.amount != null ? ` · RM${r.amount}` : ''}{billingText(r.billing_mode, r.billing_count) ? ` · ${billingText(r.billing_mode, r.billing_count)}` : ''}{r.is_group ? ' · 👪 family' : ''}</span>
+          </div>
+          <div style={{display:'flex',gap:6,alignItems:'center'}}>
+            <select className="select" defaultValue="" onChange={(e)=>{ if(e.target.value) patchOption('packages', r.id, { lesson_type_id: e.target.value }); }}>
+              <option value="">Move to…</option>
+              {options.lessonTypes.map(lt => <option key={lt.id} value={lt.id}>{lt.name}</option>)}
+            </select>
+            <button className="btn btn-danger small" onClick={()=>deleteOption('packages',r,r.name)}>Delete</button>
+          </div>
+        </div>)}</div>
+      </div>;
+    })()}
   </>;
+}
+
+// Manage packages nested under one lesson type: add, edit (PackageEditor),
+// reorder with ↑/↓, hide, delete. Same controls as the old top-level card but
+// scoped to its lesson type — so each type owns its Normal, Trial, Family 3…
+function LessonTypePackages({ lessonType, packages, editPkgId, setEditPkgId, addOption, toggleOption, deleteOption, patchOption, reorderOption }){
+  const [name, setName] = useState('');
+  const [pax, setPax] = useState('');
+  const [amount, setAmount] = useState('');
+  const [mode, setMode] = useState('monthly');
+  const [count, setCount] = useState('');
+  const [isGroup, setIsGroup] = useState(false);
+  const [fallback, setFallback] = useState('');
+  function reset(){ setName(''); setPax(''); setAmount(''); setMode('monthly'); setCount(''); setIsGroup(false); setFallback(''); }
+  return <div className="lt-packages">
+    <div className="lt-packages-head">
+      <span className="chip" style={{background:lessonType.bg_color,borderColor:lessonType.border_color,color:lessonType.text_color,fontWeight:800}}>{lessonType.name}</span>
+      <span className="small subtle">Packages nested under this lesson type</span>
+    </div>
+
+    <div className="lt-packages-list">
+      {packages.length ? packages.map((r, i) => editPkgId === r.id
+        ? <div key={r.id} className="row-item" style={{display:'block'}}>
+            <PackageEditor row={r} onCancel={()=>setEditPkgId(null)} onSave={(patch)=>{ patchOption('packages', r.id, patch); setEditPkgId(null); }} />
+          </div>
+        : <div key={r.id} className="row-item">
+            <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+              <div className="reorder">
+                <button className="reorder-btn" disabled={i===0} title="Move up" onClick={()=>reorderOption('packages', packages, i, -1)}>↑</button>
+                <button className="reorder-btn" disabled={i===packages.length-1} title="Move down" onClick={()=>reorderOption('packages', packages, i, 1)}>↓</button>
+              </div>
+              <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
+              <div style={{fontWeight:700}}>{r.name}</div>
+              <span className="small subtle">{r.pax != null ? `${r.pax}${r.is_group ? ' pax req.' : ' pax'}` : '—'} · {r.amount != null ? `RM${r.amount}${r.is_group ? ' bundle' : ''}` : 'no amount'}{billingText(r.billing_mode, r.billing_count) ? ` · ${billingText(r.billing_mode, r.billing_count)}` : ''}{r.is_group ? ` · 👪 family${r.fallback_per_pax != null ? `, RM${r.fallback_per_pax}/pax fallback` : ''}` : ''}</span>
+            </div>
+            <div style={{display:'flex',gap:6}}>
+              <button className="btn btn-ghost small" onClick={()=>setEditPkgId(r.id)}>Edit</button>
+              <button className="btn btn-ghost small" onClick={()=>toggleOption('packages',r)}>{r.is_active?'Hide':'Show'}</button>
+              <button className="btn btn-danger small" onClick={()=>deleteOption('packages',r,r.name)}>Delete</button>
+            </div>
+          </div>) : <div className="empty">No packages yet for this lesson type.</div>}
+    </div>
+
+    <div className="lt-packages-add">
+      <div style={{fontSize:13,fontWeight:700,marginBottom:6}}>+ Add a package under {lessonType.name}</div>
+      <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) 90px 130px',gap:10}}>
+        <div className="field" style={{margin:0}}><label>Name</label><input className="input" placeholder="e.g. Family of 4" value={name} onChange={(e)=>setName(e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Pax</label><input className="input" type="number" min="1" value={pax} onChange={(e)=>setPax(e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Amount (RM)</label><input className="input" type="number" min="0" step="0.01" value={amount} onChange={(e)=>setAmount(e.target.value)} /></div>
+      </div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-end',gap:12,marginTop:10,flexWrap:'wrap'}}>
+        <BillingControl mode={mode} count={count} onMode={setMode} onCount={setCount} />
+        <button className="btn btn-primary small" onClick={()=>{ const v = name.trim(); if(!v) return; addOption('package', { lessonTypeId:lessonType.id, name:v, pax, amount, billingMode:mode, billingCount:count, isGroup, fallbackPerPax:fallback }); reset(); }}>Add Package</button>
+      </div>
+      <div style={{display:'flex',alignItems:'flex-end',gap:14,marginTop:8,flexWrap:'wrap'}}>
+        <label className="gb-check"><input type="checkbox" checked={isGroup} onChange={e=>setIsGroup(e.target.checked)} /> Family unit (single payer)</label>
+        {isGroup ? <div className="field" style={{margin:0,maxWidth:260}}><label>Standard rate per pax if under-enrolled (RM)</label><input className="input" type="number" min="0" step="0.01" placeholder="200" value={fallback} onChange={e=>setFallback(e.target.value)} /></div> : null}
+      </div>
+    </div>
+  </div>;
 }
 
 // M2: inline editor for the new lesson-type fields. Saves on Apply.
@@ -1709,7 +1807,7 @@ function LessonTypeEditor({ row, pools, onSave }){
 // M4: deterministic enrollment matcher. Given an age (or a registered swimmer)
 // plus availability, it filters the selected week's sessions to age-eligible
 // lesson types, ranks them by open capacity, and offers one-tap enroll/create.
-function EnrollView({ sessions, students, studentById, lessonTypes, lessonTypeById, lessonTypeByName, poolById, colorsFor, gridBounds, initialWeekStart, onEnroll, onCreate }){
+function EnrollView({ sessions, students, studentById, lessonTypes, lessonTypeById, lessonTypeByName, poolById, colorsFor, gridBounds, packages, initialWeekStart, onEnroll, onCreate }){
   const [weekStart, setWeekStart] = useState(initialWeekStart);
   const [swimmerId, setSwimmerId] = useState(null);
   const [age, setAge] = useState('');
@@ -1795,7 +1893,7 @@ function EnrollView({ sessions, students, studentById, lessonTypes, lessonTypeBy
       </div>
 
       {result.open.length ? <div className="enroll-list">
-        {result.open.map(m => { const c = colorsFor(m.s.type); const pool = poolById(m.s.poolId); const inst = (m.s.instructors[0] && m.s.instructors[0].name) || m.s.legacyInstructor || 'Unassigned'; const trial = m.lt && (m.lt.trial_fee_override != null ? m.lt.trial_fee_override : m.lt.trial_fee); const mine = alreadyIn(m); return (
+        {result.open.map(m => { const c = colorsFor(m.s.type); const pool = poolById(m.s.poolId); const inst = (m.s.instructors[0] && m.s.instructors[0].name) || m.s.legacyInstructor || 'Unassigned'; const trial = (trialAmountFor(m.lt, packages)) ?? (m.lt && (m.lt.trial_fee_override != null ? m.lt.trial_fee_override : m.lt.trial_fee)); const mine = alreadyIn(m); return (
           <div className="enroll-card" key={m.s.id} style={{borderLeftColor:c.bd}}>
             <div className="enroll-main">
               <div className="enroll-type" style={{color:c.tx}}>{m.s.type}</div>
@@ -1873,14 +1971,14 @@ function StudentEditor({ row, lessonTypes, packages, onSave }){
     <div className="form-grid" style={{gridTemplateColumns:'minmax(0,1.4fr) 80px minmax(0,1fr)'}}>
       <div className="field"><label>Name</label><input className="input" value={name} onChange={e=>setName(e.target.value)} /></div>
       <div className="field"><label>Age</label><input className="input" type="number" min="0" max="120" value={age} onChange={e=>setAge(e.target.value)} /></div>
-      <div className="field"><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">(none)</option>{(packages||[]).map(p => <option key={p.id} value={p.id}>{p.name}{p.pax!=null?` · ${p.pax}pax`:''}{p.amount!=null?` · RM${p.amount}`:''}{billingText(p.billing_mode,p.billing_count)?` · ${billingText(p.billing_mode,p.billing_count)}`:''}</option>)}</select></div>
+      <div className="field"><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">(none)</option>{packageOptionGroups(packages, lessonTypes)}</select></div>
     </div>
     <div className="field" style={{marginTop:10}}><label>Lesson types</label><div className="type-picks">{lessonTypes.map(t => { const on = types.includes(t.id); return <button key={t.id} type="button" className={`chip chip-toggle ${on ? '' : 'chip-off'}`} style={on ? {background:t.bg_color,borderColor:t.border_color,color:t.text_color} : undefined} onClick={()=>toggle(t.id)}>{t.name}</button>; })}</div></div>
     <div style={{display:'flex',justifyContent:'flex-end',marginTop:10}}><button className="btn btn-primary" onClick={()=>{ const v = name.trim(); if(!v) return; onSave({ name:v, age, packageId:pkgId || null, lessonTypeIds:types }); }}>Save Swimmer</button></div>
   </div>;
 }
 
-function FamilyGroupsPanel({ groups, students, groupPackages, packageById, membersByGroup, scheduleByStudent, addGroup, updateGroup, deleteGroup, setStudentGroup }){
+function FamilyGroupsPanel({ groups, students, groupPackages, lessonTypes, packageById, membersByGroup, scheduleByStudent, addGroup, updateGroup, deleteGroup, setStudentGroup }){
   const [name, setName] = useState('');
   const [pkgId, setPkgId] = useState('');
   const [editId, setEditId] = useState(null);
@@ -1901,7 +1999,7 @@ function FamilyGroupsPanel({ groups, students, groupPackages, packageById, membe
 
     <div style={{display:'flex',gap:10,alignItems:'flex-end',marginTop:14,flexWrap:'wrap'}}>
       <div className="field" style={{margin:0,minWidth:200,flex:1}}><label>New group name</label><input className="input" placeholder="e.g. Tan Family" value={name} onChange={e=>setName(e.target.value)} /></div>
-      <div className="field" style={{margin:0,minWidth:220}}><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">Select a package…</option>{groupPackages.map(p => <option key={p.id} value={p.id}>{p.name}{p.pax!=null?` · ${p.pax} pax`:''}{p.amount!=null?` · RM${p.amount}`:''}{p.is_group?' · family discount':''}</option>)}</select></div>
+      <div className="field" style={{margin:0,minWidth:220}}><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">Select a package…</option>{packageOptionGroups(groupPackages, lessonTypes)}</select></div>
       <button className="btn btn-primary" disabled={!groupPackages.length} onClick={()=>{ const v=name.trim(); if(!v||!pkgId) return; addGroup({ name:v, packageId:pkgId }); setName(''); setPkgId(''); }}>Create Group</button>
     </div>
     {groupPackages.length ? null : <div className="hint" style={{marginTop:8}}>No packages yet. Add one in Settings → Packages first.</div>}
@@ -1932,7 +2030,7 @@ function FamilyGroupsPanel({ groups, students, groupPackages, packageById, membe
           {editId===g.id ? <div className="gb-edit">
             <div style={{display:'flex',gap:10,alignItems:'flex-end',flexWrap:'wrap'}}>
               <div className="field" style={{margin:0,flex:1,minWidth:180}}><label>Group name</label><input className="input" defaultValue={g.name} onBlur={e=>{ const v=e.target.value.trim(); if(v && v!==g.name) updateGroup(g.id,{name:v}); }} /></div>
-              <div className="field" style={{margin:0,minWidth:180}}><label>Package</label><select className="select" value={g.packageId||''} onChange={e=>updateGroup(g.id,{packageId:e.target.value||null})}><option value="">(none)</option>{groupPackages.map(p => <option key={p.id} value={p.id}>{p.name}{p.pax!=null?` · ${p.pax} pax`:''}{p.is_group?' · family discount':''}</option>)}</select></div>
+              <div className="field" style={{margin:0,minWidth:180}}><label>Package</label><select className="select" value={g.packageId||''} onChange={e=>updateGroup(g.id,{packageId:e.target.value||null})}><option value="">(none)</option>{packageOptionGroups(groupPackages, lessonTypes)}</select></div>
             </div>
             <div className="hint" style={{marginTop:6}}>Group name saves when you click away.</div>
           </div> : null}
@@ -1988,7 +2086,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
       <div style={{display:'grid',gridTemplateColumns:'minmax(0,1.4fr) 80px minmax(0,1fr)',gap:10,marginTop:14}}>
         <div className="field" style={{margin:0}}><label>Name</label><input className="input" value={name} onChange={e=>setName(e.target.value)} placeholder="Swimmer name" /></div>
         <div className="field" style={{margin:0}}><label>Age</label><input className="input" type="number" min="0" max="120" value={age} onChange={e=>setAge(e.target.value)} placeholder="Yrs" /></div>
-        <div className="field" style={{margin:0}}><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">(none)</option>{(packages||[]).map(p => <option key={p.id} value={p.id}>{p.name}{p.pax!=null?` · ${p.pax}pax`:''}{p.amount!=null?` · RM${p.amount}`:''}{billingText(p.billing_mode,p.billing_count)?` · ${billingText(p.billing_mode,p.billing_count)}`:''}</option>)}</select></div>
+        <div className="field" style={{margin:0}}><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">(none)</option>{packageOptionGroups(packages, lessonTypes)}</select></div>
       </div>
       <div className="field" style={{marginTop:10}}><label>Lesson types (bucket — pick one or more)</label>
         <div className="type-picks">{lessonTypes.map(t => { const on = types.includes(t.id); return <button key={t.id} type="button" className={`chip chip-toggle ${on ? '' : 'chip-off'}`} style={on ? {background:t.bg_color,borderColor:t.border_color,color:t.text_color} : undefined} onClick={()=>toggleType(t.id)}>{t.name}</button>; })}{lessonTypes.length ? null : <span className="subtle small">Add lesson types in Settings first.</span>}</div>
