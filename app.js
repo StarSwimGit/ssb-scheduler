@@ -83,6 +83,26 @@ function minuteToTime(mins){ const h24 = Math.floor(mins / 60), m = mins % 60, a
 function hourLabel(mins){ const h24 = Math.floor(mins / 60), m = mins % 60, ampm = h24 < 12 ? 'AM' : 'PM'; const h = h24 % 12 || 12; return m === 0 ? `${h} ${ampm}` : `${h}:${String(m).padStart(2,'0')} ${ampm}`; }
 // Display-only: shorten a full name to its first two words ("Ashton Ang Zi Yang" → "Ashton Ang"). Full name is untouched in the database.
 function shortName(name){ const parts = String(name || '').trim().split(/\s+/).filter(Boolean); return parts.slice(0, 2).join(' '); }
+// Age shown in years, e.g. " (5)". Blank when unknown.
+function ageSuffix(s){ return (s && s.age !== null && s.age !== undefined && s.age !== '') ? ` (${s.age})` : ''; }
+// Build the modal's student rows: existing students first, padded with blanks
+// up to the lesson type's ratio (so "max 4" shows 4 boxes). Falls back to 4.
+function buildStudentRows(existing, cap){
+  const rows = (existing || []).map(s => ({ name: s.name || '', age: (s.age === null || s.age === undefined ? '' : String(s.age)) }));
+  const c = Number(cap) > 0 ? Number(cap) : 4;
+  const target = Math.max(c, rows.length, 1);
+  while(rows.length < target) rows.push({ name:'', age:'' });
+  return rows;
+}
+// Re-normalize rows when the lesson type changes: keep filled rows, pad to the new ratio.
+function rebuildRowsForCap(rows, cap){
+  const filled = (rows || []).filter(r => (r.name || '').trim());
+  const c = Number(cap) > 0 ? Number(cap) : 4;
+  const target = Math.max(c, filled.length, 1);
+  const out = filled.slice();
+  while(out.length < target) out.push({ name:'', age:'' });
+  return out;
+}
 function formatRange(startMin, durationMin){ return `${minuteToTime(startMin)}–${minuteToTime(startMin + durationMin)}`; }
 function longDate(s){ return fromDateStr(s).toLocaleDateString(undefined, { weekday:'long', year:'numeric', month:'long', day:'numeric' }); }
 function monthCells(d){ const y=d.getFullYear(), m=d.getMonth(); const first=new Date(y,m,1); const offset=(first.getDay()+6)%7; const start=new Date(y,m,1-offset); return Array.from({length:42},(_,i)=>{ const x=new Date(start); x.setDate(start.getDate()+i); return x; }); }
@@ -263,7 +283,7 @@ function App(){
     (studentRows || []).forEach(r => {
       const key = String(r.session_id);
       if(!studentsBySession[key]) studentsBySession[key] = [];
-      studentsBySession[key].push({ id:r.id, name:r.student_name || '' });
+      studentsBySession[key].push({ id:r.id, name:r.student_name || '', age:(r.student_age === null || r.student_age === undefined ? null : Number(r.student_age)) });
     });
     const instructorsBySession = {};
     (instructorJoinRows || []).forEach(r => {
@@ -398,7 +418,7 @@ function App(){
       instructorName: firstInst?.name || '',
       poolId: firstPool,
       durationMinutes: dur,
-      studentText: ''
+      studentRows: buildStudentRows([], firstType?.students_per_instructor)
     };
   }
 
@@ -422,7 +442,7 @@ function App(){
         instructorName: firstInst ? firstInst.name : (item.legacyInstructor || ''),
         poolId: item.poolId,
         durationMinutes:item.durationMinutes,
-        studentText:item.students.map(s => s.name).join('\n')
+        studentRows: buildStudentRows(item.students, lessonTypeByName(item.type)?.students_per_instructor)
       }
     });
   }
@@ -458,9 +478,9 @@ function App(){
         const inserted = await insertRows('weekly_sessions', payload);
         sessionId = inserted?.[0]?.id;
       }
-      const names = modal.form.studentText.split(/\n|,/).map(s => s.trim()).filter(Boolean);
-      if(sessionId && names.length){
-        await insertRows('weekly_session_students', names.map(name => ({ session_id: sessionId, student_name: name })));
+      const rows = (modal.form.studentRows || []).map(r => ({ name:(r.name || '').trim(), age:r.age })).filter(r => r.name);
+      if(sessionId && rows.length){
+        await insertRows('weekly_session_students', rows.map(r => ({ session_id: sessionId, student_name: r.name, student_age: (r.age === '' || r.age === null || r.age === undefined) ? null : Number(r.age) })));
       }
       if(sessionId && inst){
         await insertRows('session_instructors', [{ session_id: sessionId, instructor_id: inst.id }]);
@@ -591,7 +611,7 @@ function App(){
       const instructorPayload = [];
       (inserted || []).forEach((row, idx) => {
         const src = sourceSessions[idx];
-        (src.students || []).forEach(st => studentPayload.push({ session_id: row.id, student_name: st.name }));
+        (src.students || []).forEach(st => studentPayload.push({ session_id: row.id, student_name: st.name, student_age: (st.age === null || st.age === undefined) ? null : Number(st.age) }));
         (src.instructors || []).forEach(it => instructorPayload.push({ session_id: row.id, instructor_id: it.id }));
       });
       if(studentPayload.length) await insertRows('weekly_session_students', studentPayload);
@@ -649,7 +669,7 @@ function App(){
         if(instr) titleBits.push(instr);
         mergeFull(aoa.length); aoa.push([titleBits.join('  ·  '),'','','','','','']);
         aoa.push(['No.','Name','Age','Gender','Remarks', dateLabel, 'Payment / Notes']);
-        s.students.forEach((stu, i) => aoa.push([i+1, stu.name || '', '', '', '', '', '']));
+        s.students.forEach((stu, i) => aoa.push([i+1, stu.name || '', (stu.age === null || stu.age === undefined || stu.age === '') ? '' : stu.age, '', '', '', '']));
         const fillTo = Math.max(cap, s.students.length) + 2;
         for(let i = s.students.length; i < fillTo; i++) aoa.push([i+1, '', '', '', '', '', '']);
         aoa.push(['','','','','','T : ____________________','']);
@@ -879,7 +899,7 @@ function WeekView(props){
           {items.length ? items.map(it => {
             const p = poolById(it.poolId);
             const instLabel = it.instructors.map(i=>i.name).join(', ') || it.legacyInstructor || '-';
-            return <tr key={it.id}><td className="print-time-cell">{formatRange(it.startMinute, it.durationMinutes)}</td><td className="print-type-cell">{it.type}</td><td>{p?p.name:'-'}</td><td>{instLabel}</td><td>{it.students.map(s=>s.name).join(', ') || '-'}</td></tr>;
+            return <tr key={it.id}><td className="print-time-cell">{formatRange(it.startMinute, it.durationMinutes)}</td><td className="print-type-cell">{it.type}</td><td>{p?p.name:'-'}</td><td>{instLabel}</td><td>{it.students.map(s=>s.name+ageSuffix(s)).join(', ') || '-'}</td></tr>;
           }) : <tr className="empty-row"><td colSpan="5">No sessions</td></tr>}
         </tbody></table>
       </div>)}
@@ -908,7 +928,7 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
     <div className="wa-card-line">{showPoolBadge && pool ? <span className="event-pool-pill">{pool.name}</span> : null}{formatRange(block.startMinute, block.durationMinutes)}</div>
     <div className="wa-card-line wa-card-inst">{inst}</div>
     {block.students.length
-      ? <div className="wa-card-students">{block.students.map((s,i) => <span key={s.id || i} className="wa-stu" title={s.name}>{shortName(s.name)}</span>)}</div>
+      ? <div className="wa-card-students">{block.students.map((s,i) => <span key={s.id || i} className="wa-stu" title={s.name + ageSuffix(s)}>{shortName(s.name) + ageSuffix(s)}</span>)}</div>
       : <div className="wa-card-line wa-card-students-empty">—</div>}
   </div>;
 }
@@ -957,7 +977,7 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
                       <div>
                         <div className="daily-event-title">{it.type} {pool ? <span className="pool-badge">{pool.name}</span> : null}</div>
                         <div className="daily-event-sub">{formatRange(it.startMinute, it.durationMinutes)} · {inst}</div>
-                        <div className="daily-event-sub">{it.students.map(s=>s.name).join(', ') || 'No students listed'}</div>
+                        <div className="daily-event-sub">{it.students.map(s=>s.name+ageSuffix(s)).join(', ') || 'No students listed'}</div>
                       </div>
                       <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6}}>
                         {cap.max > 0 ? <span className="cap-chip cap-chip-lg" style={{background:chip.bg, color:chip.tx, borderColor:chip.bd}}>{cap.current}/{cap.max}</span> : <span className="cap-chip cap-chip-lg cap-chip-unknown">{cap.current}</span>}
@@ -997,7 +1017,7 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
                   const inst = it.instructors.map(i=>i.name).join(', ') || it.legacyInstructor || 'No Instructor';
                   return <div key={it.id} className="print-session-block">
                     <div className="print-session-head">{formatRange(it.startMinute, it.durationMinutes)} | {it.type}{pool?` | ${pool.name}`:''} | {inst} | {it.students.length} student{it.students.length===1?'':'s'}</div>
-                    <div className="print-session-students">{it.students.length ? it.students.map(s=>s.name).join(', ') : 'No students listed'}</div>
+                    <div className="print-session-students">{it.students.length ? it.students.map(s=>s.name+ageSuffix(s)).join(', ') : 'No students listed'}</div>
                     {idx < rowItems.length - 1 ? <div className="print-session-gap"></div> : null}
                   </div>;
                 }) : <div>No sessions</div>}
@@ -1053,7 +1073,7 @@ function MonthView({ monthCursor, setMonthCursor, selectedDate, setSelectedDate,
         <div className="pill">Sessions for this date in this week's schedule</div>
       </div>
       <div className="table-wrap"><table><thead><tr><th style={{width:130}}>Time</th><th style={{width:170}}>Lesson Type</th><th style={{width:160}}>Instructor</th><th>Students</th></tr></thead><tbody>
-        {selectedItems.length ? selectedItems.map(g => <tr key={g.id}><td>{formatRange(g.startMinute, g.durationMinutes)}</td><td><span className="pill">{g.type}</span></td><td>{g.instructors.map(i=>i.name).join(', ') || g.legacyInstructor}</td><td>{g.students.map(s=>s.name).join(', ') || '-'}</td></tr>) : <tr><td colSpan="4" className="empty">No schedule for this day.</td></tr>}
+        {selectedItems.length ? selectedItems.map(g => <tr key={g.id}><td>{formatRange(g.startMinute, g.durationMinutes)}</td><td><span className="pill">{g.type}</span></td><td>{g.instructors.map(i=>i.name).join(', ') || g.legacyInstructor}</td><td>{g.students.map(s=>s.name+ageSuffix(s)).join(', ') || '-'}</td></tr>) : <tr><td colSpan="4" className="empty">No schedule for this day.</td></tr>}
       </tbody></table></div>
     </div>
   </>;
@@ -1295,8 +1315,13 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
     const patch = { type: name, lessonTypeId: lt?.id || null };
     if(lt?.default_duration_minutes) patch.durationMinutes = Number(lt.default_duration_minutes);
     if(lt?.default_pool_id) patch.poolId = lt.default_pool_id;
+    patch.studentRows = rebuildRowsForCap(modal.form.studentRows, lt?.students_per_instructor);
     setForm(patch);
   }
+
+  function setRow(i, key, val){ const rows = (modal.form.studentRows || []).slice(); rows[i] = { ...rows[i], [key]: val }; setForm({ studentRows: rows }); }
+  function addRow(){ setForm({ studentRows: [...(modal.form.studentRows || []), { name:'', age:'' }] }); }
+  function removeRow(i){ const rows = (modal.form.studentRows || []).slice(); rows.splice(i, 1); if(!rows.length) rows.push({ name:'', age:'' }); setForm({ studentRows: rows }); }
 
   function onInstructorChange(id){
     const inst = instructors.find(i => i.id === id);
@@ -1305,7 +1330,7 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
 
   // Capacity preview: counts the students typed in the textarea, against the
   // lesson type's ratio (assuming one instructor for now — splits come in M3).
-  const previewStudents = (modal?.form?.studentText || '').split(/\n|,/).map(s=>s.trim()).filter(Boolean).length;
+  const previewStudents = (modal?.form?.studentRows || []).filter(r => (r.name || '').trim()).length;
   const previewLt = lessonTypeByName(modal?.form?.type);
   const previewMax = previewLt?.students_per_instructor ? Number(previewLt.students_per_instructor) : 0;
   const previewStatus = previewMax > 0
@@ -1330,7 +1355,21 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
         <div className="field"><label>Duration (minutes)</label><select className="select" value={String(modal.form.durationMinutes)} onChange={(e)=>setForm({ durationMinutes: Number(e.target.value) })}>{durationOptions.map(d => <option key={d} value={d}>{d} min</option>)}</select></div>
         <div className="field"><label>Time Slot</label><input className="input" value={formatRange(modal.startMinute, modal.form.durationMinutes)} readOnly /></div>
         <div className="field"><label>Capacity Preview</label><div className="cap-preview"><span className="cap-chip cap-chip-lg" style={{background:previewChip.bg,color:previewChip.tx,borderColor:previewChip.bd}}>{previewStudents}{previewMax > 0 ? ` / ${previewMax}` : ''}</span><span className="small subtle">{previewMax > 0 ? (previewStatus==='over'?'Over capacity — Module 3 will block or prompt for a split.':previewStatus==='full'?'At capacity.':previewStatus==='tight'?'Near capacity.':'Has room.') : 'Lesson type has no ratio set.'}</span></div></div>
-        <div className="field" style={{gridColumn:'1 / -1'}}><label>Student Names</label><textarea className="textarea" value={modal.form.studentText} onChange={(e)=>setForm({ studentText: e.target.value })} placeholder="One student per line, or comma-separated" /><div className="hint">Saved into weekly_session_students and linked to this session.</div></div>
+        <div className="field" style={{gridColumn:'1 / -1'}}>
+          <label>Students {previewMax > 0 ? `· ${previewMax} per instructor` : ''}</label>
+          <div className="stu-list">
+            {(modal.form.studentRows || []).map((r, i) => <div className="stu-row" key={i}>
+              <span className="stu-num">{i+1}</span>
+              <input className="input" placeholder="Student name" value={r.name} onChange={(e)=>setRow(i,'name',e.target.value)} />
+              <input className="input stu-age" type="number" min="0" max="120" placeholder="Age" value={r.age} onChange={(e)=>setRow(i,'age',e.target.value)} />
+              <button className="btn btn-ghost stu-x" title="Remove row" onClick={()=>removeRow(i)}>×</button>
+            </div>)}
+          </div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,marginTop:8,flexWrap:'wrap'}}>
+            <div className="hint">Name + age in years. Empty rows are ignored. Age shows on the schedule and fills the Excel export.</div>
+            <button className="btn btn-ghost small" onClick={addRow}>+ Add student</button>
+          </div>
+        </div>
       </div>
       <div className="student-box"><div className="small subtle" style={{marginBottom:6}}>Parallel sessions and splits</div><div className="small">Multiple sessions can run at the same day and time. Each is one row in <b>weekly_sessions</b>; pools are independent. In Module 3, this modal will gain a "+ instructor" button to convert a single session into a split (two instructors, doubled capacity) without creating a parallel row.</div></div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:16,gap:12,flexWrap:'wrap'}}>
@@ -1389,7 +1428,7 @@ function PrintWeeklyTableSection({ weekBlocksAllPools, wb, selectedWeekStart, gr
                 <div key={block.id} className={idx > 0 ? 'wt-sess wt-sess-sep' : 'wt-sess'}>
                   <div className="wt-sess-type">{block.type}</div>
                   <div className="wt-sess-meta">{(block.instructors[0]?.name) || block.legacyInstructor || '—'} &middot; {block.durationMinutes}&thinsp;min{block._poolName ? ` · ${block._poolName}` : ''}</div>
-                  {block.students.length > 0 ? <div className="wt-sess-students">{block.students.map(s=>s.name).join(', ')}</div> : null}
+                  {block.students.length > 0 ? <div className="wt-sess-students">{block.students.map(s=>s.name+ageSuffix(s)).join(', ')}</div> : null}
                 </div>
               ))}
             </td>;
