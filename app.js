@@ -600,7 +600,7 @@ function App(){
 
   async function addOption(kind, extra={}){
     try{
-      if(kind === 'instructor') await insertRows('scheduler_instructors', { name: extra.name, sort_order: options.instructors.length + 1, is_active:true });
+      if(kind === 'instructor') await insertRows('scheduler_instructors', { name: extra.name, gender: extra.gender || null, sort_order: options.instructors.length + 1, is_active:true });
       if(kind === 'duration') await insertRows('scheduler_durations', { label: extra.label, slots: Number(extra.slots), sort_order: options.durations.length + 1, is_active:true });
       if(kind === 'lessonType'){
         const inserted = await insertRows('scheduler_lesson_types', { name: extra.name, bg_color: extra.bg, border_color: extra.bd, text_color: extra.tx, sort_order: options.lessonTypes.length + 1, is_active:true });
@@ -669,6 +669,37 @@ function App(){
     if(!confirm(`Delete "${label}" from this dropdown list? Existing schedule rows will stay unchanged.`)) return;
     try{ await deleteRows(table, { id: row.id }); await loadOptions(); }
     catch(err){ handleErr(err); alert(err.message || 'Failed to delete option'); }
+  }
+
+  // Instructor delete is special: a FK on session_instructors blocks the raw
+  // delete when the instructor is assigned to any class. We surface the usage
+  // count in a tailored confirm, preserve the deleted name on each affected
+  // session's legacy `instructor` column so the scheduler can still see who
+  // used to teach it (rendered greyed-out with an amber ⚠), then drop the
+  // FK rows and the instructor itself. Classes and students are left intact.
+  async function deleteInstructor(row){
+    try{
+      const affected = sessions.filter(s => s.instructors.some(i => i.id === row.id));
+      const message = affected.length
+        ? `"${row.name}" is currently assigned to ${affected.length} class${affected.length===1?'':'es'}.\n\n` +
+          `Deleting will leave those classes without an instructor. Their card will show an amber ⚠ warning until you reassign someone from the instructor list — the classes, students, times, and pool stay exactly as they are.\n\n` +
+          `Proceed with deletion?`
+        : `Delete "${row.name}" from the instructor list? No classes reference this instructor.`;
+      if(!confirm(message)) return;
+      // Preserve the name on each affected session's legacy text column so the
+      // scheduler still sees a greyed-out reference until reassignment.
+      for(const s of affected){
+        const remaining = s.instructors.filter(i => i.id !== row.id);
+        if(remaining.length === 0 && !s.legacyInstructor){
+          await patchRows('weekly_sessions', { id: s.id }, { instructor: row.name });
+        }
+      }
+      // Drop FK rows first so the parent delete can succeed.
+      await deleteRows('session_instructors', { instructor_id: row.id });
+      await deleteRows('scheduler_instructors', { id: row.id });
+      await Promise.all([loadOptions(), loadSessions()]);
+      setStatus(`Deleted "${row.name}"${affected.length ? ` · ${affected.length} class${affected.length===1?'':'es'} now need a new instructor` : ''}.`);
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to delete instructor'); }
   }
   async function patchOption(table, idOrMatch, patch){
     try{
@@ -1051,6 +1082,7 @@ function App(){
         addOption={addOption}
         toggleOption={toggleOption}
         deleteOption={deleteOption}
+        deleteInstructor={deleteInstructor}
         patchOption={patchOption}
         reorderOption={reorderOption}
         moveOption={moveOption}
@@ -1198,16 +1230,18 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
   const chip = capacityChipColors(cap.status);
   const pool = poolById(block.poolId);
   const isOver = cap.status === 'over';
-  const inst = (block.instructors[0]?.name) || block.legacyInstructor || '—';
-  return <div className={`wa-card ${isOver?'event-over':''}`}
+  const missingInst = block.instructors.length === 0;
+  const instName = (block.instructors[0]?.name) || block.legacyInstructor || '';
+  return <div className={`wa-card ${isOver?'event-over':''} ${missingInst?'wa-card-warn':''}`}
     onClick={(e)=>{e.stopPropagation(); onEdit(block);}}
     style={{ background:c.bg, borderLeft:`3px solid ${c.bd}`, color:c.tx }}>
+    {missingInst ? <span className="card-warn-corner" title="No instructor assigned — needs reassignment">⚠</span> : null}
     <div className="wa-card-head">
       <span className="wa-card-title">{block.type}</span>
       {cap.max > 0 ? <span className="cap-chip" style={{background:chip.bg, color:chip.tx, borderColor:chip.bd}}>{cap.current}/{cap.max}</span> : <span className="cap-chip cap-chip-unknown">{cap.current}</span>}
     </div>
     <div className="wa-card-line">{showPoolBadge && pool ? <span className="event-pool-pill">{pool.name}</span> : null}{compactRange(block.startMinute, block.durationMinutes)}</div>
-    <div className="wa-card-line wa-card-inst">{inst}</div>
+    <div className={`wa-card-line wa-card-inst ${missingInst?'inst-missing':''}`}>{missingInst ? <span className="warn-tri" title="Instructor was removed — pick a new one in the modal">⚠</span> : null}<span className={missingInst?'inst-orphan':''}>{instName || 'Unassigned'}</span>{missingInst ? <span className="inst-warn-chip">Needs instructor</span> : null}</div>
     {block.students.length
       ? <div className="wa-card-students">{block.students.map((s,i) => { const isTrial = !!(s.studentId && trialStudentIds && trialStudentIds.has(s.studentId)); return <span key={s.id || i} className="wa-stu" title={studentLabel(s) + (isTrial ? ' (trial)' : '')}>{shortName(s.name) + ageSuffix(s)}{isTrial ? <span className="trial-mark"> (trial)</span> : null}{s.remark ? ` — ${s.remark}` : ''}</span>; })}</div>
       : <div className="wa-card-line wa-card-students-empty">—</div>}
@@ -1252,12 +1286,14 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
                   const cap = sessionCapacity(it, lt);
                   const chip = capacityChipColors(cap.status);
                   const pool = poolById(it.poolId);
-                  const inst = (it.instructors[0]?.name) || it.legacyInstructor || '—';
-                  return <div key={it.id} className="daily-event" onClick={() => onEdit(it)} style={{background:c.bg, borderLeftColor:c.bd, color:c.tx}}>
+                  const missingInst = it.instructors.length === 0;
+                  const instName = (it.instructors[0]?.name) || it.legacyInstructor || '';
+                  return <div key={it.id} className={`daily-event ${missingInst?'daily-event-warn':''}`} onClick={() => onEdit(it)} style={{background:c.bg, borderLeftColor:c.bd, color:c.tx}}>
+                    {missingInst ? <span className="card-warn-corner" title="No instructor assigned — needs reassignment">⚠</span> : null}
                     <div className="daily-event-top">
                       <div style={{minWidth:0,flex:1}}>
                         <div className="daily-event-title" style={{color:c.tx}}>{it.type} {pool ? <span className="pool-badge">{pool.name}</span> : null}{it.familyGroupId ? <span title="Family group booking" style={{marginLeft:4}}>👪</span> : null}</div>
-                        <div className="daily-event-sub">{compactRange(it.startMinute, it.durationMinutes)} · {inst}</div>
+                        <div className={`daily-event-sub ${missingInst?'inst-missing':''}`}>{compactRange(it.startMinute, it.durationMinutes)} · {missingInst ? <><span className="warn-tri">⚠</span><span className="inst-orphan">{instName || 'Unassigned'}</span><span className="inst-warn-chip">Needs instructor</span></> : instName || '—'}</div>
                         {it.students.length
                           ? <div className="daily-event-students">{it.students.map((s, si) => { const isTrial = !!(s.studentId && trialStudentIds && trialStudentIds.has(s.studentId)); return <span key={s.id || si} className="daily-event-stu" title={isTrial ? 'Trial — one-off booking' : undefined}>{s.name + ageSuffix(s)}{isTrial ? <span className="trial-mark"> (trial)</span> : null}</span>; })}</div>
                           : <div className="daily-event-sub">No students listed</div>}
@@ -1503,7 +1539,7 @@ function PackageEditor({ row, onSave, onCancel }){
   </div>;
 }
 
-function SettingsView({ options, status, addOption, toggleOption, deleteOption, patchOption, reorderOption, moveOption, saveLessonType, deleteLessonType, lessonTypeCounts }){
+function SettingsView({ options, status, addOption, toggleOption, deleteOption, deleteInstructor, patchOption, reorderOption, moveOption, saveLessonType, deleteLessonType, lessonTypeCounts }){
   const dragRef = React.useRef({ canDrag:false });
   const [drag, setDrag] = useState({ key:null, idx:null });
   const [over, setOver] = useState(null);
@@ -1528,6 +1564,8 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
     </span>;
   }
   const [newInstructor, setNewInstructor] = useState('');
+  const [newInstructorGender, setNewInstructorGender] = useState(null);
+  const [editingInstructorId, setEditingInstructorId] = useState(null);
   const [newTypeName, setNewTypeName] = useState('');
   const [bg, setBg] = useState('#DBEAFE');
   const [bd, setBd] = useState('#3B82F6');
@@ -1612,9 +1650,35 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
 
       <div className="card">
         <div style={{fontSize:16,fontWeight:800}}>Instructors</div>
-        <div className="small subtle" style={{marginTop:4}}>Names available in the session instructor dropdown.</div>
-        <div style={{display:'flex',gap:8,marginTop:12}}><input className="input" placeholder="Add instructor name" value={newInstructor} onChange={(e)=>setNewInstructor(e.target.value)} /><button className="btn btn-primary" onClick={()=>{ const v = newInstructor.trim(); if(!v) return; addOption('instructor', { name:v }); setNewInstructor(''); }}>Add</button></div>
-        <div className="settings-list">{options.instructors.length ? options.instructors.map((r, idx) => <div key={r.id} className={`row-item ${dragClass('inst', idx)}`} {...dragProps('inst', 'scheduler_instructors', options.instructors, idx)}><div style={{display:'flex',alignItems:'center',gap:8}}>{reorderCluster('inst', 'scheduler_instructors', options.instructors, idx)}<span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span><div style={{fontWeight:600}}>{r.name}</div></div><div style={{display:'flex',gap:6}}><button className="btn btn-ghost small" onClick={()=>toggleOption('scheduler_instructors',r)}>{r.is_active?'Hide':'Show'}</button><button className="btn btn-danger small" onClick={()=>deleteOption('scheduler_instructors',r,r.name)}>Delete</button></div></div>) : <div className="empty">No instructors</div>}</div>
+        <div className="small subtle" style={{marginTop:4}}>Names available in the session instructor dropdown. Edit to rename or set a gender.</div>
+        <div className="inst-add">
+          <input className="input" placeholder="Add instructor name" value={newInstructor} onChange={(e)=>setNewInstructor(e.target.value)} />
+          <div className="gender-toggle gender-toggle-sm" role="radiogroup" aria-label="Gender">
+            <button type="button" className={`gender-opt ${newInstructorGender==='female'?'active':''}`} onClick={()=>setNewInstructorGender(newInstructorGender==='female'?null:'female')} title="Female">♀ F</button>
+            <button type="button" className={`gender-opt ${newInstructorGender==='male'?'active':''}`} onClick={()=>setNewInstructorGender(newInstructorGender==='male'?null:'male')} title="Male">♂ M</button>
+          </div>
+          <button className="btn btn-primary" onClick={()=>{ const v = newInstructor.trim(); if(!v) return; addOption('instructor', { name:v, gender:newInstructorGender }); setNewInstructor(''); setNewInstructorGender(null); }}>Add</button>
+        </div>
+        <div className="settings-list">{options.instructors.length ? options.instructors.map((r, idx) => {
+          const assigned = (lessonTypeCounts && lessonTypeCounts.__bySessionInstructor && lessonTypeCounts.__bySessionInstructor[r.id]) || 0; // not provided; computed below in row instead
+          return editingInstructorId === r.id
+            ? <div key={r.id} className="row-item" style={{display:'block'}}>
+                <InstructorEditor row={r} onCancel={()=>setEditingInstructorId(null)} onSave={(patch)=>{ patchOption('scheduler_instructors', r.id, patch); setEditingInstructorId(null); }} />
+              </div>
+            : <div key={r.id} className={`row-item ${dragClass('inst', idx)}`} {...dragProps('inst', 'scheduler_instructors', options.instructors, idx)}>
+                <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                  {reorderCluster('inst', 'scheduler_instructors', options.instructors, idx)}
+                  <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
+                  <div style={{fontWeight:700,fontSize:14}}>{r.name}</div>
+                  {r.gender ? <span className={`gender-chip gender-chip-${r.gender}`} title={r.gender === 'female' ? 'Female' : 'Male'}>{r.gender === 'female' ? '♀ Female' : '♂ Male'}</span> : <span className="gender-chip gender-chip-unset" title="No gender set">— gender</span>}
+                </div>
+                <div style={{display:'flex',gap:6}}>
+                  <button className="btn btn-ghost small" onClick={()=>setEditingInstructorId(r.id)}>Edit</button>
+                  <button className="btn btn-ghost small" onClick={()=>toggleOption('scheduler_instructors',r)}>{r.is_active?'Hide':'Show'}</button>
+                  <button className="btn btn-danger small" onClick={()=>deleteInstructor(r)}>Delete</button>
+                </div>
+              </div>;
+        }) : <div className="empty">No instructors</div>}</div>
       </div>
     </div>
 
@@ -1718,6 +1782,30 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
 // Manage packages nested under one lesson type: add, edit (PackageEditor),
 // reorder with ↑/↓, hide, delete. Same controls as the old top-level card but
 // scoped to its lesson type — so each type owns its Normal, Trial, Family 3…
+// Inline editor for an instructor: rename + Female/Male toggle.
+function InstructorEditor({ row, onSave, onCancel }){
+  const [name, setName] = useState(row.name || '');
+  const [gender, setGender] = useState(row.gender || null);
+  function apply(){ const v = (name || '').trim(); if(!v) return; onSave({ name:v, gender: gender || null }); }
+  return <div className="inst-editor">
+    <div className="field" style={{margin:0,flex:1,minWidth:160}}>
+      <label>Name</label>
+      <input className="input" value={name} onChange={e=>setName(e.target.value)} placeholder="Instructor name" />
+    </div>
+    <div className="field" style={{margin:0}}>
+      <label>Gender</label>
+      <div className="gender-toggle">
+        <button type="button" className={`gender-opt ${gender==='female'?'active':''}`} onClick={()=>setGender(gender==='female'?null:'female')}>♀ Female</button>
+        <button type="button" className={`gender-opt ${gender==='male'?'active':''}`} onClick={()=>setGender(gender==='male'?null:'male')}>♂ Male</button>
+      </div>
+    </div>
+    <div style={{display:'flex',gap:6,alignSelf:'flex-end'}}>
+      <button className="btn btn-ghost small" onClick={onCancel}>Cancel</button>
+      <button className="btn btn-primary small" onClick={apply}>Save</button>
+    </div>
+  </div>;
+}
+
 function LessonTypePackages({ lessonType, packages, editPkgId, setEditPkgId, addOption, toggleOption, deleteOption, patchOption, reorderOption }){
   const [name, setName] = useState('');
   const [pax, setPax] = useState('');
