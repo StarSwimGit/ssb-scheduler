@@ -305,6 +305,7 @@ function App(){
       type: r.lesson_type || '',
       lessonTypeId: r.lesson_type_id || null,
       poolId: r.pool_id || null,
+      familyGroupId: r.family_group_id || null,
       legacyInstructor: r.instructor || '',
       students: studentsBySession[String(r.id)] || [],
       instructors: instructorsBySession[String(r.id)] || []
@@ -470,6 +471,7 @@ function App(){
         instructorId: firstInst ? firstInst.id : (instructorByName(item.legacyInstructor)?.id || null),
         instructorName: firstInst ? firstInst.name : (item.legacyInstructor || ''),
         poolId: item.poolId,
+        familyGroupId: item.familyGroupId || null,
         durationMinutes:item.durationMinutes,
         studentRows: buildStudentRows(item.students, lessonTypeByName(item.type)?.students_per_instructor)
       }
@@ -537,6 +539,7 @@ function App(){
         lesson_type: modal.form.type || '',
         lesson_type_id: lt ? lt.id : null,
         pool_id: modal.form.poolId || null,
+        family_group_id: modal.form.familyGroupId || null,
         instructor: inst ? inst.name : ''
       };
       let sessionId = modal.id;
@@ -766,6 +769,7 @@ function App(){
         lesson_type: s.type,
         lesson_type_id: s.lessonTypeId,
         pool_id: s.poolId,
+        family_group_id: s.familyGroupId || null,
         instructor: s.legacyInstructor
       }));
       const inserted = await insertRows('weekly_sessions', payload);
@@ -979,7 +983,7 @@ function App(){
         <FamilyGroupsPanel
           groups={familyGroups}
           students={students}
-          groupPackages={options.packages.filter(p => p.is_group && p.is_active !== false)}
+          groupPackages={options.packages.filter(p => p.is_active !== false)}
           packageById={packageById}
           membersByGroup={membersByGroup}
           scheduleByStudent={scheduleByStudent}
@@ -1032,6 +1036,8 @@ function App(){
       students={students}
       studentById={studentById}
       weekEnrollments={weekEnrollments}
+      familyGroups={familyGroups}
+      membersByGroup={membersByGroup}
     /> : null}
   </div>;
 }
@@ -1212,7 +1218,7 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
                   return <div key={it.id} className="daily-event" onClick={() => onEdit(it)} style={{borderLeftColor:c.bd}}>
                     <div className="daily-event-top">
                       <div>
-                        <div className="daily-event-title">{it.type} {pool ? <span className="pool-badge">{pool.name}</span> : null}</div>
+                        <div className="daily-event-title">{it.type} {pool ? <span className="pool-badge">{pool.name}</span> : null}{it.familyGroupId ? <span title="Family group booking" style={{marginLeft:4}}>👪</span> : null}</div>
                         <div className="daily-event-sub">{formatRange(it.startMinute, it.durationMinutes)} · {inst}</div>
                         <div className="daily-event-sub">{it.students.map(s=>s.name+ageSuffix(s)).join(', ') || 'No students listed'}</div>
                       </div>
@@ -1352,10 +1358,23 @@ function fmtMoney(n){ if(n === null || n === undefined) return '—'; return Num
 // drops below, it reverts to the standard per-pax rate — so a removed member
 // can't leave a stale discounted rate behind.
 function groupBilling(pkg, memberCount){
-  const required = (pkg && pkg.pax != null) ? Number(pkg.pax) : null;
-  const bundle   = (pkg && pkg.amount != null) ? Number(pkg.amount) : null;
-  const fb       = (pkg && pkg.fallback_per_pax != null) ? Number(pkg.fallback_per_pax) : null;
   const n = memberCount;
+  if(!pkg) return { n, status:'unknown', total:null, perHead:null, required:null, bundle:null, fb:null, credits:null, mode:null, isGroup:false };
+  const required = (pkg.pax != null) ? Number(pkg.pax) : null;
+  const bundle   = (pkg.amount != null) ? Number(pkg.amount) : null;
+  const fb       = (pkg.fallback_per_pax != null) ? Number(pkg.fallback_per_pax) : null;
+  const credits  = (pkg.billing_count != null) ? Number(pkg.billing_count) : null;
+  const mode     = pkg.billing_mode || 'monthly';
+  // Flat / private package (e.g. a credit-based private class): the group is
+  // simply a binding of swimmers sharing one package — no discount fallback.
+  if(!pkg.is_group){
+    const total = bundle;
+    const perHead = (total != null && n > 0) ? total / n : null;
+    let status = 'flat';
+    if(required != null && n !== required) status = (n < required ? 'under_soft' : 'over_soft');
+    return { n, status, total, perHead, required, bundle, fb, credits, mode, isGroup:false };
+  }
+  // Family discount bundle: price holds at full size, reverts to per-pax below.
   let status = 'unknown', total = null;
   if(required != null && bundle != null){
     if(n === required){ status = 'qualified'; total = bundle; }
@@ -1363,7 +1382,7 @@ function groupBilling(pkg, memberCount){
     else { status = 'over'; total = (fb != null ? bundle + (n - required) * fb : bundle); }
   }
   const perHead = (total != null && n > 0) ? total / n : null;
-  return { required, bundle, fb, n, status, total, perHead };
+  return { n, status, total, perHead, required, bundle, fb, credits, mode, isGroup:true };
 }
 
 // Monthly/Credit segmented toggle + a count input whose suffix flips to match.
@@ -1412,8 +1431,28 @@ function PackageEditor({ row, onSave, onCancel }){
 
 function SettingsView({ options, status, addOption, toggleOption, deleteOption, patchOption, reorderOption, moveOption, saveLessonType, deleteLessonType, lessonTypeCounts }){
   const dragRef = React.useRef({ canDrag:false });
-  const [dragIdx, setDragIdx] = useState(null);
-  const [overIdx, setOverIdx] = useState(null);
+  const [drag, setDrag] = useState({ key:null, idx:null });
+  const [over, setOver] = useState(null);
+  function gripEl(){ return <span className="grip" title="Drag to reorder" onMouseDown={()=>{ dragRef.current.canDrag = true; }} onTouchStart={()=>{ dragRef.current.canDrag = true; }}>⠿</span>; }
+  function dragProps(listKey, table, list, idx){
+    return {
+      draggable:true,
+      onDragStart:(e)=>{ if(!dragRef.current.canDrag){ e.preventDefault(); return; } setDrag({ key:listKey, idx }); try{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', String(idx)); }catch(_){} },
+      onDragOver:(e)=>{ if(drag.key !== listKey) return; e.preventDefault(); if(over !== idx) setOver(idx); },
+      onDrop:(e)=>{ e.preventDefault(); if(drag.key === listKey && drag.idx != null && drag.idx !== idx) moveOption(table, list, drag.idx, idx); setDrag({ key:null, idx:null }); setOver(null); dragRef.current.canDrag = false; },
+      onDragEnd:()=>{ setDrag({ key:null, idx:null }); setOver(null); dragRef.current.canDrag = false; }
+    };
+  }
+  function dragClass(listKey, idx){ return `${drag.key===listKey && drag.idx===idx ? 'lt-dragging' : ''} ${drag.key===listKey && over===idx && drag.idx!=null && drag.idx!==idx ? 'lt-drop' : ''}`; }
+  function reorderCluster(listKey, table, list, idx){
+    return <span style={{display:'inline-flex',alignItems:'center',gap:4}}>
+      {gripEl()}
+      <span className="reorder">
+        <button className="reorder-btn" disabled={idx===0} title="Move up" onClick={()=>reorderOption(table, list, idx, -1)}>↑</button>
+        <button className="reorder-btn" disabled={idx===list.length-1} title="Move down" onClick={()=>reorderOption(table, list, idx, 1)}>↓</button>
+      </span>
+    </span>;
+  }
   const [newInstructor, setNewInstructor] = useState('');
   const [newTypeName, setNewTypeName] = useState('');
   const [bg, setBg] = useState('#DBEAFE');
@@ -1457,8 +1496,9 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
           <button className="btn btn-primary" onClick={()=>{ const v = newPoolName.trim(); const c = Number(newPoolCap); if(!v || !c || c < 1) return; addOption('pool', { name:v, capacity:c }); setNewPoolName(''); setNewPoolCap(16); }}>Add</button>
         </div>
         <div className="settings-list">
-          {options.pools.length ? options.pools.map(r => <div key={r.id} className="row-item">
+          {options.pools.length ? options.pools.map((r, idx) => <div key={r.id} className={`row-item ${dragClass('pool', idx)}`} {...dragProps('pool', 'pools', options.pools, idx)}>
             <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+              {reorderCluster('pool', 'pools', options.pools, idx)}
               <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
               <div style={{fontWeight:600}}>{r.name}</div>
               <input className="input" style={{width:74,padding:'4px 8px',fontSize:12}} type="number" defaultValue={r.capacity_total} onBlur={(e)=>{ const v = Number(e.target.value); if(v > 0 && v !== r.capacity_total) patchOption('pools', r.id, { capacity_total: v }); }} />
@@ -1499,7 +1539,7 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
         <div style={{fontSize:16,fontWeight:800}}>Instructors</div>
         <div className="small subtle" style={{marginTop:4}}>Names available in the session instructor dropdown.</div>
         <div style={{display:'flex',gap:8,marginTop:12}}><input className="input" placeholder="Add instructor name" value={newInstructor} onChange={(e)=>setNewInstructor(e.target.value)} /><button className="btn btn-primary" onClick={()=>{ const v = newInstructor.trim(); if(!v) return; addOption('instructor', { name:v }); setNewInstructor(''); }}>Add</button></div>
-        <div className="settings-list">{options.instructors.length ? options.instructors.map(r => <div key={r.id} className="row-item"><div style={{display:'flex',alignItems:'center',gap:8}}><span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span><div style={{fontWeight:600}}>{r.name}</div></div><div style={{display:'flex',gap:6}}><button className="btn btn-ghost small" onClick={()=>toggleOption('scheduler_instructors',r)}>{r.is_active?'Hide':'Show'}</button><button className="btn btn-danger small" onClick={()=>deleteOption('scheduler_instructors',r,r.name)}>Delete</button></div></div>) : <div className="empty">No instructors</div>}</div>
+        <div className="settings-list">{options.instructors.length ? options.instructors.map((r, idx) => <div key={r.id} className={`row-item ${dragClass('inst', idx)}`} {...dragProps('inst', 'scheduler_instructors', options.instructors, idx)}><div style={{display:'flex',alignItems:'center',gap:8}}>{reorderCluster('inst', 'scheduler_instructors', options.instructors, idx)}<span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span><div style={{fontWeight:600}}>{r.name}</div></div><div style={{display:'flex',gap:6}}><button className="btn btn-ghost small" onClick={()=>toggleOption('scheduler_instructors',r)}>{r.is_active?'Hide':'Show'}</button><button className="btn btn-danger small" onClick={()=>deleteOption('scheduler_instructors',r,r.name)}>Delete</button></div></div>) : <div className="empty">No instructors</div>}</div>
       </div>
     </div>
 
@@ -1560,19 +1600,10 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
 
       <div className="settings-list">
         {options.lessonTypes.length ? options.lessonTypes.map((r, idx) => { const n = counts[r.id] || 0; return <div key={r.id}
-          className={`lesson-row ${dragIdx===idx?'lt-dragging':''} ${overIdx===idx&&dragIdx!=null&&dragIdx!==idx?'lt-drop':''}`}
-          draggable
-          onDragStart={(e)=>{ if(!dragRef.current.canDrag){ e.preventDefault(); return; } setDragIdx(idx); try{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', String(idx)); }catch(_){} }}
-          onDragOver={(e)=>{ if(dragIdx==null) return; e.preventDefault(); if(overIdx!==idx) setOverIdx(idx); }}
-          onDrop={(e)=>{ e.preventDefault(); if(dragIdx!=null && dragIdx!==idx) moveOption('scheduler_lesson_types', options.lessonTypes, dragIdx, idx); setDragIdx(null); setOverIdx(null); dragRef.current.canDrag=false; }}
-          onDragEnd={()=>{ setDragIdx(null); setOverIdx(null); dragRef.current.canDrag=false; }}>
+          className={`lesson-row ${dragClass('lt', idx)}`} {...dragProps('lt', 'scheduler_lesson_types', options.lessonTypes, idx)}>
           <div className="row-item" style={{marginBottom:0}}>
             <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-              <span className="grip" title="Drag to reorder" onMouseDown={()=>{ dragRef.current.canDrag=true; }} onTouchStart={()=>{ dragRef.current.canDrag=true; }}>⠿</span>
-              <span className="reorder">
-                <button className="reorder-btn" disabled={idx===0} title="Move up" onClick={()=>reorderOption('scheduler_lesson_types', options.lessonTypes, idx, -1)}>↑</button>
-                <button className="reorder-btn" disabled={idx===options.lessonTypes.length-1} title="Move down" onClick={()=>reorderOption('scheduler_lesson_types', options.lessonTypes, idx, 1)}>↓</button>
-              </span>
+              {reorderCluster('lt', 'scheduler_lesson_types', options.lessonTypes, idx)}
               <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
               <span className="chip" style={{background:r.bg_color,borderColor:r.border_color,color:r.text_color,fontWeight:800}}>{r.name}</span>
               <span className="pill" title="Classes on the schedule using this type">{n} class{n===1?'':'es'}</span>
@@ -1839,19 +1870,22 @@ function FamilyGroupsPanel({ groups, students, groupPackages, packageById, membe
     if(b.status === 'qualified') return { cls:'gb-ok', text:`Qualified · RM${fmtMoney(b.total)}${b.perHead != null ? ` (RM${fmtMoney(b.perHead)}/child)` : ''}` };
     if(b.status === 'under')     return { cls:'gb-warn', text:`⚠ Under-enrolled ${b.n}/${b.required} · discount void → RM${fmtMoney(b.total)}${b.fb != null ? ` (${b.n} × RM${fmtMoney(b.fb)})` : ''}` };
     if(b.status === 'over')      return { cls:'gb-amber', text:`⚠ ${b.n} members — package is for ${b.required}. Move to a ${b.n}-pax family package.` };
-    return { cls:'gb-dim', text:'Set required pax, total amount, and fallback rate on the package.' };
+    if(b.status === 'flat')      return { cls:'gb-ok', text:`RM${fmtMoney(b.total)} for the group${b.mode === 'credit' && b.credits != null ? ` · ${b.credits} credits` : ''} · ${b.n} member${b.n===1?'':'s'}` };
+    if(b.status === 'under_soft')return { cls:'gb-amber', text:`${b.n} of ${b.required} placed${b.mode === 'credit' && b.credits != null ? ` · ${b.credits} credits` : ''}` };
+    if(b.status === 'over_soft') return { cls:'gb-amber', text:`⚠ ${b.n} members — package covers ${b.required}` };
+    return { cls:'gb-dim', text:'Set amount (and required pax) on the package.' };
   }
 
   return <div className="card" style={{marginTop:16}}>
     <div style={{fontSize:18,fontWeight:800}}>Family Groups</div>
-    <div className="small subtle" style={{marginTop:4}}>A family group is one paying unit on a discounted family package. Members can be in any class — pricing is computed live from the group, so removing a member auto-reverts to the standard per-pax rate.</div>
+    <div className="small subtle" style={{marginTop:4}}>A family group is one paying unit sharing a package — use it for a discounted family bundle, or to keep a private class (Duo, Premium Clara) booked together. When you enroll, you can drop the whole group into a class at once.</div>
 
     <div style={{display:'flex',gap:10,alignItems:'flex-end',marginTop:14,flexWrap:'wrap'}}>
       <div className="field" style={{margin:0,minWidth:200,flex:1}}><label>New group name</label><input className="input" placeholder="e.g. Tan Family" value={name} onChange={e=>setName(e.target.value)} /></div>
-      <div className="field" style={{margin:0,minWidth:200}}><label>Family package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">Select a family package…</option>{groupPackages.map(p => <option key={p.id} value={p.id}>{p.name}{p.pax!=null?` · ${p.pax} pax`:''}{p.amount!=null?` · RM${p.amount}`:''}</option>)}</select></div>
+      <div className="field" style={{margin:0,minWidth:220}}><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">Select a package…</option>{groupPackages.map(p => <option key={p.id} value={p.id}>{p.name}{p.pax!=null?` · ${p.pax} pax`:''}{p.amount!=null?` · RM${p.amount}`:''}{p.is_group?' · family discount':''}</option>)}</select></div>
       <button className="btn btn-primary" disabled={!groupPackages.length} onClick={()=>{ const v=name.trim(); if(!v||!pkgId) return; addGroup({ name:v, packageId:pkgId }); setName(''); setPkgId(''); }}>Create Group</button>
     </div>
-    {groupPackages.length ? null : <div className="hint" style={{marginTop:8}}>No family packages yet. In Settings → Packages, add a package and turn on “Family unit (single payer)”.</div>}
+    {groupPackages.length ? null : <div className="hint" style={{marginTop:8}}>No packages yet. Add one in Settings → Packages first.</div>}
 
     <div style={{display:'flex',flexDirection:'column',gap:12,marginTop:16}}>
       {groups.length ? groups.map(g => {
@@ -1877,7 +1911,7 @@ function FamilyGroupsPanel({ groups, students, groupPackages, packageById, membe
           {editId===g.id ? <div className="gb-edit">
             <div style={{display:'flex',gap:10,alignItems:'flex-end',flexWrap:'wrap'}}>
               <div className="field" style={{margin:0,flex:1,minWidth:180}}><label>Group name</label><input className="input" defaultValue={g.name} onBlur={e=>{ const v=e.target.value.trim(); if(v && v!==g.name) updateGroup(g.id,{name:v}); }} /></div>
-              <div className="field" style={{margin:0,minWidth:180}}><label>Family package</label><select className="select" value={g.packageId||''} onChange={e=>updateGroup(g.id,{packageId:e.target.value||null})}><option value="">(none)</option>{groupPackages.map(p => <option key={p.id} value={p.id}>{p.name}{p.pax!=null?` · ${p.pax} pax`:''}</option>)}</select></div>
+              <div className="field" style={{margin:0,minWidth:180}}><label>Package</label><select className="select" value={g.packageId||''} onChange={e=>updateGroup(g.id,{packageId:e.target.value||null})}><option value="">(none)</option>{groupPackages.map(p => <option key={p.id} value={p.id}>{p.name}{p.pax!=null?` · ${p.pax} pax`:''}{p.is_group?' · family discount':''}</option>)}</select></div>
             </div>
             <div className="hint" style={{marginTop:6}}>Group name saves when you click away.</div>
           </div> : null}
@@ -1966,7 +2000,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
   </>;
 }
 
-function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById, students, studentById, weekEnrollments }){
+function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById, students, studentById, weekEnrollments, familyGroups, membersByGroup }){
 
   // M2: union of durations — common standards plus every lesson type's default
   // and the currently-selected duration so the dropdown always contains the
@@ -2003,6 +2037,18 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
     const rows = (modal.form.studentRows || []).slice();
     rows[i] = student ? { studentId: student.id, name: student.name, age: (student.age === null || student.age === undefined ? '' : String(student.age)) } : { studentId:null, name:'', age:'' };
     setForm({ studentRows: rows });
+  }
+
+  // Bind this session to a family group and drop ALL its members into the slots
+  // at once (padded to the lesson-type ratio). groupId '' clears the binding.
+  function chooseGroup(groupId){
+    if(!groupId){ setForm({ familyGroupId: null }); return; }
+    const members = (membersByGroup && membersByGroup[groupId]) || [];
+    const cap = previewLt?.students_per_instructor ? Number(previewLt.students_per_instructor) : 0;
+    const rows = members.map(m => ({ studentId:m.id, name:m.name, age:(m.age === null || m.age === undefined ? '' : String(m.age)) }));
+    const target = Math.max(cap || 0, rows.length, 1);
+    while(rows.length < target) rows.push({ studentId:null, name:'', age:'' });
+    setForm({ familyGroupId: groupId, studentRows: rows });
   }
 
   // Capacity preview: counts the slots that hold a swimmer, against the
@@ -2046,6 +2092,14 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
         <div className="field"><label>Duration (minutes)</label><select className="select" value={String(modal.form.durationMinutes)} onChange={(e)=>setForm({ durationMinutes: Number(e.target.value) })}>{durationOptions.map(d => <option key={d} value={d}>{d} min</option>)}</select></div>
         <div className="field"><label>Time Slot</label><input className="input" value={formatRange(modal.startMinute, modal.form.durationMinutes)} readOnly /></div>
         <div className="field"><label>Capacity Preview</label><div className="cap-preview"><span className="cap-chip cap-chip-lg" style={{background:previewChip.bg,color:previewChip.tx,borderColor:previewChip.bd}}>{previewStudents}{previewMax > 0 ? ` / ${previewMax}` : ''}</span><span className="small subtle">{previewMax > 0 ? (previewStatus==='over'?'Over capacity — Module 3 will block or prompt for a split.':previewStatus==='full'?'At capacity.':previewStatus==='tight'?'Near capacity.':'Has room.') : 'Lesson type has no ratio set.'}</span></div></div>
+        <div className="field" style={{gridColumn:'1 / -1'}}>
+          <label>Family group <span className="subtle" style={{textTransform:'none',letterSpacing:0,fontWeight:600}}>· optional — fills all members into this class</span></label>
+          <select className="select" value={modal.form.familyGroupId || ''} onChange={(e)=>chooseGroup(e.target.value)}>
+            <option value="">No group (enroll individually)</option>
+            {(familyGroups || []).map(g => <option key={g.id} value={g.id}>{g.name}{(membersByGroup && membersByGroup[g.id]) ? ` · ${membersByGroup[g.id].length} member${membersByGroup[g.id].length===1?'':'s'}` : ''}</option>)}
+          </select>
+          {modal.form.familyGroupId ? <div className="hint" style={{marginTop:5}}>👪 Bound to this group. Its members are placed below — change a slot to override, or set “No group” to unbind.</div> : null}
+        </div>
         <div className="field" style={{gridColumn:'1 / -1'}}>
           <label>Swimmers {previewMax > 0 ? `· ${previewMax} slots` : ''}</label>
           <div className="stu-list">
