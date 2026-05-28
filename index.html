@@ -177,6 +177,12 @@
     .reorder-btn{width:22px;height:18px;display:grid;place-items:center;background:var(--surface-2);border:1px solid var(--border-2);border-radius:6px;color:var(--text-2);font-size:11px;line-height:1;cursor:pointer;padding:0}
     .reorder-btn:hover:not(:disabled){border-color:var(--primary);color:var(--primary)}
     .reorder-btn:disabled{opacity:.35;cursor:not-allowed}
+    .seg{display:inline-flex;background:var(--surface-2);border:1px solid var(--border-2);border-radius:10px;padding:3px;gap:3px}
+    .seg-btn{border:none;background:transparent;color:var(--text-2);font-weight:700;font-size:12px;padding:7px 14px;border-radius:7px;cursor:pointer}
+    .seg-btn.on{background:var(--primary);color:#fff}
+    .suffix-input{position:relative;display:inline-flex;align-items:center}
+    .suffix-input .input{width:140px;padding-right:70px}
+    .suffix-tag{position:absolute;right:11px;color:var(--text-3);font-size:12px;font-weight:600;pointer-events:none}
     .student-box{border:1px solid var(--border);background:var(--surface-2);border-radius:12px;padding:10px;margin-top:10px}
     .student-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)}.student-row:last-child{border-bottom:none}
     .daily-day-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
