@@ -1876,7 +1876,6 @@ function LessonTypeEditor({ row, pools, onSave }){
     lessons_per_month: row.lessons_per_month ?? '',
     credit_count: row.credit_count ?? '',
     credit_fee: row.credit_fee ?? '',
-    trial_fee_override: row.trial_fee_override ?? '',
     default_pool_id: row.default_pool_id || '',
     coach_in_pool: row.coach_in_pool !== false,
     bg_color: row.bg_color || '#DBEAFE',
@@ -1902,7 +1901,6 @@ function LessonTypeEditor({ row, pools, onSave }){
         <div className="field"><label>Credit count</label><input className="input" type="number" value={draft.credit_count} onChange={(e)=>setF('credit_count', e.target.value)} placeholder="4 or 6" /></div>
         <div className="field"><label>Credit fee (full pack)</label><input className="input" type="number" step="0.01" value={draft.credit_fee} onChange={(e)=>setF('credit_fee', e.target.value)} /></div>
       </>}
-      <div className="field"><label>Trial fee override</label><input className="input" type="number" step="0.01" value={draft.trial_fee_override} onChange={(e)=>setF('trial_fee_override', e.target.value)} placeholder="Leave blank to use formula" /></div>
       <div className="field"><label>Background</label><input className="swatch" type="color" value={draft.bg_color} onChange={(e)=>setF('bg_color', e.target.value)} /></div>
       <div className="field"><label>Border</label><input className="swatch" type="color" value={draft.border_color} onChange={(e)=>setF('border_color', e.target.value)} /></div>
       <div className="field"><label>Text</label><input className="swatch" type="color" value={draft.text_color} onChange={(e)=>setF('text_color', e.target.value)} /></div>
@@ -1920,7 +1918,6 @@ function LessonTypeEditor({ row, pools, onSave }){
           lessons_per_month: clean(draft.lessons_per_month),
           credit_count: clean(draft.credit_count),
           credit_fee: clean(draft.credit_fee),
-          trial_fee_override: clean(draft.trial_fee_override),
           default_pool_id: draft.default_pool_id || null,
           coach_in_pool: !!draft.coach_in_pool,
           bg_color: draft.bg_color,
@@ -2025,7 +2022,7 @@ function EnrollView({ sessions, students, studentById, lessonTypes, lessonTypeBy
       </div>
 
       {result.open.length ? <div className="enroll-list">
-        {result.open.map(m => { const c = colorsFor(m.s.type); const pool = poolById(m.s.poolId); const inst = (m.s.instructors[0] && m.s.instructors[0].name) || m.s.legacyInstructor || 'Unassigned'; const trial = (trialAmountFor(m.lt, packages)) ?? (m.lt && (m.lt.trial_fee_override != null ? m.lt.trial_fee_override : m.lt.trial_fee)); const mine = alreadyIn(m); return (
+        {result.open.map(m => { const c = colorsFor(m.s.type); const pool = poolById(m.s.poolId); const inst = (m.s.instructors[0] && m.s.instructors[0].name) || m.s.legacyInstructor || 'Unassigned'; const trial = trialAmountFor(m.lt, packages); const mine = alreadyIn(m); return (
           <div className="enroll-card" key={m.s.id} style={{borderLeftColor:c.bd}}>
             <div className="enroll-main">
               <div className="enroll-type" style={{color:c.tx}}>{m.s.type}</div>
