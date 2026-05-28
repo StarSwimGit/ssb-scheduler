@@ -1371,8 +1371,10 @@ function groupBilling(pkg, memberCount){
   if(!pkg.is_group){
     const total = bundle;
     const perHead = (total != null && n > 0) ? total / n : null;
+    // For a flat/private package, pax is the MAXIMUM capacity (Clara 1–3, Duo
+    // 1–2). Fewer than the max is perfectly fine; only exceeding it warns.
     let status = 'flat';
-    if(required != null && n !== required) status = (n < required ? 'under_soft' : 'over_soft');
+    if(required != null && n > required) status = 'over_soft';
     return { n, status, total, perHead, required, bundle, fb, credits, mode, isGroup:false };
   }
   // Family discount bundle: price holds at full size, reverts to per-pax below.
@@ -1871,9 +1873,9 @@ function FamilyGroupsPanel({ groups, students, groupPackages, packageById, membe
     if(b.status === 'qualified') return { cls:'gb-ok', text:`Qualified · RM${fmtMoney(b.total)}${b.perHead != null ? ` (RM${fmtMoney(b.perHead)}/child)` : ''}` };
     if(b.status === 'under')     return { cls:'gb-warn', text:`⚠ Under-enrolled ${b.n}/${b.required} · discount void → RM${fmtMoney(b.total)}${b.fb != null ? ` (${b.n} × RM${fmtMoney(b.fb)})` : ''}` };
     if(b.status === 'over')      return { cls:'gb-amber', text:`⚠ ${b.n} members — package is for ${b.required}. Move to a ${b.n}-pax family package.` };
-    if(b.status === 'flat')      return { cls:'gb-ok', text:`RM${fmtMoney(b.total)} for the group${b.mode === 'credit' && b.credits != null ? ` · ${b.credits} credits` : ''} · ${b.n} member${b.n===1?'':'s'}` };
-    if(b.status === 'under_soft')return { cls:'gb-amber', text:`${b.n} of ${b.required} placed${b.mode === 'credit' && b.credits != null ? ` · ${b.credits} credits` : ''}` };
-    if(b.status === 'over_soft') return { cls:'gb-amber', text:`⚠ ${b.n} members — package covers ${b.required}` };
+    if(b.status === 'flat')      return { cls:'gb-ok', text:`RM${fmtMoney(b.total)} for the group${b.mode === 'credit' && b.credits != null ? ` · ${b.credits} credits` : ''} · ${b.n} member${b.n===1?'':'s'}${b.required != null ? ` · up to ${b.required}` : ''}` };
+    if(b.status === 'under_soft')return { cls:'gb-ok', text:`RM${fmtMoney(b.total)} for the group${b.mode === 'credit' && b.credits != null ? ` · ${b.credits} credits` : ''} · ${b.n} member${b.n===1?'':'s'}` };
+    if(b.status === 'over_soft') return { cls:'gb-amber', text:`⚠ ${b.n} members — package max is ${b.required}` };
     return { cls:'gb-dim', text:'Set amount (and required pax) on the package.' };
   }
 
@@ -1899,7 +1901,9 @@ function FamilyGroupsPanel({ groups, students, groupPackages, packageById, membe
           <div className="gb-head">
             <div style={{minWidth:0}}>
               <div style={{fontWeight:800,fontSize:15}}>👪 {g.name}</div>
-              <div className="small subtle">{pkg ? `${pkg.name}${pkg.pax!=null?` · needs ${pkg.pax} pax`:''}${pkg.amount!=null?` · RM${pkg.amount} bundle`:''}${pkg.fallback_per_pax!=null?` · RM${pkg.fallback_per_pax}/pax standard`:''}` : 'No package linked'}</div>
+              <div className="small subtle">{pkg ? (pkg.is_group
+                ? `${pkg.name}${pkg.pax!=null?` · needs ${pkg.pax} pax`:''}${pkg.amount!=null?` · RM${pkg.amount} bundle`:''}${pkg.fallback_per_pax!=null?` · RM${pkg.fallback_per_pax}/pax standard`:''}`
+                : `${pkg.name}${pkg.pax!=null?` · up to ${pkg.pax} pax`:''}${pkg.amount!=null?` · RM${pkg.amount}`:''}${(pkg.billing_mode==='credit'&&pkg.billing_count!=null)?` · ${pkg.billing_count} credits`:''}`) : 'No package linked'}</div>
             </div>
             <div style={{display:'flex',gap:6,flexShrink:0}}>
               <button className="btn btn-ghost small" onClick={()=>setEditId(editId===g.id?null:g.id)}>{editId===g.id?'Close':'Edit'}</button>
