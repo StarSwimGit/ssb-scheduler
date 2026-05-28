@@ -660,16 +660,14 @@ function WeekView(props){
   const wb = weekBounds(selectedDate);
   const printDays = Array.from({length:7}, (_,i) => { const d = new Date(wb.start); d.setDate(wb.start.getDate()+i); const ds = toDateStr(d); return { date:d, ds, items:sessionsForDate(ds) }; });
 
-  // Width model: each day claims flex-grow proportional to its peak overlap and
-  // a hard min-width of peak × COL_MIN_W. On a wide screen the days grow to fill;
-  // when the summed minimums exceed the viewport the canvas overflows and the
-  // grid scrolls horizontally with the time axis pinned.
-  const COL_MIN_W = 132;
-  const TIME_W = 96;
+  // Full-width agenda: 7 equal day columns fill the screen, one row per hour.
+  // Sessions stack vertically inside each day-hour cell, so a busy slot grows
+  // downward instead of forcing a horizontal scrollbar. Each card lays its
+  // details out on separate lines.
   const showPoolBadge = !selectedPoolId && pools.length > 1;
-  const totalCols = weekBlocks.reduce((s,d) => s + d.peak, 0);
-  const canvasMinWidth = TIME_W + totalCols * COL_MIN_W;
-  const dayStyle = (peak) => ({ flexGrow: peak, flexShrink: 0, flexBasis: 0, minWidth: peak * COL_MIN_W });
+  const startHour = Math.floor(gridBounds.startMin / 60) * 60;
+  const hours = [];
+  for(let h = startHour; h < gridBounds.endMin; h += 60) hours.push(h);
 
   const weekGrid = <>
     <div className="pool-tabs">
@@ -677,49 +675,28 @@ function WeekView(props){
       {pools.map(p => <button key={p.id} className={`pool-tab ${selectedPoolId===p.id?'active':''}`} onClick={()=>setSelectedPoolId(p.id)}>{p.name} <span className="pool-tab-cap">cap {p.capacity_total}</span></button>)}
     </div>
 
-    <div className="week-scroll">
-      <div className="week-canvas" style={{minWidth: canvasMinWidth}}>
-        {/* Header row */}
-        <div className="week-head-row">
-          <div className="week-corner" />
-          {DAYS_S.map((d,di) => {
-            const dateObj = new Date(wb.start); dateObj.setDate(wb.start.getDate()+di);
-            const dateStr = dateObj.toLocaleDateString(undefined,{month:'short', day:'numeric'});
-            return <div key={d} className="week-day-head" style={dayStyle(weekBlocks[di].peak)}>
-              <button className="week-day-link" onClick={() => onJumpToDay(di)} title={`Open ${DAYS_F[di]} daily view`}>
-                <div>{d}</div>
-                <div style={{fontSize:'10px',fontWeight:600,color:'#94A3B8'}}>{dateStr}</div>
-              </button>
-              {isFutureSelectedWeek ? <button className="week-clear-btn" onClick={(e)=>{e.stopPropagation(); onClearDay(di);}}>Remove all classes</button> : <div className="week-clear-placeholder">Protected</div>}
-            </div>;
-          })}
-        </div>
-
-        {/* Body row */}
-        <div className="week-body-row">
-          <div className="time-col">
-            {Array.from({length:gridSlots}, (_,i) => <div key={i} className={`time-cell ${i%2===1?'major':'minor'}`}>{i%2===0 ? minuteToTime(slotToMinute(i)) : '·'}</div>)}
-            <div className="time-cell major">{minuteToTime(gridBounds.endMin)}</div>
-          </div>
-          {DAYS_S.map((_,di) => {
-            const { packed, peak } = weekBlocks[di];
-            return <div key={di} className="day-col" style={dayStyle(peak)}>
-              {Array.from({length:gridSlots}, (_,si) => <div key={si} className={`slot-cell ${si%2===1?'major':'minor'}`} onClick={() => onAdd(di, si, selectedPoolId || undefined)} />)}
-              <div className="slot-cell major" onClick={() => onAdd(di, gridSlots, selectedPoolId || undefined)} />
-              {packed.map(block => <EventBlock
-                key={block.id}
-                block={block}
-                minuteToSlot={minuteToSlot}
-                colorsFor={colorsFor}
-                lessonTypeByName={lessonTypeByName}
-                poolById={poolById}
-                showPoolBadge={showPoolBadge}
-                onEdit={onEdit}
-              />)}
-            </div>;
-          })}
-        </div>
-      </div>
+    <div className="wagenda">
+      <div className="wa-corner" />
+      {DAYS_S.map((d,di) => {
+        const dateObj = new Date(wb.start); dateObj.setDate(wb.start.getDate()+di);
+        const dateStr = dateObj.toLocaleDateString(undefined,{month:'short', day:'numeric'});
+        return <div key={'head'+di} className="wa-dayhead">
+          <button className="week-day-link" onClick={() => onJumpToDay(di)} title={`Open ${DAYS_F[di]} daily view`}>
+            <div>{d}</div>
+            <div style={{fontSize:'10px',fontWeight:600,color:'#94A3B8'}}>{dateStr}</div>
+          </button>
+          {isFutureSelectedWeek ? <button className="week-clear-btn" onClick={(e)=>{e.stopPropagation(); onClearDay(di);}}>Remove all</button> : <div className="week-clear-placeholder">Protected</div>}
+        </div>;
+      })}
+      {hours.map(h => <React.Fragment key={h}>
+        <div className="wa-time">{minuteToTime(h)}</div>
+        {DAYS_S.map((_,di) => {
+          const cell = weekBlocks[di].packed.filter(b => b.startMinute >= h && b.startMinute < h + 60);
+          return <div key={di+'-'+h} className="wa-cell" onClick={() => onAdd(di, minuteToSlot(h), selectedPoolId || undefined)}>
+            {cell.map(block => <AgendaCard key={block.id} block={block} colorsFor={colorsFor} lessonTypeByName={lessonTypeByName} poolById={poolById} showPoolBadge={showPoolBadge} onEdit={onEdit} />)}
+          </div>;
+        })}
+      </React.Fragment>)}
     </div>
   </>;
 
@@ -761,42 +738,26 @@ function WeekView(props){
   </>;
 }
 
-// M2.1: event renderer. Width = a lane in the day's aligned column grid
-// (block._total lanes, this event sits in lane block._col). Pool shows as a
-// small badge in all-pools mode.
-function EventBlock({ block, minuteToSlot, colorsFor, lessonTypeByName, poolById, showPoolBadge, onEdit }){
+// M2.2: agenda card — a static, full-width card inside a day-hour cell. Details
+// stack on separate lines; the student list wraps to use vertical space.
+function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadge, onEdit }){
   const c = colorsFor(block.type);
-  const pct = 100 / block._total;
-  const width = block._total > 1 ? `calc(${pct}% - 3px)` : 'calc(100% - 6px)';
-  const left = block._total > 1 ? `calc(${block._col * pct}% + 1.5px)` : '3px';
-  const slot = minuteToSlot(block.startMinute);
-  const height = Math.max(1, block.durationMinutes / SLOT_MIN);
   const lt = lessonTypeByName(block.type);
   const cap = sessionCapacity(block, lt);
   const chip = capacityChipColors(cap.status);
   const pool = poolById(block.poolId);
   const isOver = cap.status === 'over';
-  const isFull = cap.status === 'full';
-  return <div className={`event ${isOver?'event-over':''} ${isFull?'event-full':''}`}
+  const inst = (block.instructors[0]?.name) || block.legacyInstructor || '—';
+  return <div className={`wa-card ${isOver?'event-over':''}`}
     onClick={(e)=>{e.stopPropagation(); onEdit(block);}}
-    style={{
-      top:`calc(${slot} * ${ROW_H}px + 2px)`,
-      left, width,
-      height:`calc(${height} * ${ROW_H}px - 4px)`,
-      background:c.bg,
-      borderLeft:`3px solid ${c.bd}`,
-      borderTop:`1px solid ${isOver?'#dc2626':c.bd+'44'}`,
-      borderRight:`1px solid ${isOver?'#dc2626':c.bd+'44'}`,
-      borderBottom:`1px solid ${isOver?'#dc2626':c.bd+'44'}`,
-      color:c.tx,
-      boxShadow: isOver ? '0 0 0 1px #dc262655 inset' : undefined
-    }}>
-    <div className="event-head">
-      <div className="event-title">{block.type}</div>
+    style={{ background:c.bg, borderLeft:`3px solid ${c.bd}`, color:c.tx }}>
+    <div className="wa-card-head">
+      <span className="wa-card-title">{block.type}</span>
       {cap.max > 0 ? <span className="cap-chip" style={{background:chip.bg, color:chip.tx, borderColor:chip.bd}}>{cap.current}/{cap.max}</span> : <span className="cap-chip cap-chip-unknown">{cap.current}</span>}
     </div>
-    <div className="event-sub">{showPoolBadge && pool ? <span className="event-pool-pill">{pool.name}</span> : null}{minuteToTime(block.startMinute)} · {(block.instructors[0]?.name) || block.legacyInstructor || '—'}</div>
-    <div className="event-sub">{block.students.map(s=>s.name).join(', ') || '-'}</div>
+    <div className="wa-card-line">{showPoolBadge && pool ? <span className="event-pool-pill">{pool.name}</span> : null}{formatRange(block.startMinute, block.durationMinutes)}</div>
+    <div className="wa-card-line">{inst}</div>
+    <div className="wa-card-line wa-card-students">{block.students.map(s=>s.name).join(', ') || '—'}</div>
   </div>;
 }
 
