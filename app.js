@@ -595,7 +595,7 @@ function App(){
         await loadSessions();
       }
       if(kind === 'pool') await insertRows('pools', { name: extra.name, capacity_total: Number(extra.capacity), sort_order: options.pools.length + 1, is_active:true });
-      if(kind === 'package') await insertRows('packages', { name: extra.name, pax: (extra.pax === '' || extra.pax == null) ? null : Number(extra.pax), amount: (extra.amount === '' || extra.amount == null) ? null : Number(extra.amount), sort_order: options.packages.length + 1, is_active:true });
+      if(kind === 'package') await insertRows('packages', { name: extra.name, pax: (extra.pax === '' || extra.pax == null) ? null : Number(extra.pax), amount: (extra.amount === '' || extra.amount == null) ? null : Number(extra.amount), billing_mode: extra.billingMode || 'monthly', billing_count: (extra.billingCount === '' || extra.billingCount == null) ? null : Number(extra.billingCount), sort_order: options.packages.length + 1, is_active:true });
       await loadOptions();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to add option'); }
   }
@@ -1273,19 +1273,44 @@ function SummaryView({ summary, pools }){
 // SettingsView (M2: pools, operating hours, expanded lesson-type editor)
 // ============================================================================
 
+function billingText(mode, count){ if(count === null || count === undefined || count === '') return ''; return `${count} ${mode === 'credit' ? 'credits' : 'monthly'}`; }
+
+// Monthly/Credit segmented toggle + a count input whose suffix flips to match.
+function BillingControl({ mode, count, onMode, onCount }){
+  return <div style={{display:'flex',alignItems:'flex-end',gap:12,flexWrap:'wrap'}}>
+    <div className="field" style={{margin:0}}>
+      <label>Billing</label>
+      <div className="seg">
+        <button type="button" className={`seg-btn ${mode === 'credit' ? '' : 'on'}`} onClick={()=>onMode('monthly')}>Monthly</button>
+        <button type="button" className={`seg-btn ${mode === 'credit' ? 'on' : ''}`} onClick={()=>onMode('credit')}>Credit</button>
+      </div>
+    </div>
+    <div className="field" style={{margin:0}}>
+      <label>{mode === 'credit' ? 'Credits' : 'Lessons per month'}</label>
+      <div className="suffix-input">
+        <input className="input" type="number" min="0" value={count} onChange={(e)=>onCount(e.target.value)} placeholder={mode === 'credit' ? '6' : '4'} />
+        <span className="suffix-tag">{mode === 'credit' ? 'credits' : 'monthly'}</span>
+      </div>
+    </div>
+  </div>;
+}
+
 function PackageEditor({ row, onSave, onCancel }){
   const [name, setName] = useState(row.name || '');
   const [pax, setPax] = useState(row.pax == null ? '' : String(row.pax));
   const [amount, setAmount] = useState(row.amount == null ? '' : String(row.amount));
+  const [mode, setMode] = useState(row.billing_mode === 'credit' ? 'credit' : 'monthly');
+  const [count, setCount] = useState(row.billing_count == null ? '' : String(row.billing_count));
   return <div style={{width:'100%'}}>
     <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) 90px 130px',gap:10}}>
       <div className="field" style={{margin:0}}><label>Package name</label><input className="input" value={name} onChange={(e)=>setName(e.target.value)} /></div>
       <div className="field" style={{margin:0}}><label>Pax</label><input className="input" type="number" min="1" value={pax} onChange={(e)=>setPax(e.target.value)} /></div>
       <div className="field" style={{margin:0}}><label>Amount (RM)</label><input className="input" type="number" min="0" step="0.01" value={amount} onChange={(e)=>setAmount(e.target.value)} /></div>
     </div>
+    <div style={{marginTop:10}}><BillingControl mode={mode} count={count} onMode={setMode} onCount={setCount} /></div>
     <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:10}}>
       <button className="btn btn-ghost small" onClick={onCancel}>Cancel</button>
-      <button className="btn btn-primary small" onClick={()=>{ const v = name.trim(); if(!v) return; onSave({ name:v, pax:(pax === '' ? null : Number(pax)), amount:(amount === '' ? null : Number(amount)) }); }}>Save</button>
+      <button className="btn btn-primary small" onClick={()=>{ const v = name.trim(); if(!v) return; onSave({ name:v, pax:(pax === '' ? null : Number(pax)), amount:(amount === '' ? null : Number(amount)), billing_mode:mode, billing_count:(count === '' ? null : Number(count)) }); }}>Save</button>
     </div>
   </div>;
 }
@@ -1301,6 +1326,8 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
   const [newPkgName, setNewPkgName] = useState('');
   const [newPkgPax, setNewPkgPax] = useState('');
   const [newPkgAmount, setNewPkgAmount] = useState('');
+  const [newPkgMode, setNewPkgMode] = useState('monthly');
+  const [newPkgCount, setNewPkgCount] = useState('');
   const [editPkgId, setEditPkgId] = useState(null);
   const [editingLessonId, setEditingLessonId] = useState(null);
   const counts = lessonTypeCounts || {};
@@ -1380,11 +1407,14 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
     <div className="card" style={{marginTop:16}}>
       <div style={{fontSize:16,fontWeight:800}}>Packages</div>
       <div className="small subtle" style={{marginTop:4}}>Named price arrangements. Each swimmer picks one of these on the Swimmers page. Pax is how many swimmers the package covers.</div>
-      <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) 90px 130px auto',gap:10,alignItems:'end',marginTop:12}}>
+      <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) 90px 130px',gap:10,marginTop:12}}>
         <div className="field" style={{margin:0}}><label>Package name</label><input className="input" placeholder="e.g. LTS Family of 4" value={newPkgName} onChange={(e)=>setNewPkgName(e.target.value)} /></div>
         <div className="field" style={{margin:0}}><label>Pax</label><input className="input" type="number" min="1" placeholder="4" value={newPkgPax} onChange={(e)=>setNewPkgPax(e.target.value)} /></div>
         <div className="field" style={{margin:0}}><label>Amount (RM)</label><input className="input" type="number" min="0" step="0.01" placeholder="600" value={newPkgAmount} onChange={(e)=>setNewPkgAmount(e.target.value)} /></div>
-        <button className="btn btn-primary" onClick={()=>{ const v = newPkgName.trim(); if(!v) return; addOption('package', { name:v, pax:newPkgPax, amount:newPkgAmount }); setNewPkgName(''); setNewPkgPax(''); setNewPkgAmount(''); }}>Add</button>
+      </div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-end',gap:12,marginTop:10,flexWrap:'wrap'}}>
+        <BillingControl mode={newPkgMode} count={newPkgCount} onMode={setNewPkgMode} onCount={setNewPkgCount} />
+        <button className="btn btn-primary" onClick={()=>{ const v = newPkgName.trim(); if(!v) return; addOption('package', { name:v, pax:newPkgPax, amount:newPkgAmount, billingMode:newPkgMode, billingCount:newPkgCount }); setNewPkgName(''); setNewPkgPax(''); setNewPkgAmount(''); setNewPkgMode('monthly'); setNewPkgCount(''); }}>Add</button>
       </div>
       <div className="settings-list">
         {options.packages && options.packages.length ? options.packages.map((r, i) => editPkgId === r.id
@@ -1399,7 +1429,7 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
                 </div>
                 <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
                 <div style={{fontWeight:700}}>{r.name}</div>
-                <span className="small subtle">{r.pax != null ? `${r.pax} pax` : '—'} · {r.amount != null ? `RM${r.amount}` : 'no amount'}</span>
+                <span className="small subtle">{r.pax != null ? `${r.pax} pax` : '—'} · {r.amount != null ? `RM${r.amount}` : 'no amount'}{billingText(r.billing_mode, r.billing_count) ? ` · ${billingText(r.billing_mode, r.billing_count)}` : ''}</span>
               </div>
               <div style={{display:'flex',gap:6}}>
                 <button className="btn btn-ghost small" onClick={()=>setEditPkgId(r.id)}>Edit</button>
@@ -1678,7 +1708,7 @@ function StudentEditor({ row, lessonTypes, packages, onSave }){
     <div className="form-grid" style={{gridTemplateColumns:'minmax(0,1.4fr) 80px minmax(0,1fr)'}}>
       <div className="field"><label>Name</label><input className="input" value={name} onChange={e=>setName(e.target.value)} /></div>
       <div className="field"><label>Age</label><input className="input" type="number" min="0" max="120" value={age} onChange={e=>setAge(e.target.value)} /></div>
-      <div className="field"><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">(none)</option>{(packages||[]).map(p => <option key={p.id} value={p.id}>{p.name}{p.pax!=null?` · ${p.pax}pax`:''}{p.amount!=null?` · RM${p.amount}`:''}</option>)}</select></div>
+      <div className="field"><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">(none)</option>{(packages||[]).map(p => <option key={p.id} value={p.id}>{p.name}{p.pax!=null?` · ${p.pax}pax`:''}{p.amount!=null?` · RM${p.amount}`:''}{billingText(p.billing_mode,p.billing_count)?` · ${billingText(p.billing_mode,p.billing_count)}`:''}</option>)}</select></div>
     </div>
     <div className="field" style={{marginTop:10}}><label>Lesson types</label><div className="type-picks">{lessonTypes.map(t => { const on = types.includes(t.id); return <button key={t.id} type="button" className={`chip chip-toggle ${on ? '' : 'chip-off'}`} style={on ? {background:t.bg_color,borderColor:t.border_color,color:t.text_color} : undefined} onClick={()=>toggle(t.id)}>{t.name}</button>; })}</div></div>
     <div style={{display:'flex',justifyContent:'flex-end',marginTop:10}}><button className="btn btn-primary" onClick={()=>{ const v = name.trim(); if(!v) return; onSave({ name:v, age, packageId:pkgId || null, lessonTypeIds:types }); }}>Save Swimmer</button></div>
@@ -1694,7 +1724,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
   const [q, setQ] = useState('');
   function toggleType(id){ setTypes(t => t.includes(id) ? t.filter(x => x !== id) : [...t, id]); }
   function colorsForId(id){ const t = lessonTypeById(id); return t ? { bg:t.bg_color, bd:t.border_color, tx:t.text_color, name:t.name } : { bg:'#eee', bd:'#ccc', tx:'#333', name:'(removed)' }; }
-  function packageLabel(s){ const p = s.packageId ? packageById(s.packageId) : null; if(p) return `${p.name}${p.amount != null ? ` · RM${p.amount}` : ''}`; return s.package || '—'; }
+  function packageLabel(s){ const p = s.packageId ? packageById(s.packageId) : null; if(p){ const b = billingText(p.billing_mode, p.billing_count); return `${p.name}${p.amount != null ? ` · RM${p.amount}` : ''}${b ? ` · ${b}` : ''}`; } return s.package || '—'; }
   function scheduleLines(id){
     const slots = scheduleByStudent[id] || [];
     if(!slots.length) return null;
@@ -1711,7 +1741,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
       <div style={{display:'grid',gridTemplateColumns:'minmax(0,1.4fr) 80px minmax(0,1fr)',gap:10,marginTop:14}}>
         <div className="field" style={{margin:0}}><label>Name</label><input className="input" value={name} onChange={e=>setName(e.target.value)} placeholder="Swimmer name" /></div>
         <div className="field" style={{margin:0}}><label>Age</label><input className="input" type="number" min="0" max="120" value={age} onChange={e=>setAge(e.target.value)} placeholder="Yrs" /></div>
-        <div className="field" style={{margin:0}}><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">(none)</option>{(packages||[]).map(p => <option key={p.id} value={p.id}>{p.name}{p.pax!=null?` · ${p.pax}pax`:''}{p.amount!=null?` · RM${p.amount}`:''}</option>)}</select></div>
+        <div className="field" style={{margin:0}}><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">(none)</option>{(packages||[]).map(p => <option key={p.id} value={p.id}>{p.name}{p.pax!=null?` · ${p.pax}pax`:''}{p.amount!=null?` · RM${p.amount}`:''}{billingText(p.billing_mode,p.billing_count)?` · ${billingText(p.billing_mode,p.billing_count)}`:''}</option>)}</select></div>
       </div>
       <div className="field" style={{marginTop:10}}><label>Lesson types (bucket — pick one or more)</label>
         <div className="type-picks">{lessonTypes.map(t => { const on = types.includes(t.id); return <button key={t.id} type="button" className={`chip chip-toggle ${on ? '' : 'chip-off'}`} style={on ? {background:t.bg_color,borderColor:t.border_color,color:t.text_color} : undefined} onClick={()=>toggleType(t.id)}>{t.name}</button>; })}{lessonTypes.length ? null : <span className="subtle small">Add lesson types in Settings first.</span>}</div>
