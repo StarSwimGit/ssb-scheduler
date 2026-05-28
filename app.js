@@ -135,11 +135,11 @@ function sessionCapacity(session, lessonType){
 
 function capacityChipColors(status){
   switch(status){
-    case 'open':  return { bg:'#0d2e1f', tx:'#86efac', bd:'#166534' };
-    case 'tight': return { bg:'#3b2a08', tx:'#fde68a', bd:'#a16207' };
-    case 'full':  return { bg:'#3a1e08', tx:'#fed7aa', bd:'#c2410c' };
-    case 'over':  return { bg:'#3a1118', tx:'#fecaca', bd:'#b91c1c' };
-    default:      return { bg:'#1f2937', tx:'#cbd5e1', bd:'#334155' };
+    case 'open':  return { bg:'#E4F6EC', tx:'#138A53', bd:'#BFE8CF' };
+    case 'tight': return { bg:'#FCEFD6', tx:'#B45309', bd:'#F2DCA8' };
+    case 'full':  return { bg:'#FCE7D6', tx:'#C2410C', bd:'#F3D2B0' };
+    case 'over':  return { bg:'#FCE7E7', tx:'#D63B3B', bd:'#F3C9C9' };
+    default:      return { bg:'#F0F0F5', tx:'#6C6C7E', bd:'#E1E1EC' };
   }
 }
 
@@ -565,7 +565,7 @@ function App(){
     <div className="header"><div className="header-inner">
       <div className="brand"><div className="logo">🏊</div><div><div style={{fontSize:16,fontWeight:800,letterSpacing:'-.4px',lineHeight:1}}>SSB Scheduler</div><div style={{fontSize:10,color:'#64748B',marginTop:2}}>Pool-aware lesson calendar</div></div></div>
       <div style={{display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
-        <div className="small subtle"><span style={{color:'#06B6D4',fontWeight:800}}>{summary.totalStudents}</span> students · <span style={{color:'#06B6D4',fontWeight:800}}>{summary.totalSessions}</span> sessions · <span style={{color:'#06B6D4',fontWeight:800}}>{selectedWeekLabel}</span></div>
+        <div className="small subtle"><span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalStudents}</span> students · <span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalSessions}</span> sessions · <span style={{color:'var(--primary)',fontWeight:800}}>{selectedWeekLabel}</span></div>
         <div className="tabs">
           {['day','week','month','summary','settings'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='week'?'📅 Weekly':v==='day'?'📋 Daily':v==='month'?'🗓️ Monthly':v==='summary'?'📊 Summary':'⚙️ Settings'}</button>)}
         </div>
@@ -797,7 +797,7 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
       <PeriodNav rangeLabel={weekRangeLabel(selectedWeekStart)} onPrev={onPrevWeek} onNext={onNextWeek} onToday={onThisWeek} isCurrent={selectedWeekStart === currentWeekStart}>
         <button className="btn btn-print" onClick={() => printDailyView(selectedDate)}>Print</button>
       </PeriodNav>
-      <div className="nav-note">Showing <b style={{color:'#cbd5e1'}}>{longDate(selectedDate)}</b></div>
+      <div className="nav-note">Showing <b style={{color:'var(--text)'}}>{longDate(selectedDate)}</b></div>
       <div className="daily-day-tabs">
         {weekDays.map(({date, ds, idx}) => <button key={ds} className={`daily-day-tab ${selectedDate===ds?'active':''}`} onClick={() => setSelectedDate(ds)}>{DAYS_S[idx]} · {date.toLocaleDateString(undefined,{month:'short', day:'numeric'})}</button>)}
       </div>
@@ -932,9 +932,9 @@ function SummaryView({ summary, pools }){
   const poolRows = Object.entries(summary.byPool).sort((a,b)=>b[1]-a[1]);
   return <>
     <div className="grid grid-3">
-      <div className="card"><div className="small subtle">Total students</div><div style={{fontSize:34,fontWeight:800,color:'#06B6D4'}}>{summary.totalStudents}</div><div className="small subtle" style={{marginTop:6}}>Excludes lesson types containing "replacement" or "trial".</div></div>
-      <div className="card"><div className="small subtle">Sessions this week</div><div style={{fontSize:34,fontWeight:800,color:'#22C55E'}}>{summary.totalSessions}</div></div>
-      <div className="card"><div className="small subtle">Active pools</div><div style={{fontSize:34,fontWeight:800,color:'#F97316'}}>{pools.length}</div></div>
+      <div className="card"><div className="small subtle">Total students</div><div style={{fontSize:34,fontWeight:800,color:'var(--primary)'}}>{summary.totalStudents}</div><div className="small subtle" style={{marginTop:6}}>Excludes lesson types containing "replacement" or "trial".</div></div>
+      <div className="card"><div className="small subtle">Sessions this week</div><div style={{fontSize:34,fontWeight:800,color:'var(--teal)'}}>{summary.totalSessions}</div></div>
+      <div className="card"><div className="small subtle">Active pools</div><div style={{fontSize:34,fontWeight:800,color:'#F59E0B'}}>{pools.length}</div></div>
     </div>
     <div className="grid grid-3" style={{marginTop:16}}>
       <div className="card"><div style={{fontSize:18,fontWeight:800,marginBottom:10}}>By Lesson Type</div><div className="table-wrap"><table><thead><tr><th>Lesson Type</th><th>Students</th></tr></thead><tbody>{typeRows.map(([k,v]) => <tr key={k}><td>{k}</td><td>{v}</td></tr>)}</tbody></table></div></div>
@@ -979,7 +979,7 @@ function SettingsView({ options, addOption, toggleOption, deleteOption, patchOpt
         <div className="settings-list">
           {options.pools.length ? options.pools.map(r => <div key={r.id} className="row-item">
             <div style={{display:'flex',alignItems:'center',gap:8}}>
-              <span className="pill" style={{background:r.is_active?'#0d2338':'#1f2937',color:r.is_active?'#93c5fd':'#94a3b8'}}>{r.is_active?'Active':'Hidden'}</span>
+              <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
               <div>{r.name}</div>
               <input className="input" style={{width:90,padding:'4px 8px',fontSize:12}} type="number" defaultValue={r.capacity_total} onBlur={(e)=>{ const v = Number(e.target.value); if(v > 0 && v !== r.capacity_total) patchOption('pools', r.id, { capacity_total: v }); }} />
             </div>
@@ -1035,7 +1035,7 @@ function SettingsView({ options, addOption, toggleOption, deleteOption, patchOpt
         {options.lessonTypes.length ? options.lessonTypes.map(r => <div key={r.id} className="lesson-row">
           <div className="row-item" style={{marginBottom:0}}>
             <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-              <span className="pill" style={{background:r.is_active?'#0d2338':'#1f2937',color:r.is_active?'#93c5fd':'#94a3b8'}}>{r.is_active?'Active':'Hidden'}</span>
+              <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
               <span className="chip" style={{background:r.bg_color,borderColor:r.border_color,color:r.text_color}}>{r.name}</span>
               <span className="small subtle">ratio 1:{r.students_per_instructor || '?'} · {r.default_duration_minutes || '?'} min · {r.billing_model || '?'} {r.billing_model==='monthly'?`${r.monthly_fee||'?'}/${r.lessons_per_month||'?'}`:r.billing_model==='credit'?`${r.credit_fee||'?'}/${r.credit_count||'?'}`:''} · {(options.pools.find(p=>p.id===r.default_pool_id)?.name) || 'no pool'}</span>
             </div>
@@ -1055,13 +1055,13 @@ function SettingsView({ options, addOption, toggleOption, deleteOption, patchOpt
       <div className="card">
         <div style={{fontSize:16,fontWeight:800}}>Instructor</div>
         <div style={{display:'flex',gap:8,marginTop:12}}><input className="input" placeholder="Add instructor name" value={newInstructor} onChange={(e)=>setNewInstructor(e.target.value)} /><button className="btn btn-primary" onClick={()=>{ const v = newInstructor.trim(); if(!v) return; addOption('instructor', { name:v }); setNewInstructor(''); }}>Add</button></div>
-        <div className="settings-list">{options.instructors.length ? options.instructors.map(r => <div key={r.id} className="row-item"><div style={{display:'flex',alignItems:'center',gap:8}}><span className="pill" style={{background:r.is_active?'#0d2338':'#1f2937',color:r.is_active?'#93c5fd':'#94a3b8'}}>{r.is_active?'Active':'Hidden'}</span><div>{r.name}</div></div><div style={{display:'flex',gap:8}}><button className="btn btn-ghost small" onClick={()=>toggleOption('scheduler_instructors',r)}>{r.is_active?'Hide':'Show'}</button><button className="btn btn-danger small" onClick={()=>deleteOption('scheduler_instructors',r,r.name)}>Delete</button></div></div>) : <div className="empty">No instructors</div>}</div>
+        <div className="settings-list">{options.instructors.length ? options.instructors.map(r => <div key={r.id} className="row-item"><div style={{display:'flex',alignItems:'center',gap:8}}><span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span><div>{r.name}</div></div><div style={{display:'flex',gap:8}}><button className="btn btn-ghost small" onClick={()=>toggleOption('scheduler_instructors',r)}>{r.is_active?'Hide':'Show'}</button><button className="btn btn-danger small" onClick={()=>deleteOption('scheduler_instructors',r,r.name)}>Delete</button></div></div>) : <div className="empty">No instructors</div>}</div>
       </div>
       <div className="card">
         <div style={{fontSize:16,fontWeight:800}}>Duration (legacy)</div>
         <div className="small subtle" style={{marginTop:4}}>Module 2 reads default duration from each lesson type. This list is preserved for the legacy modal dropdown.</div>
         <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:12}}><input className="input" style={{flex:1}} placeholder="Label e.g. 60 min" value={newDurationLabel} onChange={(e)=>setNewDurationLabel(e.target.value)} /><input className="input" style={{width:100}} type="number" min="1" value={newDurationSlots} onChange={(e)=>setNewDurationSlots(e.target.value)} /><button className="btn btn-primary" onClick={()=>{ const v = newDurationLabel.trim(); const s = Number(newDurationSlots); if(!v || !s || s < 1) return; addOption('duration', { label:v, slots:s }); setNewDurationLabel(''); setNewDurationSlots(2); }}>Add</button></div>
-        <div className="settings-list">{options.durations.length ? options.durations.map(r => <div key={r.id} className="row-item"><div style={{display:'flex',alignItems:'center',gap:8}}><span className="pill" style={{background:r.is_active?'#0d2338':'#1f2937',color:r.is_active?'#93c5fd':'#94a3b8'}}>{r.is_active?'Active':'Hidden'}</span><div>{r.label} ({r.slots} slots)</div></div><div style={{display:'flex',gap:8}}><button className="btn btn-ghost small" onClick={()=>toggleOption('scheduler_durations',r)}>{r.is_active?'Hide':'Show'}</button><button className="btn btn-danger small" onClick={()=>deleteOption('scheduler_durations',r,r.label)}>Delete</button></div></div>) : <div className="empty">No durations</div>}</div>
+        <div className="settings-list">{options.durations.length ? options.durations.map(r => <div key={r.id} className="row-item"><div style={{display:'flex',alignItems:'center',gap:8}}><span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span><div>{r.label} ({r.slots} slots)</div></div><div style={{display:'flex',gap:8}}><button className="btn btn-ghost small" onClick={()=>toggleOption('scheduler_durations',r)}>{r.is_active?'Hide':'Show'}</button><button className="btn btn-danger small" onClick={()=>deleteOption('scheduler_durations',r,r.label)}>Delete</button></div></div>) : <div className="empty">No durations</div>}</div>
       </div>
     </div>
   </>;
