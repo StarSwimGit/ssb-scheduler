@@ -1829,18 +1829,26 @@ function StudentSelect({ valueId, fallbackLabel, studentById, candidates, onPick
   const sel = valueId ? studentById[valueId] : null;
   const label = sel ? `${sel.name}${sel.age != null ? ` (${sel.age})` : ''}` : (fallbackLabel || '');
   const filtered = (candidates || []).filter(s => !q || (s.name || '').toLowerCase().includes(q.toLowerCase()));
+  function choose(s){ onPick(s); setOpen(false); setQ(''); }
   return <div className="ssel">
-    <button type="button" className={`ssel-btn ${label ? 'has' : ''}`} onClick={()=>setOpen(o=>!o)}>
-      <span className="ssel-label">{label || 'Select swimmer…'}</span>
-      {label ? <span className="ssel-x" title="Clear slot" onClick={(e)=>{ e.stopPropagation(); onPick(null); setOpen(false); }}>×</span> : <span className="ssel-caret">▾</span>}
-    </button>
+    <div className={`ssel-control ${label ? 'has' : ''}`}>
+      <input
+        className="ssel-input"
+        type="text"
+        value={open ? q : label}
+        placeholder={label ? '' : 'Type to search swimmer…'}
+        onFocus={()=>{ setOpen(true); setQ(''); }}
+        onChange={(e)=>{ setQ(e.target.value); if(!open) setOpen(true); }} />
+      {label
+        ? <span className="ssel-x" title="Clear slot" onMouseDown={(e)=>{ e.preventDefault(); onPick(null); setQ(''); setOpen(false); }}>×</span>
+        : <span className="ssel-caret" title="Browse" onMouseDown={(e)=>{ e.preventDefault(); setOpen(o=>!o); setQ(''); }}>▾</span>}
+    </div>
     {conflict ? <div className="ssel-warn">⚠ Also booked {conflict} this week</div> : null}
     {open ? <>
       <div className="ssel-backdrop" onClick={()=>{ setOpen(false); setQ(''); }} />
       <div className="ssel-pop">
-        <input className="input ssel-search" autoFocus placeholder="Search swimmers…" value={q} onChange={(e)=>setQ(e.target.value)} />
         <div className="ssel-list">
-          {filtered.length ? filtered.map(s => <button key={s.id} type="button" className="ssel-item" onClick={()=>{ onPick(s); setOpen(false); setQ(''); }}>
+          {filtered.length ? filtered.map(s => <button key={s.id} type="button" className="ssel-item" onClick={()=>choose(s)}>
             <span>{s.name}</span><span className="ssel-item-meta">{s.age != null ? `${s.age}y` : ''}{s.package ? ` · ${s.package}` : ''}</span>
           </button>) : <div className="ssel-empty">No swimmers found</div>}
         </div>
@@ -2110,7 +2118,7 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
           {modal.form.familyGroupId ? <div className="hint" style={{marginTop:5}}>👪 Bound to this group. Its members are placed below — change a slot to override, or set “No group” to unbind.</div> : null}
         </div>
         <div className="field" style={{gridColumn:'1 / -1'}}>
-          <label>Swimmers {previewMax > 0 ? `· ${previewMax} slots` : ''}</label>
+          <label>Swimmers {previewMax > 0 ? `· ${previewMax} slots (max for this type)` : ''}</label>
           <div className="stu-list">
             {(modal.form.studentRows || []).map((r, i) => <div className="stu-row" key={i}>
               <span className="stu-num">{i+1}</span>
@@ -2118,13 +2126,9 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
                 <StudentSelect valueId={r.studentId} fallbackLabel={r.studentId ? null : (r.name ? `${r.name}${r.age ? ` (${r.age})` : ''}` : '')} studentById={studentById} candidates={candidates} onPick={(stu)=>pickStudent(i, stu)} conflict={rowConflict(r, i)} />
                 <input className="input stu-remark" placeholder="Remark (optional)" value={r.remark || ''} onChange={(e)=>setRemark(i, e.target.value)} />
               </div>
-              <button className="btn btn-ghost stu-x" title="Remove slot" onClick={()=>removeRow(i)}>×</button>
             </div>)}
           </div>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,marginTop:8,flexWrap:'wrap'}}>
-            <div className="hint">{bucketFallback ? 'No swimmers tagged for this lesson type yet — showing all. Tag them in the Swimmers tab.' : 'Pick swimmers from the registry. Create or tag swimmers in the Swimmers tab.'}</div>
-            <button className="btn btn-ghost small" onClick={addRow}>+ Add slot</button>
-          </div>
+          <div className="hint" style={{marginTop:8}}>{bucketFallback ? 'No swimmers tagged for this lesson type yet — showing all. Tag them in the Swimmers tab.' : 'Slots are fixed to the lesson type’s maximum. Leave a slot empty to skip it, or clear a slot with its ×.'}</div>
         </div>
       </div>
       <div className="student-box"><div className="small subtle" style={{marginBottom:6}}>Parallel sessions and splits</div><div className="small">Multiple sessions can run at the same day and time. Each is one row in <b>weekly_sessions</b>; pools are independent. In Module 3, this modal will gain a "+ instructor" button to convert a single session into a split (two instructors, doubled capacity) without creating a parallel row.</div></div>
