@@ -45,11 +45,25 @@
     .slot-cell.minor{border-bottom:1px solid #0F1E30;background:transparent}
     .slot-cell:hover{background:rgba(6,182,212,0.07)!important}
     .pool-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
-    .pool-tab{padding:7px 12px;border:1px solid #24364f;background:#081525;color:#cbd5e1;font-weight:700;border-radius:8px;cursor:pointer;font-size:12px;display:inline-flex;align-items:center;gap:6px}
+    .pool-tab{padding:7px 13px;border:1px solid #274060;background:#081525;color:#cbd5e1;font-weight:700;border-radius:999px;cursor:pointer;font-size:12px;display:inline-flex;align-items:center;gap:6px}
     .pool-tab:hover{border-color:#3D5577}
     .pool-tab.active{background:linear-gradient(135deg,#0284C7,#06B6D4);color:#fff;border-color:#06B6D4;box-shadow:0 2px 8px rgba(6,182,212,0.25)}
     .pool-tab-cap{font-size:10px;opacity:.78;font-weight:600}
     .event-pool-pill{display:inline-block;font-size:8.5px;font-weight:800;letter-spacing:.3px;padding:0 4px;border-radius:5px;background:rgba(8,59,84,0.85);color:#bae6fd;margin-right:4px;vertical-align:baseline;text-transform:uppercase}
+    /* ── Shared navigation band ── */
+    .view-head{margin-bottom:14px}
+    .view-title{font-size:18px;font-weight:800;letter-spacing:-.2px}
+    .period-nav{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+    .period-nav-left{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .period-stepper{display:inline-flex;align-items:stretch;background:#081525;border:1px solid #274060;border-radius:11px;overflow:hidden}
+    .step-btn{background:transparent;border:none;color:#9fb4cc;font-size:20px;font-weight:700;line-height:1;padding:0 15px;cursor:pointer;display:flex;align-items:center}
+    .step-btn:hover{background:rgba(6,182,212,0.12);color:#e2e8f0}
+    .period-label{display:flex;align-items:center;justify-content:center;padding:9px 18px;font-weight:800;font-size:13px;color:#e2e8f0;border-left:1px solid #274060;border-right:1px solid #274060;white-space:nowrap;min-width:182px;letter-spacing:.2px}
+    .today-btn{background:#071221;border:1px solid #274060;color:#cbd5e1;border-radius:11px;padding:9px 15px;font-weight:700;font-size:12px;cursor:pointer}
+    .today-btn:hover:not(:disabled){border-color:#3D5577;color:#e2e8f0}
+    .today-btn.is-current,.today-btn:disabled{opacity:.45;cursor:default}
+    .period-nav-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .nav-note{font-size:12px;color:#64748B;margin-bottom:12px}
     .event-head{display:flex;align-items:flex-start;justify-content:space-between;gap:4px}
     .event-head .event-title{flex:1;min-width:0}
     .cap-chip{flex-shrink:0;font-size:9px;font-weight:800;padding:1px 5px;border-radius:8px;border:1px solid transparent;line-height:1.35;letter-spacing:.3px;white-space:nowrap}
@@ -82,9 +96,10 @@
     .student-box{border:1px solid #1A3050;background:#081525;border-radius:12px;padding:10px;margin-top:10px}
     .student-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #102238}.student-row:last-child{border-bottom:none}
 
-    .daily-day-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
-    .daily-day-tab{padding:8px 12px;border-radius:999px;border:1px solid #274060;background:#081525;color:#cbd5e1;cursor:pointer;font-weight:700}
-    .daily-day-tab.active{background:#0b3b54;color:#ecfeff;border-color:#22d3ee}
+    .daily-day-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+    .daily-day-tab{padding:7px 13px;border-radius:999px;border:1px solid #274060;background:#081525;color:#cbd5e1;cursor:pointer;font-weight:700;font-size:12px}
+    .daily-day-tab:hover{border-color:#3D5577}
+    .daily-day-tab.active{background:linear-gradient(135deg,#0284C7,#06B6D4);color:#fff;border-color:#06B6D4;box-shadow:0 2px 8px rgba(6,182,212,0.25)}
     .daily-grid{border:1px solid #1A3050;border-radius:12px;overflow:hidden}
     .daily-row{display:grid;grid-template-columns:110px 1fr;min-height:72px;border-bottom:1px solid #0F1E30}
     .daily-row:last-child{border-bottom:none}
