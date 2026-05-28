@@ -88,19 +88,19 @@ function ageSuffix(s){ return (s && s.age !== null && s.age !== undefined && s.a
 // Build the modal's student rows: existing students first, padded with blanks
 // up to the lesson type's ratio (so "max 4" shows 4 boxes). Falls back to 4.
 function buildStudentRows(existing, cap){
-  const rows = (existing || []).map(s => ({ name: s.name || '', age: (s.age === null || s.age === undefined ? '' : String(s.age)) }));
+  const rows = (existing || []).map(s => ({ studentId: s.studentId || null, name: s.name || '', age: (s.age === null || s.age === undefined ? '' : String(s.age)) }));
   const c = Number(cap) > 0 ? Number(cap) : 4;
   const target = Math.max(c, rows.length, 1);
-  while(rows.length < target) rows.push({ name:'', age:'' });
+  while(rows.length < target) rows.push({ studentId:null, name:'', age:'' });
   return rows;
 }
 // Re-normalize rows when the lesson type changes: keep filled rows, pad to the new ratio.
 function rebuildRowsForCap(rows, cap){
-  const filled = (rows || []).filter(r => (r.name || '').trim());
+  const filled = (rows || []).filter(r => (r.name || '').trim() || r.studentId);
   const c = Number(cap) > 0 ? Number(cap) : 4;
   const target = Math.max(c, filled.length, 1);
   const out = filled.slice();
-  while(out.length < target) out.push({ name:'', age:'' });
+  while(out.length < target) out.push({ studentId:null, name:'', age:'' });
   return out;
 }
 function formatRange(startMin, durationMin){ return `${minuteToTime(startMin)}–${minuteToTime(startMin + durationMin)}`; }
@@ -223,6 +223,7 @@ function App(){
   const [status,setStatus] = useState('');
   const [error,setError] = useState('');
   const [sessions,setSessions] = useState([]);
+  const [students,setStudents] = useState([]);
   const [remarks,setRemarks] = useState({});
   const [options,setOptions] = useState({ instructors:[], durations:[], lessonTypes:[], pools:[], operatingHours:[] });
   const [monthCursor,setMonthCursor] = useState(new Date());
@@ -244,7 +245,7 @@ function App(){
     try{
       setLoading(true); setError('');
       await loadOptions();
-      await Promise.all([loadSessions(), loadRemarks(monthCursor)]);
+      await Promise.all([loadSessions(), loadStudents(), loadRemarks(monthCursor)]);
       setStatus('Connected');
     } catch(err){ handleErr(err); }
     finally{ setLoading(false); }
@@ -283,7 +284,7 @@ function App(){
     (studentRows || []).forEach(r => {
       const key = String(r.session_id);
       if(!studentsBySession[key]) studentsBySession[key] = [];
-      studentsBySession[key].push({ id:r.id, name:r.student_name || '', age:(r.student_age === null || r.student_age === undefined ? null : Number(r.student_age)) });
+      studentsBySession[key].push({ id:r.id, studentId:r.student_id || null, name:r.student_name || '', age:(r.student_age === null || r.student_age === undefined ? null : Number(r.student_age)) });
     });
     const instructorsBySession = {};
     (instructorJoinRows || []).forEach(r => {
@@ -306,6 +307,20 @@ function App(){
       instructors: instructorsBySession[String(r.id)] || []
     }));
     setSessions(merged);
+  }
+
+  async function loadStudents(){
+    try{
+      const rows = await selectRows('students', '*', '&order=name.asc');
+      setStudents((rows || []).map(r => ({
+        id: r.id,
+        name: r.name || '',
+        age: (r.age === null || r.age === undefined ? null : Number(r.age)),
+        package: r.package || '',
+        lessonTypeIds: Array.isArray(r.lesson_type_ids) ? r.lesson_type_ids : [],
+        isActive: r.is_active !== false
+      })));
+    } catch(e){ console.warn('Swimmer registry not available yet (run the students migration):', e?.message || e); setStudents([]); }
   }
 
   async function loadRemarks(cursor){
@@ -478,9 +493,9 @@ function App(){
         const inserted = await insertRows('weekly_sessions', payload);
         sessionId = inserted?.[0]?.id;
       }
-      const rows = (modal.form.studentRows || []).map(r => ({ name:(r.name || '').trim(), age:r.age })).filter(r => r.name);
+      const rows = (modal.form.studentRows || []).map(r => ({ studentId:r.studentId || null, name:(r.name || '').trim(), age:r.age })).filter(r => r.name || r.studentId);
       if(sessionId && rows.length){
-        await insertRows('weekly_session_students', rows.map(r => ({ session_id: sessionId, student_name: r.name, student_age: (r.age === '' || r.age === null || r.age === undefined) ? null : Number(r.age) })));
+        await insertRows('weekly_session_students', rows.map(r => ({ session_id: sessionId, student_id: r.studentId, student_name: r.name, student_age: (r.age === '' || r.age === null || r.age === undefined) ? null : Number(r.age) })));
       }
       if(sessionId && inst){
         await insertRows('session_instructors', [{ session_id: sessionId, instructor_id: inst.id }]);
@@ -589,6 +604,40 @@ function App(){
     } catch(err){ handleErr(err); alert(err.message || 'Failed to update option'); }
   }
 
+  // ───── Swimmer registry CRUD ──────────────────────────────────────────────
+  async function addStudent({ name, age, package: pkg, lessonTypeIds }){
+    try{
+      setError('');
+      await insertRows('students', { name, age: (age === '' || age == null) ? null : Number(age), package: pkg || null, lesson_type_ids: lessonTypeIds || [], is_active: true });
+      await loadStudents();
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to add swimmer'); }
+  }
+  async function updateStudent(id, patch){
+    try{
+      setError('');
+      const body = {};
+      if('name' in patch) body.name = patch.name;
+      if('age' in patch) body.age = (patch.age === '' || patch.age == null) ? null : Number(patch.age);
+      if('package' in patch) body.package = patch.package || null;
+      if('lessonTypeIds' in patch) body.lesson_type_ids = patch.lessonTypeIds || [];
+      await patchRows('students', { id }, body);
+      await loadStudents();
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to update swimmer'); }
+  }
+  async function deleteStudent(row){
+    const enrolled = sessions.filter(s => s.students.some(st => st.studentId === row.id)).length;
+    const msg = enrolled > 0
+      ? `${row.name} is attached to ${enrolled} scheduled session${enrolled===1?'':'s'}.\n\nDeleting from the registry keeps those enrollments on the schedule (the name stays) but unlinks them. Proceed?`
+      : `Delete swimmer "${row.name}" from the registry?`;
+    if(!confirm(msg)) return;
+    try{
+      setError('');
+      await deleteRows('students', { id: row.id });
+      await loadStudents();
+      await loadSessions();
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to delete swimmer'); }
+  }
+
   async function duplicatePreviousWeek(){
     try{
       if(!isFutureSelectedWeek){ alert('Week duplication is only available for a future week.'); return; }
@@ -611,7 +660,7 @@ function App(){
       const instructorPayload = [];
       (inserted || []).forEach((row, idx) => {
         const src = sourceSessions[idx];
-        (src.students || []).forEach(st => studentPayload.push({ session_id: row.id, student_name: st.name, student_age: (st.age === null || st.age === undefined) ? null : Number(st.age) }));
+        (src.students || []).forEach(st => studentPayload.push({ session_id: row.id, student_id: st.studentId || null, student_name: st.name, student_age: (st.age === null || st.age === undefined) ? null : Number(st.age) }));
         (src.instructors || []).forEach(it => instructorPayload.push({ session_id: row.id, instructor_id: it.id }));
       });
       if(studentPayload.length) await insertRows('weekly_session_students', studentPayload);
@@ -700,13 +749,41 @@ function App(){
     return m;
   }, [sessions]);
 
+  const studentById = useMemo(() => { const m = {}; students.forEach(s => m[s.id] = s); return m; }, [students]);
+
+  // Which sessions (in the selected week) each swimmer is already in — drives the
+  // double-booking warning in the enrollment modal.
+  const weekEnrollments = useMemo(() => {
+    const m = {};
+    weekSessions.forEach(s => s.students.forEach(st => {
+      if(!st.studentId) return;
+      (m[st.studentId] = m[st.studentId] || []).push({ day:s.day, startMinute:s.startMinute, type:s.type, sessionId:s.id });
+    }));
+    return m;
+  }, [weekSessions]);
+
+  // Each swimmer's recurring class slots across all weeks, de-duplicated by
+  // (lesson type, weekday, start), for the Swimmers tab schedule column.
+  const scheduleByStudent = useMemo(() => {
+    const m = {};
+    sessions.forEach(s => s.students.forEach(st => {
+      const id = st.studentId; if(!id) return;
+      const key = `${s.type}|${s.day}|${s.startMinute}`;
+      if(!m[id]) m[id] = {};
+      if(!m[id][key]) m[id][key] = { type:s.type, lessonTypeId:s.lessonTypeId, day:s.day, startMinute:s.startMinute, durationMinutes:s.durationMinutes };
+    }));
+    const out = {};
+    Object.keys(m).forEach(id => { out[id] = Object.values(m[id]).sort((a,b) => a.day - b.day || a.startMinute - b.startMinute); });
+    return out;
+  }, [sessions]);
+
   return <div>
     <div className="header"><div className="header-inner">
       <div className="brand"><div className="logo">🏊</div><div><div style={{fontSize:16,fontWeight:800,letterSpacing:'-.4px',lineHeight:1}}>SSB Scheduler</div><div style={{fontSize:10,color:'#64748B',marginTop:2}}>Pool-aware lesson calendar</div></div></div>
       <div style={{display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
         <div className="small subtle"><span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalStudents}</span> students · <span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalSessions}</span> sessions · <span style={{color:'var(--primary)',fontWeight:800}}>{selectedWeekLabel}</span></div>
         <div className="tabs">
-          {['day','week','month','summary','settings'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='week'?'📅 Weekly':v==='day'?'📋 Daily':v==='month'?'🗓️ Monthly':v==='summary'?'📊 Summary':'⚙️ Settings'}</button>)}
+          {['day','week','month','students','summary','settings'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='week'?'📅 Weekly':v==='day'?'📋 Daily':v==='month'?'🗓️ Monthly':v==='students'?'👥 Swimmers':v==='summary'?'📊 Summary':'⚙️ Settings'}</button>)}
         </div>
       </div>
     </div></div>
@@ -771,6 +848,15 @@ function App(){
         selectedItems={selectedItems}
       />}
 
+      {!loading && view==='students' && <StudentsView
+        students={students}
+        lessonTypes={activeLessonTypes()}
+        lessonTypeById={lessonTypeById}
+        scheduleByStudent={scheduleByStudent}
+        addStudent={addStudent}
+        updateStudent={updateStudent}
+        deleteStudent={deleteStudent}
+      />}
       {!loading && view==='summary' && <SummaryView summary={summary} pools={activePools()} />}
 
       {!loading && view==='settings' && <SettingsView
@@ -795,6 +881,9 @@ function App(){
       pools={activePools()}
       lessonTypeByName={lessonTypeByName}
       poolById={poolById}
+      students={students}
+      studentById={studentById}
+      weekEnrollments={weekEnrollments}
     /> : null}
   </div>;
 }
@@ -865,9 +954,9 @@ function WeekView(props){
         </div>
       </div>
       <PeriodNav rangeLabel={weekRangeLabel(selectedWeekStart)} onPrev={onPrevWeek} onNext={onNextWeek} onToday={onThisWeek} isCurrent={selectedWeekStart === currentWeekStart}>
-        <button className="btn btn-primary" onClick={onDuplicateWeek} disabled={!isFutureSelectedWeek}>Duplicate Previous Week</button>
+        <button className="btn btn-primary small-btn" onClick={onDuplicateWeek} disabled={!isFutureSelectedWeek}>Duplicate Previous Week</button>
         <div className="print-wrap">
-          <button className="btn btn-print" onClick={()=>setPrintMenu(v=>!v)}>Print <span className="caret">▾</span></button>
+          <button className="btn btn-print small-btn" onClick={()=>setPrintMenu(v=>!v)}>Print <span className="caret">▾</span></button>
           {printMenu ? <>
             <div className="menu-backdrop" onClick={()=>setPrintMenu(false)} />
             <div className="drop-menu">
@@ -876,7 +965,7 @@ function WeekView(props){
             </div>
           </> : null}
         </div>
-        <button className="btn btn-print" onClick={onExportExcel} title="Download this week as a multi-tab attendance roster">Export Excel</button>
+        <button className="btn btn-print small-btn" onClick={onExportExcel} title="Download this week as a multi-tab attendance roster">Export Excel</button>
       </PeriodNav>
       <div className="nav-note">{isFutureSelectedWeek ? 'Future week — "Remove all classes" and "Duplicate Previous Week" are enabled.' : 'Current and past weeks are protected from bulk removal.'}</div>
       {weekGrid}
@@ -1296,7 +1385,109 @@ function LessonTypeEditor({ row, pools, onSave }){
 // SessionModal (M2: pool selector, lesson-type auto-default, capacity preview)
 // ============================================================================
 
-function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById }){
+// Searchable swimmer combobox used in each enrollment slot.
+function StudentSelect({ valueId, fallbackLabel, studentById, candidates, onPick, conflict }){
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const sel = valueId ? studentById[valueId] : null;
+  const label = sel ? `${sel.name}${sel.age != null ? ` (${sel.age})` : ''}` : (fallbackLabel || '');
+  const filtered = (candidates || []).filter(s => !q || (s.name || '').toLowerCase().includes(q.toLowerCase()));
+  return <div className="ssel">
+    <button type="button" className={`ssel-btn ${label ? 'has' : ''}`} onClick={()=>setOpen(o=>!o)}>
+      <span className="ssel-label">{label || 'Select swimmer…'}</span>
+      {label ? <span className="ssel-x" title="Clear slot" onClick={(e)=>{ e.stopPropagation(); onPick(null); setOpen(false); }}>×</span> : <span className="ssel-caret">▾</span>}
+    </button>
+    {conflict ? <div className="ssel-warn">⚠ Also booked {conflict} this week</div> : null}
+    {open ? <>
+      <div className="ssel-backdrop" onClick={()=>{ setOpen(false); setQ(''); }} />
+      <div className="ssel-pop">
+        <input className="input ssel-search" autoFocus placeholder="Search swimmers…" value={q} onChange={(e)=>setQ(e.target.value)} />
+        <div className="ssel-list">
+          {filtered.length ? filtered.map(s => <button key={s.id} type="button" className="ssel-item" onClick={()=>{ onPick(s); setOpen(false); setQ(''); }}>
+            <span>{s.name}</span><span className="ssel-item-meta">{s.age != null ? `${s.age}y` : ''}{s.package ? ` · ${s.package}` : ''}</span>
+          </button>) : <div className="ssel-empty">No swimmers found</div>}
+        </div>
+      </div>
+    </> : null}
+  </div>;
+}
+
+function StudentEditor({ row, lessonTypes, onSave }){
+  const [name, setName] = useState(row.name || '');
+  const [age, setAge] = useState(row.age == null ? '' : String(row.age));
+  const [pkg, setPkg] = useState(row.package || '');
+  const [types, setTypes] = useState((row.lessonTypeIds || []).slice());
+  function toggle(id){ setTypes(t => t.includes(id) ? t.filter(x => x !== id) : [...t, id]); }
+  return <div className="lesson-edit">
+    <div className="form-grid" style={{gridTemplateColumns:'minmax(0,1.4fr) 80px minmax(0,1fr)'}}>
+      <div className="field"><label>Name</label><input className="input" value={name} onChange={e=>setName(e.target.value)} /></div>
+      <div className="field"><label>Age</label><input className="input" type="number" min="0" max="120" value={age} onChange={e=>setAge(e.target.value)} /></div>
+      <div className="field"><label>Package</label><input className="input" value={pkg} onChange={e=>setPkg(e.target.value)} /></div>
+    </div>
+    <div className="field" style={{marginTop:10}}><label>Lesson types</label><div className="type-picks">{lessonTypes.map(t => { const on = types.includes(t.id); return <button key={t.id} type="button" className={`chip chip-toggle ${on ? '' : 'chip-off'}`} style={on ? {background:t.bg_color,borderColor:t.border_color,color:t.text_color} : undefined} onClick={()=>toggle(t.id)}>{t.name}</button>; })}</div></div>
+    <div style={{display:'flex',justifyContent:'flex-end',marginTop:10}}><button className="btn btn-primary" onClick={()=>{ const v = name.trim(); if(!v) return; onSave({ name:v, age, package:pkg, lessonTypeIds:types }); }}>Save Swimmer</button></div>
+  </div>;
+}
+
+function StudentsView({ students, lessonTypes, lessonTypeById, scheduleByStudent, addStudent, updateStudent, deleteStudent }){
+  const [name, setName] = useState('');
+  const [age, setAge] = useState('');
+  const [pkg, setPkg] = useState('');
+  const [types, setTypes] = useState([]);
+  const [editId, setEditId] = useState(null);
+  const [q, setQ] = useState('');
+  function toggleType(id){ setTypes(t => t.includes(id) ? t.filter(x => x !== id) : [...t, id]); }
+  function colorsForId(id){ const t = lessonTypeById(id); return t ? { bg:t.bg_color, bd:t.border_color, tx:t.text_color, name:t.name } : { bg:'#eee', bd:'#ccc', tx:'#333', name:'(removed)' }; }
+  function scheduleLines(id){
+    const slots = scheduleByStudent[id] || [];
+    if(!slots.length) return null;
+    const byType = {};
+    slots.forEach(sl => { (byType[sl.type] = byType[sl.type] || []).push(sl); });
+    return Object.keys(byType).map(type => ({ type, times: byType[type].map(sl => `${DAYS_S[sl.day]} ${minuteToTime(sl.startMinute)}`) }));
+  }
+  const list = students.filter(s => !q || (s.name || '').toLowerCase().includes(q.toLowerCase()));
+
+  return <>
+    <div className="card" style={{marginBottom:16}}>
+      <div style={{fontSize:18,fontWeight:800}}>Swimmers</div>
+      <div className="small subtle" style={{marginTop:4}}>Register each swimmer once with age, package, and lesson-type buckets. Tagged swimmers appear in the matching dropdowns when you enroll them into a class.</div>
+      <div style={{display:'grid',gridTemplateColumns:'minmax(0,1.4fr) 80px minmax(0,1fr)',gap:10,marginTop:14}}>
+        <div className="field" style={{margin:0}}><label>Name</label><input className="input" value={name} onChange={e=>setName(e.target.value)} placeholder="Swimmer name" /></div>
+        <div className="field" style={{margin:0}}><label>Age</label><input className="input" type="number" min="0" max="120" value={age} onChange={e=>setAge(e.target.value)} placeholder="Yrs" /></div>
+        <div className="field" style={{margin:0}}><label>Package</label><input className="input" value={pkg} onChange={e=>setPkg(e.target.value)} placeholder="e.g. RM600 family of 4" /></div>
+      </div>
+      <div className="field" style={{marginTop:10}}><label>Lesson types (bucket — pick one or more)</label>
+        <div className="type-picks">{lessonTypes.map(t => { const on = types.includes(t.id); return <button key={t.id} type="button" className={`chip chip-toggle ${on ? '' : 'chip-off'}`} style={on ? {background:t.bg_color,borderColor:t.border_color,color:t.text_color} : undefined} onClick={()=>toggleType(t.id)}>{t.name}</button>; })}{lessonTypes.length ? null : <span className="subtle small">Add lesson types in Settings first.</span>}</div>
+      </div>
+      <div style={{display:'flex',justifyContent:'flex-end',marginTop:12}}><button className="btn btn-primary" onClick={()=>{ const v = name.trim(); if(!v) return; addStudent({ name:v, age, package:pkg, lessonTypeIds:types }); setName(''); setAge(''); setPkg(''); setTypes([]); }}>Add Swimmer</button></div>
+    </div>
+
+    <div className="card">
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:12}}>
+        <div style={{fontSize:16,fontWeight:800}}>Registered Swimmers <span className="subtle" style={{fontWeight:600,fontSize:13}}>· {students.length}</span></div>
+        <input className="input" style={{maxWidth:260}} placeholder="Search swimmers…" value={q} onChange={e=>setQ(e.target.value)} />
+      </div>
+      <div className="table-wrap">
+        <table><thead><tr><th style={{width:'18%'}}>Name</th><th style={{width:50}}>Age</th><th style={{width:'15%'}}>Package</th><th style={{width:'18%'}}>Lesson Types</th><th>Schedule (day &amp; time)</th><th style={{width:128}}></th></tr></thead>
+        <tbody>
+          {list.length ? list.map(s => { const sched = scheduleLines(s.id); return <React.Fragment key={s.id}>
+            <tr>
+              <td style={{fontWeight:700}}>{s.name}</td>
+              <td>{s.age != null ? s.age : '—'}</td>
+              <td>{s.package || '—'}</td>
+              <td><div style={{display:'flex',flexWrap:'wrap',gap:4}}>{(s.lessonTypeIds || []).length ? s.lessonTypeIds.map(id => { const c = colorsForId(id); return <span key={id} className="chip" style={{background:c.bg,borderColor:c.bd,color:c.tx,fontSize:11,padding:'2px 8px'}}>{c.name}</span>; }) : <span className="subtle">—</span>}</div></td>
+              <td>{sched ? sched.map((g, gi) => <div key={gi} style={{marginBottom:2}}><span style={{fontWeight:700}}>{g.type}:</span> <span className="subtle">{g.times.join(', ')}</span></div>) : <span className="subtle">Not scheduled</span>}</td>
+              <td><div style={{display:'flex',gap:6,justifyContent:'flex-end'}}><button className="btn btn-ghost small" onClick={()=>setEditId(editId===s.id?null:s.id)}>{editId===s.id?'Close':'Edit'}</button><button className="btn btn-danger small" onClick={()=>deleteStudent(s)}>Delete</button></div></td>
+            </tr>
+            {editId === s.id ? <tr><td colSpan="6" style={{padding:0}}><StudentEditor row={s} lessonTypes={lessonTypes} onSave={(patch)=>{ updateStudent(s.id, patch); setEditId(null); }} /></td></tr> : null}
+          </React.Fragment>; }) : <tr><td colSpan="6" className="empty">No swimmers registered yet.</td></tr>}
+        </tbody></table>
+      </div>
+    </div>
+  </>;
+}
+
+function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById, students, studentById, weekEnrollments }){
 
   // M2: union of durations — common standards plus every lesson type's default
   // and the currently-selected duration so the dropdown always contains the
@@ -1328,9 +1519,16 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
     setForm({ instructorId: id || null, instructorName: inst?.name || '' });
   }
 
-  // Capacity preview: counts the students typed in the textarea, against the
+  // Pick a swimmer into a slot from the registry; snapshot name+age. null clears.
+  function pickStudent(i, student){
+    const rows = (modal.form.studentRows || []).slice();
+    rows[i] = student ? { studentId: student.id, name: student.name, age: (student.age === null || student.age === undefined ? '' : String(student.age)) } : { studentId:null, name:'', age:'' };
+    setForm({ studentRows: rows });
+  }
+
+  // Capacity preview: counts the slots that hold a swimmer, against the
   // lesson type's ratio (assuming one instructor for now — splits come in M3).
-  const previewStudents = (modal?.form?.studentRows || []).filter(r => (r.name || '').trim()).length;
+  const previewStudents = (modal?.form?.studentRows || []).filter(r => r.studentId || (r.name || '').trim()).length;
   const previewLt = lessonTypeByName(modal?.form?.type);
   const previewMax = previewLt?.students_per_instructor ? Number(previewLt.students_per_instructor) : 0;
   const previewStatus = previewMax > 0
@@ -1338,6 +1536,20 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
     : 'unknown';
   const previewChip = capacityChipColors(previewStatus);
   const previewPool = poolById(modal?.form?.poolId);
+
+  // Candidates for the dropdowns: swimmers tagged for this lesson type; if none
+  // are tagged yet, fall back to all active swimmers so the user isn't stuck.
+  const lessonTypeId = previewLt?.id || modal?.form?.lessonTypeId || null;
+  const inBucket = (students || []).filter(s => s.isActive !== false && lessonTypeId && (s.lessonTypeIds || []).includes(lessonTypeId));
+  const candidates = inBucket.length ? inBucket : (students || []).filter(s => s.isActive !== false);
+  const bucketFallback = lessonTypeId && !inBucket.length;
+  function rowConflict(row, idx){
+    if(!row.studentId) return null;
+    if((modal.form.studentRows || []).some((r, j) => j !== idx && r.studentId === row.studentId)) return 'twice in this class';
+    const others = (weekEnrollments[row.studentId] || []).filter(e => e.sessionId !== modal.id);
+    if(others.length){ const e = others[0]; return `${DAYS_S[e.day]} ${minuteToTime(e.startMinute)}`; }
+    return null;
+  }
 
   return <div className="modal-backdrop"><div className="modal-card">
     <div className="modal-head">
@@ -1356,18 +1568,17 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
         <div className="field"><label>Time Slot</label><input className="input" value={formatRange(modal.startMinute, modal.form.durationMinutes)} readOnly /></div>
         <div className="field"><label>Capacity Preview</label><div className="cap-preview"><span className="cap-chip cap-chip-lg" style={{background:previewChip.bg,color:previewChip.tx,borderColor:previewChip.bd}}>{previewStudents}{previewMax > 0 ? ` / ${previewMax}` : ''}</span><span className="small subtle">{previewMax > 0 ? (previewStatus==='over'?'Over capacity — Module 3 will block or prompt for a split.':previewStatus==='full'?'At capacity.':previewStatus==='tight'?'Near capacity.':'Has room.') : 'Lesson type has no ratio set.'}</span></div></div>
         <div className="field" style={{gridColumn:'1 / -1'}}>
-          <label>Students {previewMax > 0 ? `· ${previewMax} per instructor` : ''}</label>
+          <label>Swimmers {previewMax > 0 ? `· ${previewMax} slots` : ''}</label>
           <div className="stu-list">
             {(modal.form.studentRows || []).map((r, i) => <div className="stu-row" key={i}>
               <span className="stu-num">{i+1}</span>
-              <input className="input" placeholder="Student name" value={r.name} onChange={(e)=>setRow(i,'name',e.target.value)} />
-              <input className="input stu-age" type="number" min="0" max="120" placeholder="Age" value={r.age} onChange={(e)=>setRow(i,'age',e.target.value)} />
-              <button className="btn btn-ghost stu-x" title="Remove row" onClick={()=>removeRow(i)}>×</button>
+              <StudentSelect valueId={r.studentId} fallbackLabel={r.studentId ? null : (r.name ? `${r.name}${r.age ? ` (${r.age})` : ''}` : '')} studentById={studentById} candidates={candidates} onPick={(stu)=>pickStudent(i, stu)} conflict={rowConflict(r, i)} />
+              <button className="btn btn-ghost stu-x" title="Remove slot" onClick={()=>removeRow(i)}>×</button>
             </div>)}
           </div>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,marginTop:8,flexWrap:'wrap'}}>
-            <div className="hint">Name + age in years. Empty rows are ignored. Age shows on the schedule and fills the Excel export.</div>
-            <button className="btn btn-ghost small" onClick={addRow}>+ Add student</button>
+            <div className="hint">{bucketFallback ? 'No swimmers tagged for this lesson type yet — showing all. Tag them in the Swimmers tab.' : 'Pick swimmers from the registry. Create or tag swimmers in the Swimmers tab.'}</div>
+            <button className="btn btn-ghost small" onClick={addRow}>+ Add slot</button>
           </div>
         </div>
       </div>
