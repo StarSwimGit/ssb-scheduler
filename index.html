@@ -118,6 +118,13 @@
     .event{position:absolute;padding:4px 7px;overflow:hidden;cursor:pointer;z-index:4;box-sizing:border-box;border-radius:0 7px 7px 0;box-shadow:0 2px 8px rgba(30,27,75,.12)}
     .event-title{font-size:12px;font-weight:800;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.event-sub{font-size:10px;opacity:.86;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
     .legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.chip{padding:5px 11px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid transparent}
+    .chip-toggle{cursor:pointer;user-select:none;transition:.12s ease}
+    .chip-toggle.chip-off{background:var(--surface-2)!important;border-color:var(--border-2)!important;color:var(--text-3)!important;opacity:.85}
+    .legend-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)}
+    .legend-allbtn{background:var(--surface);border:1px solid var(--border-2);color:var(--text);border-radius:999px;padding:6px 13px;font-weight:600;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:7px}
+    .legend-allbtn:hover{border-color:#CFCFDE}
+    .legend-allbtn .dot{width:8px;height:8px;border-radius:999px;background:var(--teal)}
+    .legend-allbtn.is-off .dot{background:var(--text-3)}
     .grid{display:grid;gap:16px}.grid-2{grid-template-columns:1.25fr .75fr}.grid-3{grid-template-columns:repeat(3,1fr)}
     .month-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:8px}.month-dow{font-size:11px;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-2);font-weight:700;padding:0 4px 2px}
     .day-box{min-height:122px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:12px;cursor:pointer;display:flex;flex-direction:column;gap:8px;transition:.15s ease}
@@ -211,6 +218,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="./config.js"></script>
 </head>
 <body>
