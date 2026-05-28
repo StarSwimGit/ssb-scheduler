@@ -85,6 +85,7 @@ function hourLabel(mins){ const h24 = Math.floor(mins / 60), m = mins % 60, ampm
 function shortName(name){ const parts = String(name || '').trim().split(/\s+/).filter(Boolean); return parts.slice(0, 2).join(' '); }
 // Age shown in years, e.g. " (5)". Blank when unknown.
 function ageSuffix(s){ return (s && s.age !== null && s.age !== undefined && s.age !== '') ? ` (${s.age})` : ''; }
+function studentLabel(s){ return s.name + ageSuffix(s) + (s && s.remark ? ` — ${s.remark}` : ''); }
 // Build the modal's student rows: existing students first, padded with blanks
 // up to the lesson type's ratio (so "max 4" shows 4 boxes). Falls back to 4.
 function buildStudentRows(existing, cap){
@@ -1143,7 +1144,7 @@ function WeekView(props){
           {items.length ? items.map(it => {
             const p = poolById(it.poolId);
             const instLabel = it.instructors.map(i=>i.name).join(', ') || it.legacyInstructor || '-';
-            return <tr key={it.id}><td className="print-time-cell">{formatRange(it.startMinute, it.durationMinutes)}</td><td className="print-type-cell">{it.type}</td><td>{p?p.name:'-'}</td><td>{instLabel}</td><td>{it.students.map(s=>s.name+ageSuffix(s)).join(', ') || '-'}</td></tr>;
+            return <tr key={it.id}><td className="print-time-cell">{formatRange(it.startMinute, it.durationMinutes)}</td><td className="print-type-cell">{it.type}</td><td>{p?p.name:'-'}</td><td>{instLabel}</td><td>{it.students.map(studentLabel).join(', ') || '-'}</td></tr>;
           }) : <tr className="empty-row"><td colSpan="5">No sessions</td></tr>}
         </tbody></table>
       </div>)}
@@ -1172,7 +1173,7 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
     <div className="wa-card-line">{showPoolBadge && pool ? <span className="event-pool-pill">{pool.name}</span> : null}{formatRange(block.startMinute, block.durationMinutes)}</div>
     <div className="wa-card-line wa-card-inst">{inst}</div>
     {block.students.length
-      ? <div className="wa-card-students">{block.students.map((s,i) => <span key={s.id || i} className="wa-stu" title={s.name + ageSuffix(s)}>{shortName(s.name) + ageSuffix(s)}</span>)}</div>
+      ? <div className="wa-card-students">{block.students.map((s,i) => <span key={s.id || i} className="wa-stu" title={studentLabel(s)}>{shortName(s.name) + ageSuffix(s)}{s.remark ? ` — ${s.remark}` : ''}</span>)}</div>
       : <div className="wa-card-line wa-card-students-empty">—</div>}
   </div>;
 }
@@ -1222,6 +1223,7 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
                         <div className="daily-event-title">{it.type} {pool ? <span className="pool-badge">{pool.name}</span> : null}{it.familyGroupId ? <span title="Family group booking" style={{marginLeft:4}}>👪</span> : null}</div>
                         <div className="daily-event-sub">{formatRange(it.startMinute, it.durationMinutes)} · {inst}</div>
                         <div className="daily-event-sub">{it.students.map(s=>s.name+ageSuffix(s)).join(', ') || 'No students listed'}</div>
+                        {it.students.filter(s=>s.remark).map((s,ri)=><div key={ri} className="daily-event-note">📝 {shortName(s.name)}: {s.remark}</div>)}
                       </div>
                       <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6}}>
                         {cap.max > 0 ? <span className="cap-chip cap-chip-lg" style={{background:chip.bg, color:chip.tx, borderColor:chip.bd}}>{cap.current}/{cap.max}</span> : <span className="cap-chip cap-chip-lg cap-chip-unknown">{cap.current}</span>}
@@ -1263,7 +1265,7 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
                     return <div key={it.id} className="print-day-col">
                       <div className="print-session-head">{formatRange(it.startMinute, it.durationMinutes)} · {it.type}</div>
                       <div className="print-session-head" style={{fontWeight:400}}>{pool ? `${pool.name} · ` : ''}{inst} · {it.students.length} student{it.students.length===1?'':'s'}</div>
-                      <div className="print-session-students">{it.students.length ? it.students.map(s=>s.name+ageSuffix(s)).join(', ') : 'No students listed'}</div>
+                      <div className="print-session-students">{it.students.length ? it.students.map(studentLabel).join(', ') : 'No students listed'}</div>
                     </div>;
                   })}
                 </div> : <div>No sessions</div>}
@@ -2112,8 +2114,10 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
           <div className="stu-list">
             {(modal.form.studentRows || []).map((r, i) => <div className="stu-row" key={i}>
               <span className="stu-num">{i+1}</span>
-              <StudentSelect valueId={r.studentId} fallbackLabel={r.studentId ? null : (r.name ? `${r.name}${r.age ? ` (${r.age})` : ''}` : '')} studentById={studentById} candidates={candidates} onPick={(stu)=>pickStudent(i, stu)} conflict={rowConflict(r, i)} />
-              <input className="input stu-remark" placeholder="Remark (optional)" value={r.remark || ''} onChange={(e)=>setRemark(i, e.target.value)} />
+              <div className="stu-fields">
+                <StudentSelect valueId={r.studentId} fallbackLabel={r.studentId ? null : (r.name ? `${r.name}${r.age ? ` (${r.age})` : ''}` : '')} studentById={studentById} candidates={candidates} onPick={(stu)=>pickStudent(i, stu)} conflict={rowConflict(r, i)} />
+                <input className="input stu-remark" placeholder="Remark (optional)" value={r.remark || ''} onChange={(e)=>setRemark(i, e.target.value)} />
+              </div>
               <button className="btn btn-ghost stu-x" title="Remove slot" onClick={()=>removeRow(i)}>×</button>
             </div>)}
           </div>
@@ -2180,7 +2184,7 @@ function PrintWeeklyTableSection({ weekBlocksAllPools, wb, selectedWeekStart, gr
                 <div key={block.id} className={idx > 0 ? 'wt-sess wt-sess-sep' : 'wt-sess'}>
                   <div className="wt-sess-type">{block.type}</div>
                   <div className="wt-sess-meta">{(block.instructors[0]?.name) || block.legacyInstructor || '—'} &middot; {block.durationMinutes}&thinsp;min{block._poolName ? ` · ${block._poolName}` : ''}</div>
-                  {block.students.length > 0 ? <div className="wt-sess-students">{block.students.map(s=>s.name+ageSuffix(s)).join(', ')}</div> : null}
+                  {block.students.length > 0 ? <div className="wt-sess-students">{block.students.map(studentLabel).join(', ')}</div> : null}
                 </div>
               ))}
             </td>;
