@@ -79,6 +79,8 @@ function toDateStr(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padSt
 function fromDateStr(s){ const [y,m,d] = s.split('-').map(Number); return new Date(y,m-1,d); }
 function todayStr(){ return toDateStr(new Date()); }
 function minuteToTime(mins){ const h24 = Math.floor(mins / 60), m = mins % 60, ampm = h24 < 12 ? 'AM' : 'PM'; const h = h24 % 12 || 12; return `${h}:${String(m).padStart(2,'0')} ${ampm}`; }
+// Compact label for whole-hour agenda rows: "10 AM", "12 PM", "1:30 PM".
+function hourLabel(mins){ const h24 = Math.floor(mins / 60), m = mins % 60, ampm = h24 < 12 ? 'AM' : 'PM'; const h = h24 % 12 || 12; return m === 0 ? `${h} ${ampm}` : `${h}:${String(m).padStart(2,'0')} ${ampm}`; }
 function formatRange(startMin, durationMin){ return `${minuteToTime(startMin)}–${minuteToTime(startMin + durationMin)}`; }
 function longDate(s){ return fromDateStr(s).toLocaleDateString(undefined, { weekday:'long', year:'numeric', month:'long', day:'numeric' }); }
 function monthCells(d){ const y=d.getFullYear(), m=d.getMonth(); const first=new Date(y,m,1); const offset=(first.getDay()+6)%7; const start=new Date(y,m,1-offset); return Array.from({length:42},(_,i)=>{ const x=new Date(start); x.setDate(start.getDate()+i); return x; }); }
@@ -657,6 +659,8 @@ function WeekView(props){
           selectedDate, sessionsForDate, selectedWeekStart, currentWeekStart, isFutureSelectedWeek,
           onPrevWeek, onNextWeek, onThisWeek, onDuplicateWeek, onClearDay, onJumpToDay } = props;
 
+  const [printMenu, setPrintMenu] = useState(false);
+
   const wb = weekBounds(selectedDate);
   const printDays = Array.from({length:7}, (_,i) => { const d = new Date(wb.start); d.setDate(wb.start.getDate()+i); const ds = toDateStr(d); return { date:d, ds, items:sessionsForDate(ds) }; });
 
@@ -689,7 +693,7 @@ function WeekView(props){
         </div>;
       })}
       {hours.map(h => <React.Fragment key={h}>
-        <div className="wa-time">{minuteToTime(h)}</div>
+        <div className="wa-time">{hourLabel(h)}</div>
         {DAYS_S.map((_,di) => {
           const cell = weekBlocks[di].packed.filter(b => b.startMinute >= h && b.startMinute < h + 60);
           return <div key={di+'-'+h} className="wa-cell" onClick={() => onAdd(di, minuteToSlot(h), selectedPoolId || undefined)}>
@@ -710,8 +714,16 @@ function WeekView(props){
       </div>
       <PeriodNav rangeLabel={weekRangeLabel(selectedWeekStart)} onPrev={onPrevWeek} onNext={onNextWeek} onToday={onThisWeek} isCurrent={selectedWeekStart === currentWeekStart}>
         <button className="btn btn-primary" onClick={onDuplicateWeek} disabled={!isFutureSelectedWeek}>Duplicate Previous Week</button>
-        <button className="btn btn-print" onClick={printWeeklyView}>Print</button>
-        <button className="btn btn-print" onClick={printWeeklyTable}>Print Weekly Table</button>
+        <div className="print-wrap">
+          <button className="btn btn-print" onClick={()=>setPrintMenu(v=>!v)}>Print <span className="caret">▾</span></button>
+          {printMenu ? <>
+            <div className="menu-backdrop" onClick={()=>setPrintMenu(false)} />
+            <div className="drop-menu">
+              <button className="drop-item" onClick={()=>{ setPrintMenu(false); printWeeklyView(); }}>Weekly rundown <span className="drop-hint">A4 · per-day list</span></button>
+              <button className="drop-item" onClick={()=>{ setPrintMenu(false); printWeeklyTable(); }}>Weekly grid <span className="drop-hint">A3 · time table</span></button>
+            </div>
+          </> : null}
+        </div>
       </PeriodNav>
       <div className="nav-note">{isFutureSelectedWeek ? 'Future week — "Remove all classes" and "Duplicate Previous Week" are enabled.' : 'Current and past weeks are protected from bulk removal.'}</div>
       {weekGrid}
@@ -986,9 +998,9 @@ function SettingsView({ options, addOption, toggleOption, deleteOption, patchOpt
             return <div key={row.weekday} className="row-item">
               <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
                 <div style={{minWidth:80,fontWeight:700}}>{label}</div>
-                <input className="input" style={{width:90,padding:'4px 8px',fontSize:12}} type="time" defaultValue={fmtTime(row.open_minute)} onBlur={(e)=>{ const [h,m] = e.target.value.split(':').map(Number); const v = h*60+m; if(Number.isFinite(v) && v !== row.open_minute) patchOption('operating_hours', { weekday: row.weekday }, { open_minute: v }); }} />
+                <input className="input" style={{width:140,padding:'6px 8px',fontSize:13}} type="time" defaultValue={fmtTime(row.open_minute)} onBlur={(e)=>{ const [h,m] = e.target.value.split(':').map(Number); const v = h*60+m; if(Number.isFinite(v) && v !== row.open_minute) patchOption('operating_hours', { weekday: row.weekday }, { open_minute: v }); }} />
                 <span className="small subtle">to</span>
-                <input className="input" style={{width:90,padding:'4px 8px',fontSize:12}} type="time" defaultValue={fmtTime(row.close_minute)} onBlur={(e)=>{ const [h,m] = e.target.value.split(':').map(Number); const v = h*60+m; if(Number.isFinite(v) && v !== row.close_minute) patchOption('operating_hours', { weekday: row.weekday }, { close_minute: v }); }} />
+                <input className="input" style={{width:140,padding:'6px 8px',fontSize:13}} type="time" defaultValue={fmtTime(row.close_minute)} onBlur={(e)=>{ const [h,m] = e.target.value.split(':').map(Number); const v = h*60+m; if(Number.isFinite(v) && v !== row.close_minute) patchOption('operating_hours', { weekday: row.weekday }, { close_minute: v }); }} />
                 <label className="small" style={{display:'flex',alignItems:'center',gap:4}}>
                   <input type="checkbox" checked={row.is_open !== false} onChange={(e)=>patchOption('operating_hours', { weekday: row.weekday }, { is_open: e.target.checked })} />
                   Open
