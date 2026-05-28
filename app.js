@@ -1703,7 +1703,6 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
             <div className="lt-row-top">
               <div className="lt-row-lead">
                 {reorderCluster('lt', 'scheduler_lesson_types', options.lessonTypes, idx)}
-                <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
                 <span className="lt-name-chip" style={{background:r.bg_color,borderColor:r.border_color,color:r.text_color}}>{r.name}</span>
                 <span className="lt-classes-pill" title="Classes on the schedule using this type">{n} {n===1?'class':'classes'}</span>
               </div>
