@@ -652,6 +652,19 @@ function App(){
     } catch(err){ handleErr(err); alert(err.message || 'Failed to update option'); }
   }
 
+  // Reorder a settings list by reindexing sort_order across the whole list, so
+  // the result is clean and gap-free regardless of the existing values.
+  async function reorderOption(table, list, index, dir){
+    const arr = (list || []).slice();
+    const j = index + dir;
+    if(j < 0 || j >= arr.length) return;
+    const tmp = arr[index]; arr[index] = arr[j]; arr[j] = tmp;
+    try{
+      await Promise.all(arr.map((r, i) => patchRows(table, { id: r.id }, { sort_order: i + 1 })));
+      await loadOptions();
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to reorder'); }
+  }
+
   // ───── Swimmer registry CRUD ──────────────────────────────────────────────
   async function addStudent({ name, age, packageId, lessonTypeIds }){
     try{
@@ -931,6 +944,7 @@ function App(){
         toggleOption={toggleOption}
         deleteOption={deleteOption}
         patchOption={patchOption}
+        reorderOption={reorderOption}
         saveLessonType={saveLessonType}
         deleteLessonType={deleteLessonType}
         lessonTypeCounts={lessonTypeCounts}
@@ -1259,7 +1273,24 @@ function SummaryView({ summary, pools }){
 // SettingsView (M2: pools, operating hours, expanded lesson-type editor)
 // ============================================================================
 
-function SettingsView({ options, status, addOption, toggleOption, deleteOption, patchOption, saveLessonType, deleteLessonType, lessonTypeCounts }){
+function PackageEditor({ row, onSave, onCancel }){
+  const [name, setName] = useState(row.name || '');
+  const [pax, setPax] = useState(row.pax == null ? '' : String(row.pax));
+  const [amount, setAmount] = useState(row.amount == null ? '' : String(row.amount));
+  return <div style={{width:'100%'}}>
+    <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) 90px 130px',gap:10}}>
+      <div className="field" style={{margin:0}}><label>Package name</label><input className="input" value={name} onChange={(e)=>setName(e.target.value)} /></div>
+      <div className="field" style={{margin:0}}><label>Pax</label><input className="input" type="number" min="1" value={pax} onChange={(e)=>setPax(e.target.value)} /></div>
+      <div className="field" style={{margin:0}}><label>Amount (RM)</label><input className="input" type="number" min="0" step="0.01" value={amount} onChange={(e)=>setAmount(e.target.value)} /></div>
+    </div>
+    <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:10}}>
+      <button className="btn btn-ghost small" onClick={onCancel}>Cancel</button>
+      <button className="btn btn-primary small" onClick={()=>{ const v = name.trim(); if(!v) return; onSave({ name:v, pax:(pax === '' ? null : Number(pax)), amount:(amount === '' ? null : Number(amount)) }); }}>Save</button>
+    </div>
+  </div>;
+}
+
+function SettingsView({ options, status, addOption, toggleOption, deleteOption, patchOption, reorderOption, saveLessonType, deleteLessonType, lessonTypeCounts }){
   const [newInstructor, setNewInstructor] = useState('');
   const [newTypeName, setNewTypeName] = useState('');
   const [bg, setBg] = useState('#DBEAFE');
@@ -1270,6 +1301,7 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
   const [newPkgName, setNewPkgName] = useState('');
   const [newPkgPax, setNewPkgPax] = useState('');
   const [newPkgAmount, setNewPkgAmount] = useState('');
+  const [editPkgId, setEditPkgId] = useState(null);
   const [editingLessonId, setEditingLessonId] = useState(null);
   const counts = lessonTypeCounts || {};
 
@@ -1355,17 +1387,26 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
         <button className="btn btn-primary" onClick={()=>{ const v = newPkgName.trim(); if(!v) return; addOption('package', { name:v, pax:newPkgPax, amount:newPkgAmount }); setNewPkgName(''); setNewPkgPax(''); setNewPkgAmount(''); }}>Add</button>
       </div>
       <div className="settings-list">
-        {options.packages && options.packages.length ? options.packages.map(r => <div key={r.id} className="row-item">
-          <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-            <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
-            <div style={{fontWeight:700}}>{r.name}</div>
-            <span className="small subtle">{r.pax != null ? `${r.pax} pax` : '—'} · {r.amount != null ? `RM${r.amount}` : 'no amount'}</span>
-          </div>
-          <div style={{display:'flex',gap:6}}>
-            <button className="btn btn-ghost small" onClick={()=>toggleOption('packages',r)}>{r.is_active?'Hide':'Show'}</button>
-            <button className="btn btn-danger small" onClick={()=>deleteOption('packages',r,r.name)}>Delete</button>
-          </div>
-        </div>) : <div className="empty">No packages yet</div>}
+        {options.packages && options.packages.length ? options.packages.map((r, i) => editPkgId === r.id
+          ? <div key={r.id} className="row-item" style={{display:'block'}}>
+              <PackageEditor row={r} onCancel={()=>setEditPkgId(null)} onSave={(patch)=>{ patchOption('packages', r.id, patch); setEditPkgId(null); }} />
+            </div>
+          : <div key={r.id} className="row-item">
+              <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                <div className="reorder">
+                  <button className="reorder-btn" disabled={i===0} title="Move up" onClick={()=>reorderOption('packages', options.packages, i, -1)}>↑</button>
+                  <button className="reorder-btn" disabled={i===options.packages.length-1} title="Move down" onClick={()=>reorderOption('packages', options.packages, i, 1)}>↓</button>
+                </div>
+                <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
+                <div style={{fontWeight:700}}>{r.name}</div>
+                <span className="small subtle">{r.pax != null ? `${r.pax} pax` : '—'} · {r.amount != null ? `RM${r.amount}` : 'no amount'}</span>
+              </div>
+              <div style={{display:'flex',gap:6}}>
+                <button className="btn btn-ghost small" onClick={()=>setEditPkgId(r.id)}>Edit</button>
+                <button className="btn btn-ghost small" onClick={()=>toggleOption('packages',r)}>{r.is_active?'Hide':'Show'}</button>
+                <button className="btn btn-danger small" onClick={()=>deleteOption('packages',r,r.name)}>Delete</button>
+              </div>
+            </div>) : <div className="empty">No packages yet</div>}
       </div>
     </div>
 
