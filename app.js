@@ -224,6 +224,7 @@ function App(){
   const [error,setError] = useState('');
   const [sessions,setSessions] = useState([]);
   const [students,setStudents] = useState([]);
+  const [familyGroups,setFamilyGroups] = useState([]);
   const [remarks,setRemarks] = useState({});
   const [options,setOptions] = useState({ instructors:[], durations:[], lessonTypes:[], pools:[], operatingHours:[], packages:[] });
   const [monthCursor,setMonthCursor] = useState(new Date());
@@ -245,7 +246,7 @@ function App(){
     try{
       setLoading(true); setError('');
       await loadOptions();
-      await Promise.all([loadSessions(), loadStudents(), loadRemarks(monthCursor)]);
+      await Promise.all([loadSessions(), loadStudents(), loadGroups(), loadRemarks(monthCursor)]);
       setStatus('Connected');
     } catch(err){ handleErr(err); }
     finally{ setLoading(false); }
@@ -320,10 +321,18 @@ function App(){
         age: (r.age === null || r.age === undefined ? null : Number(r.age)),
         package: r.package || '',
         packageId: r.package_id || null,
+        familyGroupId: r.family_group_id || null,
         lessonTypeIds: Array.isArray(r.lesson_type_ids) ? r.lesson_type_ids : [],
         isActive: r.is_active !== false
       })));
     } catch(e){ console.warn('Swimmer registry not available yet (run the students migration):', e?.message || e); setStudents([]); }
+  }
+
+  async function loadGroups(){
+    try{
+      const rows = await selectRows('family_groups', '*', '&order=name.asc');
+      setFamilyGroups((rows || []).map(r => ({ id:r.id, name:r.name || '', packageId:r.package_id || null })));
+    } catch(e){ console.warn('Family groups not available yet (run the family groups migration):', e?.message || e); setFamilyGroups([]); }
   }
 
   async function loadRemarks(cursor){
@@ -595,7 +604,7 @@ function App(){
         await loadSessions();
       }
       if(kind === 'pool') await insertRows('pools', { name: extra.name, capacity_total: Number(extra.capacity), sort_order: options.pools.length + 1, is_active:true });
-      if(kind === 'package') await insertRows('packages', { name: extra.name, pax: (extra.pax === '' || extra.pax == null) ? null : Number(extra.pax), amount: (extra.amount === '' || extra.amount == null) ? null : Number(extra.amount), billing_mode: extra.billingMode || 'monthly', billing_count: (extra.billingCount === '' || extra.billingCount == null) ? null : Number(extra.billingCount), sort_order: options.packages.length + 1, is_active:true });
+      if(kind === 'package') await insertRows('packages', { name: extra.name, pax: (extra.pax === '' || extra.pax == null) ? null : Number(extra.pax), amount: (extra.amount === '' || extra.amount == null) ? null : Number(extra.amount), billing_mode: extra.billingMode || 'monthly', billing_count: (extra.billingCount === '' || extra.billingCount == null) ? null : Number(extra.billingCount), is_group: !!extra.isGroup, fallback_per_pax: (extra.fallbackPerPax === '' || extra.fallbackPerPax == null) ? null : Number(extra.fallbackPerPax), sort_order: options.packages.length + 1, is_active:true });
       await loadOptions();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to add option'); }
   }
@@ -698,6 +707,35 @@ function App(){
       await loadStudents();
       await loadSessions();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to delete swimmer'); }
+  }
+
+  // ───── Family groups (single-payer bundles) ──────────────────────────────
+  async function addGroup({ name, packageId }){
+    try{ setError(''); await insertRows('family_groups', { name, package_id: packageId || null }); await loadGroups(); }
+    catch(err){ handleErr(err); alert(err.message || 'Failed to create family group'); }
+  }
+  async function updateGroup(id, patch){
+    try{
+      setError('');
+      const body = {};
+      if('name' in patch) body.name = patch.name;
+      if('packageId' in patch) body.package_id = patch.packageId || null;
+      await patchRows('family_groups', { id }, body);
+      await loadGroups();
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to update family group'); }
+  }
+  async function deleteGroup(row){
+    const members = students.filter(s => s.familyGroupId === row.id).length;
+    if(!confirm(members > 0
+      ? `Delete family group "${row.name}"? Its ${members} member${members===1?'':'s'} stay in the swimmer registry but will no longer be billed as a group.`
+      : `Delete family group "${row.name}"?`)) return;
+    try{ setError(''); await deleteRows('family_groups', { id: row.id }); await loadGroups(); await loadStudents(); }
+    catch(err){ handleErr(err); alert(err.message || 'Failed to delete family group'); }
+  }
+  // Add or remove a swimmer from a group (groupId null = remove).
+  async function setStudentGroup(studentId, groupId){
+    try{ setError(''); await patchRows('students', { id: studentId }, { family_group_id: groupId || null }); await loadStudents(); }
+    catch(err){ handleErr(err); alert(err.message || 'Failed to update group membership'); }
   }
 
   async function duplicatePreviousWeek(){
@@ -812,6 +850,8 @@ function App(){
   }, [sessions]);
 
   const studentById = useMemo(() => { const m = {}; students.forEach(s => m[s.id] = s); return m; }, [students]);
+  const groupById = useMemo(() => { const m = {}; familyGroups.forEach(g => m[g.id] = g); return m; }, [familyGroups]);
+  const membersByGroup = useMemo(() => { const m = {}; students.forEach(s => { if(s.familyGroupId){ (m[s.familyGroupId] = m[s.familyGroupId] || []).push(s); } }); return m; }, [students]);
 
   // Which sessions (in the selected week) each swimmer is already in — drives the
   // double-booking warning in the enrollment modal.
@@ -910,17 +950,32 @@ function App(){
         selectedItems={selectedItems}
       />}
 
-      {!loading && view==='students' && <StudentsView
-        students={students}
-        lessonTypes={activeLessonTypes()}
-        lessonTypeById={lessonTypeById}
-        packages={activePackages()}
-        packageById={packageById}
-        scheduleByStudent={scheduleByStudent}
-        addStudent={addStudent}
-        updateStudent={updateStudent}
-        deleteStudent={deleteStudent}
-      />}
+      {!loading && view==='students' && <>
+        <StudentsView
+          students={students}
+          lessonTypes={activeLessonTypes()}
+          lessonTypeById={lessonTypeById}
+          packages={activePackages()}
+          packageById={packageById}
+          groupById={groupById}
+          scheduleByStudent={scheduleByStudent}
+          addStudent={addStudent}
+          updateStudent={updateStudent}
+          deleteStudent={deleteStudent}
+        />
+        <FamilyGroupsPanel
+          groups={familyGroups}
+          students={students}
+          groupPackages={options.packages.filter(p => p.is_group && p.is_active !== false)}
+          packageById={packageById}
+          membersByGroup={membersByGroup}
+          scheduleByStudent={scheduleByStudent}
+          addGroup={addGroup}
+          updateGroup={updateGroup}
+          deleteGroup={deleteGroup}
+          setStudentGroup={setStudentGroup}
+        />
+      </>}
       {!loading && view==='enroll' && <EnrollView
         sessions={sessions}
         students={students}
@@ -1274,6 +1329,26 @@ function SummaryView({ summary, pools }){
 // ============================================================================
 
 function billingText(mode, count){ if(count === null || count === undefined || count === '') return ''; return `${count} ${mode === 'credit' ? 'credits' : 'monthly'}`; }
+function fmtMoney(n){ if(n === null || n === undefined) return '—'; return Number.isInteger(Number(n)) ? String(Number(n)) : Number(n).toFixed(2); }
+
+// Live billing for a family group. The discount is NEVER stored per head: when
+// the group is at its required size it costs the bundled total; the moment it
+// drops below, it reverts to the standard per-pax rate — so a removed member
+// can't leave a stale discounted rate behind.
+function groupBilling(pkg, memberCount){
+  const required = (pkg && pkg.pax != null) ? Number(pkg.pax) : null;
+  const bundle   = (pkg && pkg.amount != null) ? Number(pkg.amount) : null;
+  const fb       = (pkg && pkg.fallback_per_pax != null) ? Number(pkg.fallback_per_pax) : null;
+  const n = memberCount;
+  let status = 'unknown', total = null;
+  if(required != null && bundle != null){
+    if(n === required){ status = 'qualified'; total = bundle; }
+    else if(n < required){ status = 'under'; total = (fb != null ? n * fb : null); }
+    else { status = 'over'; total = (fb != null ? bundle + (n - required) * fb : bundle); }
+  }
+  const perHead = (total != null && n > 0) ? total / n : null;
+  return { required, bundle, fb, n, status, total, perHead };
+}
 
 // Monthly/Credit segmented toggle + a count input whose suffix flips to match.
 function BillingControl({ mode, count, onMode, onCount }){
@@ -1301,16 +1376,20 @@ function PackageEditor({ row, onSave, onCancel }){
   const [amount, setAmount] = useState(row.amount == null ? '' : String(row.amount));
   const [mode, setMode] = useState(row.billing_mode === 'credit' ? 'credit' : 'monthly');
   const [count, setCount] = useState(row.billing_count == null ? '' : String(row.billing_count));
+  const [isGroup, setIsGroup] = useState(!!row.is_group);
+  const [fallback, setFallback] = useState(row.fallback_per_pax == null ? '' : String(row.fallback_per_pax));
   return <div style={{width:'100%'}}>
     <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) 90px 130px',gap:10}}>
       <div className="field" style={{margin:0}}><label>Package name</label><input className="input" value={name} onChange={(e)=>setName(e.target.value)} /></div>
-      <div className="field" style={{margin:0}}><label>Pax</label><input className="input" type="number" min="1" value={pax} onChange={(e)=>setPax(e.target.value)} /></div>
-      <div className="field" style={{margin:0}}><label>Amount (RM)</label><input className="input" type="number" min="0" step="0.01" value={amount} onChange={(e)=>setAmount(e.target.value)} /></div>
+      <div className="field" style={{margin:0}}><label>{isGroup ? 'Required pax' : 'Pax'}</label><input className="input" type="number" min="1" value={pax} onChange={(e)=>setPax(e.target.value)} /></div>
+      <div className="field" style={{margin:0}}><label>{isGroup ? 'Bundle total (RM)' : 'Amount (RM)'}</label><input className="input" type="number" min="0" step="0.01" value={amount} onChange={(e)=>setAmount(e.target.value)} /></div>
     </div>
     <div style={{marginTop:10}}><BillingControl mode={mode} count={count} onMode={setMode} onCount={setCount} /></div>
+    <label className="gb-check" style={{marginTop:10}}><input type="checkbox" checked={isGroup} onChange={e=>setIsGroup(e.target.checked)} /> Family unit (single payer for the required pax)</label>
+    {isGroup ? <div className="field" style={{marginTop:8,maxWidth:280}}><label>Standard rate per pax if under-enrolled (RM)</label><input className="input" type="number" min="0" step="0.01" value={fallback} onChange={e=>setFallback(e.target.value)} placeholder="200" /></div> : null}
     <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:10}}>
       <button className="btn btn-ghost small" onClick={onCancel}>Cancel</button>
-      <button className="btn btn-primary small" onClick={()=>{ const v = name.trim(); if(!v) return; onSave({ name:v, pax:(pax === '' ? null : Number(pax)), amount:(amount === '' ? null : Number(amount)), billing_mode:mode, billing_count:(count === '' ? null : Number(count)) }); }}>Save</button>
+      <button className="btn btn-primary small" onClick={()=>{ const v = name.trim(); if(!v) return; onSave({ name:v, pax:(pax === '' ? null : Number(pax)), amount:(amount === '' ? null : Number(amount)), billing_mode:mode, billing_count:(count === '' ? null : Number(count)), is_group:isGroup, fallback_per_pax:(fallback === '' ? null : Number(fallback)) }); }}>Save</button>
     </div>
   </div>;
 }
@@ -1328,6 +1407,8 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
   const [newPkgAmount, setNewPkgAmount] = useState('');
   const [newPkgMode, setNewPkgMode] = useState('monthly');
   const [newPkgCount, setNewPkgCount] = useState('');
+  const [newPkgGroup, setNewPkgGroup] = useState(false);
+  const [newPkgFallback, setNewPkgFallback] = useState('');
   const [editPkgId, setEditPkgId] = useState(null);
   const [editingLessonId, setEditingLessonId] = useState(null);
   const counts = lessonTypeCounts || {};
@@ -1414,7 +1495,11 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
       </div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-end',gap:12,marginTop:10,flexWrap:'wrap'}}>
         <BillingControl mode={newPkgMode} count={newPkgCount} onMode={setNewPkgMode} onCount={setNewPkgCount} />
-        <button className="btn btn-primary" onClick={()=>{ const v = newPkgName.trim(); if(!v) return; addOption('package', { name:v, pax:newPkgPax, amount:newPkgAmount, billingMode:newPkgMode, billingCount:newPkgCount }); setNewPkgName(''); setNewPkgPax(''); setNewPkgAmount(''); setNewPkgMode('monthly'); setNewPkgCount(''); }}>Add</button>
+        <button className="btn btn-primary" onClick={()=>{ const v = newPkgName.trim(); if(!v) return; addOption('package', { name:v, pax:newPkgPax, amount:newPkgAmount, billingMode:newPkgMode, billingCount:newPkgCount, isGroup:newPkgGroup, fallbackPerPax:newPkgFallback }); setNewPkgName(''); setNewPkgPax(''); setNewPkgAmount(''); setNewPkgMode('monthly'); setNewPkgCount(''); setNewPkgGroup(false); setNewPkgFallback(''); }}>Add</button>
+      </div>
+      <div style={{display:'flex',alignItems:'flex-end',gap:14,marginTop:8,flexWrap:'wrap'}}>
+        <label className="gb-check"><input type="checkbox" checked={newPkgGroup} onChange={e=>setNewPkgGroup(e.target.checked)} /> Family unit (single payer; Pax = required headcount, Amount = bundle total)</label>
+        {newPkgGroup ? <div className="field" style={{margin:0,maxWidth:260}}><label>Standard rate per pax if under-enrolled (RM)</label><input className="input" type="number" min="0" step="0.01" placeholder="200" value={newPkgFallback} onChange={e=>setNewPkgFallback(e.target.value)} /></div> : null}
       </div>
       <div className="settings-list">
         {options.packages && options.packages.length ? options.packages.map((r, i) => editPkgId === r.id
@@ -1429,7 +1514,7 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
                 </div>
                 <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
                 <div style={{fontWeight:700}}>{r.name}</div>
-                <span className="small subtle">{r.pax != null ? `${r.pax} pax` : '—'} · {r.amount != null ? `RM${r.amount}` : 'no amount'}{billingText(r.billing_mode, r.billing_count) ? ` · ${billingText(r.billing_mode, r.billing_count)}` : ''}</span>
+                <span className="small subtle">{r.pax != null ? `${r.pax}${r.is_group ? ' pax req.' : ' pax'}` : '—'} · {r.amount != null ? `RM${r.amount}${r.is_group ? ' bundle' : ''}` : 'no amount'}{billingText(r.billing_mode, r.billing_count) ? ` · ${billingText(r.billing_mode, r.billing_count)}` : ''}{r.is_group ? ` · 👪 family${r.fallback_per_pax != null ? `, RM${r.fallback_per_pax}/pax fallback` : ''}` : ''}</span>
               </div>
               <div style={{display:'flex',gap:6}}>
                 <button className="btn btn-ghost small" onClick={()=>setEditPkgId(r.id)}>Edit</button>
@@ -1715,7 +1800,78 @@ function StudentEditor({ row, lessonTypes, packages, onSave }){
   </div>;
 }
 
-function StudentsView({ students, lessonTypes, lessonTypeById, packages, packageById, scheduleByStudent, addStudent, updateStudent, deleteStudent }){
+function FamilyGroupsPanel({ groups, students, groupPackages, packageById, membersByGroup, scheduleByStudent, addGroup, updateGroup, deleteGroup, setStudentGroup }){
+  const [name, setName] = useState('');
+  const [pkgId, setPkgId] = useState('');
+  const [editId, setEditId] = useState(null);
+
+  function statusChip(b){
+    if(b.status === 'qualified') return { cls:'gb-ok', text:`Qualified · RM${fmtMoney(b.total)}${b.perHead != null ? ` (RM${fmtMoney(b.perHead)}/child)` : ''}` };
+    if(b.status === 'under')     return { cls:'gb-warn', text:`⚠ Under-enrolled ${b.n}/${b.required} · discount void → RM${fmtMoney(b.total)}${b.fb != null ? ` (${b.n} × RM${fmtMoney(b.fb)})` : ''}` };
+    if(b.status === 'over')      return { cls:'gb-amber', text:`⚠ ${b.n} members — package is for ${b.required}. Move to a ${b.n}-pax family package.` };
+    return { cls:'gb-dim', text:'Set required pax, total amount, and fallback rate on the package.' };
+  }
+
+  return <div className="card" style={{marginTop:16}}>
+    <div style={{fontSize:18,fontWeight:800}}>Family Groups</div>
+    <div className="small subtle" style={{marginTop:4}}>A family group is one paying unit on a discounted family package. Members can be in any class — pricing is computed live from the group, so removing a member auto-reverts to the standard per-pax rate.</div>
+
+    <div style={{display:'flex',gap:10,alignItems:'flex-end',marginTop:14,flexWrap:'wrap'}}>
+      <div className="field" style={{margin:0,minWidth:200,flex:1}}><label>New group name</label><input className="input" placeholder="e.g. Tan Family" value={name} onChange={e=>setName(e.target.value)} /></div>
+      <div className="field" style={{margin:0,minWidth:200}}><label>Family package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">Select a family package…</option>{groupPackages.map(p => <option key={p.id} value={p.id}>{p.name}{p.pax!=null?` · ${p.pax} pax`:''}{p.amount!=null?` · RM${p.amount}`:''}</option>)}</select></div>
+      <button className="btn btn-primary" disabled={!groupPackages.length} onClick={()=>{ const v=name.trim(); if(!v||!pkgId) return; addGroup({ name:v, packageId:pkgId }); setName(''); setPkgId(''); }}>Create Group</button>
+    </div>
+    {groupPackages.length ? null : <div className="hint" style={{marginTop:8}}>No family packages yet. In Settings → Packages, add a package and turn on “Family unit (single payer)”.</div>}
+
+    <div style={{display:'flex',flexDirection:'column',gap:12,marginTop:16}}>
+      {groups.length ? groups.map(g => {
+        const pkg = g.packageId ? packageById(g.packageId) : null;
+        const members = membersByGroup[g.id] || [];
+        const b = groupBilling(pkg, members.length);
+        const chip = statusChip(b);
+        const candidates = students.filter(s => !s.familyGroupId);
+        return <div className="gb-card" key={g.id}>
+          <div className="gb-head">
+            <div style={{minWidth:0}}>
+              <div style={{fontWeight:800,fontSize:15}}>👪 {g.name}</div>
+              <div className="small subtle">{pkg ? `${pkg.name}${pkg.pax!=null?` · needs ${pkg.pax} pax`:''}${pkg.amount!=null?` · RM${pkg.amount} bundle`:''}${pkg.fallback_per_pax!=null?` · RM${pkg.fallback_per_pax}/pax standard`:''}` : 'No package linked'}</div>
+            </div>
+            <div style={{display:'flex',gap:6,flexShrink:0}}>
+              <button className="btn btn-ghost small" onClick={()=>setEditId(editId===g.id?null:g.id)}>{editId===g.id?'Close':'Edit'}</button>
+              <button className="btn btn-danger small" onClick={()=>deleteGroup(g)}>Delete</button>
+            </div>
+          </div>
+
+          <div className={`gb-status ${chip.cls}`}>{chip.text}</div>
+
+          {editId===g.id ? <div className="gb-edit">
+            <div style={{display:'flex',gap:10,alignItems:'flex-end',flexWrap:'wrap'}}>
+              <div className="field" style={{margin:0,flex:1,minWidth:180}}><label>Group name</label><input className="input" defaultValue={g.name} onBlur={e=>{ const v=e.target.value.trim(); if(v && v!==g.name) updateGroup(g.id,{name:v}); }} /></div>
+              <div className="field" style={{margin:0,minWidth:180}}><label>Family package</label><select className="select" value={g.packageId||''} onChange={e=>updateGroup(g.id,{packageId:e.target.value||null})}><option value="">(none)</option>{groupPackages.map(p => <option key={p.id} value={p.id}>{p.name}{p.pax!=null?` · ${p.pax} pax`:''}</option>)}</select></div>
+            </div>
+            <div className="hint" style={{marginTop:6}}>Group name saves when you click away.</div>
+          </div> : null}
+
+          <div className="gb-members">
+            {members.length ? members.map(m => { const classes = (scheduleByStudent[m.id]||[]).length; return <div className="gb-member" key={m.id}>
+              <div style={{minWidth:0}}><span style={{fontWeight:700}}>{m.name}</span>{m.age!=null?<span className="subtle"> · {m.age}y</span>:null} <span className={classes? 'subtle small':'gb-noclass'}>{classes ? `· in ${classes} class${classes===1?'':'es'}` : '· ⚠ not in any class'}</span></div>
+              <button className="btn btn-ghost small" onClick={()=>setStudentGroup(m.id, null)}>Remove</button>
+            </div>; }) : <div className="subtle small" style={{padding:'4px 0'}}>No members yet.</div>}
+          </div>
+
+          <div className="gb-add">
+            <span className="small subtle">Add member:</span>
+            <div style={{flex:1,minWidth:180}}>
+              <StudentSelect valueId={null} fallbackLabel={null} studentById={{}} candidates={candidates} onPick={(stu)=>{ if(stu) setStudentGroup(stu.id, g.id); }} conflict={null} />
+            </div>
+          </div>
+        </div>;
+      }) : <div className="empty">No family groups yet.</div>}
+    </div>
+  </div>;
+}
+
+function StudentsView({ students, lessonTypes, lessonTypeById, packages, packageById, groupById, scheduleByStudent, addStudent, updateStudent, deleteStudent }){
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
   const [pkgId, setPkgId] = useState('');
@@ -1724,7 +1880,13 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
   const [q, setQ] = useState('');
   function toggleType(id){ setTypes(t => t.includes(id) ? t.filter(x => x !== id) : [...t, id]); }
   function colorsForId(id){ const t = lessonTypeById(id); return t ? { bg:t.bg_color, bd:t.border_color, tx:t.text_color, name:t.name } : { bg:'#eee', bd:'#ccc', tx:'#333', name:'(removed)' }; }
-  function packageLabel(s){ const p = s.packageId ? packageById(s.packageId) : null; if(p){ const b = billingText(p.billing_mode, p.billing_count); return `${p.name}${p.amount != null ? ` · RM${p.amount}` : ''}${b ? ` · ${b}` : ''}`; } return s.package || '—'; }
+  function packageLabel(s){
+    const g = s.familyGroupId && groupById ? groupById[s.familyGroupId] : null;
+    if(g){ const gp = g.packageId ? packageById(g.packageId) : null; return `👪 ${g.name}${gp ? ` · ${gp.name}` : ''}`; }
+    const p = s.packageId ? packageById(s.packageId) : null;
+    if(p){ const b = billingText(p.billing_mode, p.billing_count); return `${p.name}${p.amount != null ? ` · RM${p.amount}` : ''}${b ? ` · ${b}` : ''}`; }
+    return s.package || '—';
+  }
   function scheduleLines(id){
     const slots = scheduleByStudent[id] || [];
     if(!slots.length) return null;
