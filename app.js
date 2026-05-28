@@ -992,6 +992,7 @@ function App(){
           deleteGroup={deleteGroup}
           setStudentGroup={setStudentGroup}
         />
+        <div style={{height:'42vh'}} aria-hidden="true"></div>
       </>}
       {!loading && view==='enroll' && <EnrollView
         sessions={sessions}
