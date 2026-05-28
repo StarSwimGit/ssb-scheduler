@@ -1,0 +1,1305 @@
+
+// ============================================================================
+// SSB Scheduler app.js — Module 2 build
+// ============================================================================
+// What changed in Module 2:
+//   * Loads pools, operating_hours, and session_instructors from the new schema.
+//   * Sessions now carry pool_id, lesson_type_id, instructors[], and computed
+//     capacity (current / max / status). Body counts use the same arithmetic
+//     as the pool_occupancy() Postgres function.
+//   * Weekly grid has a pool filter (All / Pool A / Pool B / ...). In All mode
+//     each day-column splits into per-pool sub-columns.
+//   * Each event renders a capacity chip with green / amber / red coloring.
+//     Over-capacity sessions also get an amber border. Nothing is enforced;
+//     the scheduler still has full freedom to save anything. Hard enforcement
+//     is Module 3.
+//   * Session modal: pool selector; lesson-type change auto-defaults the
+//     duration from scheduler_lesson_types.default_duration_minutes; a small
+//     capacity preview shows current vs max after edits.
+//   * Settings: new Pools panel, new Operating Hours panel, lesson-type rows
+//     gain an Edit toggle that exposes age range / ratio / billing / default
+//     pool / coach-in-pool / default duration.
+//   * Operating hours drive the visible grid bounds. Default seed (8 AM to 9
+//     PM, every day, 30-min blocks) produces the same grid as before.
+// ============================================================================
+
+const { useState, useEffect, useMemo } = React;
+
+// ───────────────────────────────────────────────────────────────────── constants
+
+const DAYS_S = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+const DAYS_F = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+const SLOT_MIN = 30;
+const ROW_H = 42;
+const DEFAULT_OPEN = 480;    // 8:00 AM fallback if operating_hours table is empty
+const DEFAULT_CLOSE = 1260;  // 9:00 PM fallback
+
+const DEFAULT_TYPES = {
+  "LTS": { bg:"#DBEAFE", bd:"#3B82F6", tx:"#1E40AF" },
+  "LTS Adult": { bg:"#CFFAFE", bd:"#06B6D4", tx:"#0E7490" },
+  "Personal 1": { bg:"#FED7AA", bd:"#F97316", tx:"#C2410C" },
+  "Personal 2": { bg:"#FEF9C3", bd:"#CA8A04", tx:"#854D0E" },
+  "Fam3": { bg:"#D1FAE5", bd:"#10B981", tx:"#065F46" },
+  "Fam4": { bg:"#DCFCE7", bd:"#22C55E", tx:"#14532D" },
+  "Fam5": { bg:"#D9F99D", bd:"#84CC16", tx:"#365314" },
+  "Toddler": { bg:"#FCE7F3", bd:"#EC4899", tx:"#831843" },
+  "Baby&Me": { bg:"#EDE9FE", bd:"#8B5CF6", tx:"#4C1D95" },
+  "Personal Clara": { bg:"#FEE2E2", bd:"#EF4444", tx:"#7F1D1D" }
+};
+
+// ───────────────────────────────────────────────────────────────────── REST glue
+
+const cfg = window.APP_CONFIG || {};
+const BASE_HEADERS = {
+  apikey: cfg.supabaseAnonKey || '',
+  Authorization: `Bearer ${cfg.supabaseAnonKey || ''}`,
+  'Content-Type': 'application/json'
+};
+function apiUrl(path){ return `${cfg.supabaseUrl}/rest/v1/${path}`; }
+async function rest(path, opts={}){
+  const mergedHeaders = { ...BASE_HEADERS, ...(opts.headers || {}) };
+  const res = await fetch(apiUrl(path), { ...opts, headers: mergedHeaders });
+  const txt = await res.text();
+  if(!res.ok) throw new Error(txt || `HTTP ${res.status}`);
+  return txt ? JSON.parse(txt) : null;
+}
+async function selectRows(table, select='*', extra=''){ return rest(`${table}?select=${select}${extra}`); }
+async function insertRows(table, payload, select='*'){ return rest(`${table}?select=${select}`, { method:'POST', headers:{ Prefer:'return=representation' }, body: JSON.stringify(Array.isArray(payload)?payload:[payload]) }); }
+async function patchRows(table, match, payload, select='*'){
+  const q = Object.entries(match).map(([k,v]) => `&${encodeURIComponent(k)}=eq.${encodeURIComponent(v)}`).join('');
+  return rest(`${table}?select=${select}${q}`, { method:'PATCH', headers:{ Prefer:'return=representation' }, body: JSON.stringify(payload) });
+}
+async function deleteRows(table, match, select='*'){
+  const q = Object.entries(match).map(([k,v]) => `&${encodeURIComponent(k)}=eq.${encodeURIComponent(v)}`).join('');
+  return rest(`${table}?select=${select}${q}`, { method:'DELETE', headers:{ Prefer:'return=representation' } });
+}
+
+// ───────────────────────────────────────────────────────────────────── helpers
+
+function toDateStr(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function fromDateStr(s){ const [y,m,d] = s.split('-').map(Number); return new Date(y,m-1,d); }
+function todayStr(){ return toDateStr(new Date()); }
+function minuteToTime(mins){ const h24 = Math.floor(mins / 60), m = mins % 60, ampm = h24 < 12 ? 'AM' : 'PM'; const h = h24 % 12 || 12; return `${h}:${String(m).padStart(2,'0')} ${ampm}`; }
+function formatRange(startMin, durationMin){ return `${minuteToTime(startMin)}–${minuteToTime(startMin + durationMin)}`; }
+function longDate(s){ return fromDateStr(s).toLocaleDateString(undefined, { weekday:'long', year:'numeric', month:'long', day:'numeric' }); }
+function monthCells(d){ const y=d.getFullYear(), m=d.getMonth(); const first=new Date(y,m,1); const offset=(first.getDay()+6)%7; const start=new Date(y,m,1-offset); return Array.from({length:42},(_,i)=>{ const x=new Date(start); x.setDate(start.getDate()+i); return x; }); }
+function monthKey(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
+function dateToWeekdayIndex(dateStr){ return (fromDateStr(dateStr).getDay() + 6) % 7; }
+function excludeFromStudentTotals(sessionType){
+  const t = String(sessionType || '').toLowerCase();
+  return t.includes('replacement') || t.includes('trial');
+}
+function weekBounds(dateStr){ const d = fromDateStr(dateStr); const monday = new Date(d); monday.setDate(d.getDate() - ((d.getDay()+6)%7)); const sunday = new Date(monday); sunday.setDate(monday.getDate()+6); return { start:monday, end:sunday }; }
+function weekStartStr(dateStr){ return toDateStr(weekBounds(dateStr).start); }
+function addDays(dateStr, days){ const d = fromDateStr(dateStr); d.setDate(d.getDate()+days); return toDateStr(d); }
+
+// M2: dynamic grid bounds from operating_hours rows. Falls back to 8 AM - 9 PM.
+// Uses the widest window across all open days so days that close earlier just
+// show empty cells past their close time.
+function computeGridBounds(operatingHours){
+  const open = (operatingHours || []).filter(h => h.is_open !== false);
+  if(!open.length) return { startMin: DEFAULT_OPEN, endMin: DEFAULT_CLOSE };
+  const startMin = Math.min(...open.map(h => Number(h.open_minute)));
+  const endMin   = Math.max(...open.map(h => Number(h.close_minute)));
+  // Snap to the SLOT_MIN grid so row arithmetic stays clean.
+  return {
+    startMin: Math.floor(startMin / SLOT_MIN) * SLOT_MIN,
+    endMin:   Math.ceil(endMin / SLOT_MIN) * SLOT_MIN
+  };
+}
+
+// M2: mirrors the Postgres pool_occupancy() rounding so JS and DB agree on
+// when one session blocks another.
+function effectiveEndMinute(startMin, durationMin){
+  return Math.ceil((Number(startMin) + Number(durationMin)) / SLOT_MIN) * SLOT_MIN;
+}
+
+// M2: compute current/max capacity for a session given its lesson type.
+function sessionCapacity(session, lessonType){
+  const ratio = Number((lessonType && lessonType.students_per_instructor) || 0);
+  const instCount = Math.max(0, (session.instructors || []).length);
+  const max = ratio > 0 ? ratio * Math.max(1, instCount) : 0;
+  const current = (session.students || []).length;
+  let status = 'unknown';
+  if(max > 0){
+    if(current > max) status = 'over';
+    else if(current === max) status = 'full';
+    else if(current / max >= 0.8) status = 'tight';
+    else status = 'open';
+  }
+  return { current, max, status };
+}
+
+function capacityChipColors(status){
+  switch(status){
+    case 'open':  return { bg:'#0d2e1f', tx:'#86efac', bd:'#166534' };
+    case 'tight': return { bg:'#3b2a08', tx:'#fde68a', bd:'#a16207' };
+    case 'full':  return { bg:'#3a1e08', tx:'#fed7aa', bd:'#c2410c' };
+    case 'over':  return { bg:'#3a1118', tx:'#fecaca', bd:'#b91c1c' };
+    default:      return { bg:'#1f2937', tx:'#cbd5e1', bd:'#334155' };
+  }
+}
+
+// M2: print helpers preserved as before.
+function printWeeklyView(){ document.body.setAttribute('data-print-view','weekly'); window.print(); setTimeout(()=>document.body.removeAttribute('data-print-view'),300); }
+function printDailyView(dateStr){ document.body.setAttribute('data-print-view','daily'); document.body.setAttribute('data-print-date', dateStr || ''); window.print(); setTimeout(()=>{document.body.removeAttribute('data-print-view'); document.body.removeAttribute('data-print-date');},300); }
+function printWeeklyTable(){ const s=document.createElement('style'); s.id='wt-page-style'; s.textContent='@page{size:A3 landscape;margin:8mm}'; document.head.appendChild(s); document.body.setAttribute('data-print-view','weekly-table'); window.print(); setTimeout(()=>{ document.body.removeAttribute('data-print-view'); const el=document.getElementById('wt-page-style'); if(el) el.remove(); },500); }
+
+// M2: assign _col / _total within a set of overlapping sessions. Extracted from
+// the prior inline logic so it can be reused per (day, pool) tuple.
+function packParallelColumns(items){
+  const sorted = items.slice().sort((a,b) => a.startMinute - b.startMinute || String(a.id).localeCompare(String(b.id)));
+  const cols = [];
+  const out = [];
+  sorted.forEach(item => {
+    const end = item.startMinute + item.durationMinutes;
+    let idx = 0;
+    while(idx < cols.length && cols[idx] > item.startMinute) idx++;
+    cols[idx] = end;
+    out.push({ ...item, _col: idx });
+  });
+  const total = Math.max(cols.length, 1);
+  return out.map(x => ({ ...x, _total: total }));
+}
+
+// ============================================================================
+// App
+// ============================================================================
+
+function App(){
+  const [view,setView] = useState('week');
+  const [loading,setLoading] = useState(true);
+  const [status,setStatus] = useState('');
+  const [error,setError] = useState('');
+  const [sessions,setSessions] = useState([]);
+  const [remarks,setRemarks] = useState({});
+  const [options,setOptions] = useState({ instructors:[], durations:[], lessonTypes:[], pools:[], operatingHours:[] });
+  const [monthCursor,setMonthCursor] = useState(new Date());
+  const [selectedDate,setSelectedDate] = useState(todayStr());
+  const [selectedPoolId,setSelectedPoolId] = useState(null);  // M2: null = all pools
+  const [modal,setModal] = useState(null);
+  const [saveBusy,setSaveBusy] = useState(false);
+  const [remarkDraft,setRemarkDraft] = useState('');
+
+  useEffect(() => { boot(); }, []);
+  useEffect(() => { if(cfg.supabaseUrl && cfg.supabaseAnonKey) loadRemarks(monthCursor).catch(handleErr); }, [monthCursor]);
+  useEffect(() => { setRemarkDraft(remarks[selectedDate] || ''); }, [selectedDate, remarks]);
+
+  function handleErr(err){ console.error(err); setError(err?.message || String(err)); setStatus('Error'); }
+
+  async function boot(){
+    if(!cfg.supabaseUrl || !cfg.supabaseAnonKey){ setError('Missing config.js values.'); setLoading(false); return; }
+    try{
+      setLoading(true); setError('');
+      await loadOptions();
+      await Promise.all([loadSessions(), loadRemarks(monthCursor)]);
+      setStatus('Connected');
+    } catch(err){ handleErr(err); }
+    finally{ setLoading(false); }
+  }
+
+  // M2: also loads pools and operating_hours.
+  async function loadOptions(){
+    const [instructors, durations, lessonTypes, pools, operatingHours] = await Promise.all([
+      selectRows('scheduler_instructors', '*', '&order=sort_order.asc,name.asc'),
+      selectRows('scheduler_durations', '*', '&order=sort_order.asc,slots.asc'),
+      selectRows('scheduler_lesson_types', '*', '&order=sort_order.asc,name.asc'),
+      selectRows('pools', '*', '&order=sort_order.asc,name.asc'),
+      selectRows('operating_hours', '*', '&order=weekday.asc')
+    ]);
+    setOptions({
+      instructors: instructors || [],
+      durations: durations || [],
+      lessonTypes: lessonTypes || [],
+      pools: pools || [],
+      operatingHours: operatingHours || []
+    });
+  }
+
+  // M2: also fetches session_instructors and instructors, then merges so each
+  // session carries instructors:[{id,name}] alongside students:[{id,name}].
+  async function loadSessions(){
+    const [sessionRows, studentRows, instructorJoinRows, instructorCatalog] = await Promise.all([
+      selectRows('weekly_sessions', '*', '&order=week_start_date.asc,weekday.asc,start_minute.asc,created_at.asc'),
+      selectRows('weekly_session_students', '*', '&order=created_at.asc,student_name.asc'),
+      selectRows('session_instructors', '*'),
+      selectRows('scheduler_instructors', '*')
+    ]);
+    const instructorById = {};
+    (instructorCatalog || []).forEach(i => { instructorById[i.id] = i; });
+    const studentsBySession = {};
+    (studentRows || []).forEach(r => {
+      const key = String(r.session_id);
+      if(!studentsBySession[key]) studentsBySession[key] = [];
+      studentsBySession[key].push({ id:r.id, name:r.student_name || '' });
+    });
+    const instructorsBySession = {};
+    (instructorJoinRows || []).forEach(r => {
+      const key = String(r.session_id);
+      if(!instructorsBySession[key]) instructorsBySession[key] = [];
+      const inst = instructorById[r.instructor_id];
+      if(inst) instructorsBySession[key].push({ id: inst.id, name: inst.name });
+    });
+    const merged = (sessionRows || []).map(r => ({
+      id: r.id,
+      weekStartDate: r.week_start_date || weekStartStr(todayStr()),
+      day: Number(r.weekday) - 1,
+      startMinute: Number(r.start_minute),
+      durationMinutes: Number(r.duration_minutes),
+      type: r.lesson_type || '',
+      lessonTypeId: r.lesson_type_id || null,
+      poolId: r.pool_id || null,
+      legacyInstructor: r.instructor || '',
+      students: studentsBySession[String(r.id)] || [],
+      instructors: instructorsBySession[String(r.id)] || []
+    }));
+    setSessions(merged);
+  }
+
+  async function loadRemarks(cursor){
+    const start = new Date(cursor.getFullYear(), cursor.getMonth()-1, 1);
+    const end = new Date(cursor.getFullYear(), cursor.getMonth()+2, 0);
+    const rows = await selectRows('calendar_remarks', '*', `&calendar_date=gte.${toDateStr(start)}&calendar_date=lte.${toDateStr(end)}&order=calendar_date.asc`);
+    const map = {};
+    (rows || []).forEach(r => { map[r.calendar_date] = r.remark || ''; });
+    setRemarks(map);
+  }
+
+  function activeInstructors(){ return options.instructors.filter(x => x.is_active !== false); }
+  function activeDurations(){ return options.durations.filter(x => x.is_active !== false); }
+  function activeLessonTypes(){ return options.lessonTypes.filter(x => x.is_active !== false); }
+  function activePools(){ return options.pools.filter(x => x.is_active !== false); }
+
+  function lessonTypeByName(name){ return options.lessonTypes.find(t => t.name === name) || null; }
+  function lessonTypeById(id){ return options.lessonTypes.find(t => t.id === id) || null; }
+  function poolById(id){ return options.pools.find(p => p.id === id) || null; }
+  function instructorByName(name){ return options.instructors.find(i => i.name === name) || null; }
+
+  function colorsFor(type){
+    const x = lessonTypeByName(type);
+    return x ? { bg:x.bg_color, bd:x.border_color, tx:x.text_color } : (DEFAULT_TYPES[type] || { bg:'#E2E8F0', bd:'#64748B', tx:'#0F172A' });
+  }
+
+  const gridBounds = useMemo(() => computeGridBounds(options.operatingHours), [options.operatingHours]);
+  const gridSlots = Math.max(1, Math.round((gridBounds.endMin - gridBounds.startMin) / SLOT_MIN));
+  function slotToMinute(slot){ return gridBounds.startMin + slot * SLOT_MIN; }
+  function minuteToSlot(min){ return Math.round((min - gridBounds.startMin) / SLOT_MIN); }
+
+  const selectedWeekStart = weekStartStr(selectedDate);
+  const currentWeekStart = weekStartStr(todayStr());
+  const isFutureSelectedWeek = selectedWeekStart > currentWeekStart;
+
+  function sessionsForDate(dateStr){
+    const day = dateToWeekdayIndex(dateStr);
+    const ws = weekStartStr(dateStr);
+    return sessions.filter(s => s.weekStartDate === ws && s.day === day).sort((a,b) => a.startMinute - b.startMinute);
+  }
+
+  const weekSessions = useMemo(() => sessions.filter(s => s.weekStartDate === selectedWeekStart), [sessions, selectedWeekStart]);
+
+  // M2: build a (day, poolId) → packed-columns map. Pool null sessions still
+  // render under whichever sub-col we point them at — they're flagged so the
+  // capacity chip says "no pool", and the user can fix in the modal.
+  const visiblePools = useMemo(() => {
+    const pools = activePools();
+    if(selectedPoolId){
+      const one = pools.find(p => p.id === selectedPoolId);
+      return one ? [one] : pools;
+    }
+    return pools;
+  }, [options.pools, selectedPoolId]);
+
+  const blocksByDayPool = useMemo(() => {
+    const allActive = activePools();
+    const fallbackPoolId = allActive[0]?.id || null;
+    return Array.from({length:7}, (_, day) => {
+      const map = {};
+      visiblePools.forEach(pool => {
+        const items = weekSessions.filter(s => s.day === day && (s.poolId || fallbackPoolId) === pool.id);
+        map[pool.id] = packParallelColumns(items);
+      });
+      return map;
+    });
+  }, [weekSessions, visiblePools, options.pools]);
+
+  const summary = useMemo(() => {
+    const byType = {}, byInst = {}, byPool = {};
+    activeLessonTypes().forEach(x => byType[x.name] = 0);
+    activeInstructors().forEach(x => byInst[x.name] = 0);
+    activePools().forEach(p => byPool[p.name] = 0);
+    let totalStudents = 0;
+    weekSessions.forEach(s => {
+      const excluded = excludeFromStudentTotals(s.type);
+      const count = excluded ? 0 : s.students.length;
+      byType[s.type] = (byType[s.type] || 0) + count;
+      const pool = poolById(s.poolId);
+      if(pool) byPool[pool.name] = (byPool[pool.name] || 0) + count;
+      s.instructors.forEach(inst => { byInst[inst.name] = (byInst[inst.name] || 0) + count; });
+      totalStudents += count;
+    });
+    return { byType, byInst, byPool, totalStudents, totalSessions: weekSessions.length };
+  }, [weekSessions, options]);
+
+  function defaultFormForStart(startMinute, poolId){
+    const firstType = activeLessonTypes()[0];
+    const firstInst = activeInstructors()[0];
+    const firstPool = poolId || (firstType && firstType.default_pool_id) || (activePools()[0] && activePools()[0].id) || null;
+    const dur = (firstType && firstType.default_duration_minutes) || 50;
+    return {
+      type: firstType?.name || '',
+      lessonTypeId: firstType?.id || null,
+      instructorId: firstInst?.id || null,
+      instructorName: firstInst?.name || '',
+      poolId: firstPool,
+      durationMinutes: dur,
+      studentText: ''
+    };
+  }
+
+  function openAdd(day, slot, poolId){
+    const startMinute = slotToMinute(slot);
+    setModal({ mode:'add', id:null, weekStartDate: selectedWeekStart, day, startMinute, form: defaultFormForStart(startMinute, poolId) });
+  }
+
+  function openAddAtTime(day, startMinute, poolId){
+    setModal({ mode:'add', id:null, weekStartDate: selectedWeekStart, day, startMinute, form: defaultFormForStart(startMinute, poolId) });
+  }
+
+  function openEdit(item){
+    const firstInst = item.instructors[0] || null;
+    setModal({
+      mode:'edit', id:item.id, weekStartDate:item.weekStartDate, day:item.day, startMinute:item.startMinute,
+      form:{
+        type:item.type,
+        lessonTypeId:item.lessonTypeId,
+        instructorId: firstInst ? firstInst.id : (instructorByName(item.legacyInstructor)?.id || null),
+        instructorName: firstInst ? firstInst.name : (item.legacyInstructor || ''),
+        poolId: item.poolId,
+        durationMinutes:item.durationMinutes,
+        studentText:item.students.map(s => s.name).join('\n')
+      }
+    });
+  }
+
+  // M2: save now writes pool_id, lesson_type_id, and a session_instructors
+  // row. The legacy instructor text column is kept in sync so a downgrade or
+  // partial deploy doesn't lose data. Deleted students/instructors are
+  // wiped-and-rewritten on every save — the dataset is small enough that the
+  // simplicity is worth the extra round-trip.
+  async function saveSession(){
+    if(!modal) return;
+    try{
+      setSaveBusy(true); setError('');
+      const lt = lessonTypeByName(modal.form.type) || lessonTypeById(modal.form.lessonTypeId);
+      const inst = options.instructors.find(i => i.id === modal.form.instructorId) || instructorByName(modal.form.instructorName);
+      const payload = {
+        week_start_date: modal.weekStartDate || selectedWeekStart,
+        weekday: modal.day + 1,
+        start_minute: modal.startMinute,
+        duration_minutes: Number(modal.form.durationMinutes),
+        lesson_type: modal.form.type || '',
+        lesson_type_id: lt ? lt.id : null,
+        pool_id: modal.form.poolId || null,
+        instructor: inst ? inst.name : ''
+      };
+      let sessionId = modal.id;
+      if(modal.id){
+        const updated = await patchRows('weekly_sessions', { id: modal.id }, payload);
+        sessionId = updated?.[0]?.id || modal.id;
+        await deleteRows('weekly_session_students', { session_id: sessionId });
+        await deleteRows('session_instructors', { session_id: sessionId });
+      } else {
+        const inserted = await insertRows('weekly_sessions', payload);
+        sessionId = inserted?.[0]?.id;
+      }
+      const names = modal.form.studentText.split(/\n|,/).map(s => s.trim()).filter(Boolean);
+      if(sessionId && names.length){
+        await insertRows('weekly_session_students', names.map(name => ({ session_id: sessionId, student_name: name })));
+      }
+      if(sessionId && inst){
+        await insertRows('session_instructors', [{ session_id: sessionId, instructor_id: inst.id }]);
+      }
+      await loadSessions();
+      setModal(null);
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to save session'); }
+    finally{ setSaveBusy(false); }
+  }
+
+  async function deleteSession(){
+    if(!modal?.id) return;
+    if(!confirm('Delete this scheduled session for the selected week?')) return;
+    try{
+      await deleteRows('weekly_session_students', { session_id: modal.id });
+      await deleteRows('session_instructors', { session_id: modal.id });
+      await deleteRows('weekly_sessions', { id: modal.id });
+      await loadSessions();
+      setModal(null);
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to delete session'); }
+  }
+
+  async function saveRemark(){
+    try{
+      setError('');
+      const val = remarkDraft.trim();
+      if(remarks[selectedDate] !== undefined){
+        if(val) await patchRows('calendar_remarks', { calendar_date: selectedDate }, { remark: val });
+        else await deleteRows('calendar_remarks', { calendar_date: selectedDate });
+      } else if(val) {
+        await insertRows('calendar_remarks', { calendar_date: selectedDate, remark: val });
+      }
+      await loadRemarks(monthCursor);
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to save remark'); }
+  }
+
+  // ───── Settings mutations ─────────────────────────────────────────────────
+
+  async function addOption(kind, extra={}){
+    try{
+      if(kind === 'instructor') await insertRows('scheduler_instructors', { name: extra.name, sort_order: options.instructors.length + 1, is_active:true });
+      if(kind === 'duration') await insertRows('scheduler_durations', { label: extra.label, slots: Number(extra.slots), sort_order: options.durations.length + 1, is_active:true });
+      if(kind === 'lessonType') await insertRows('scheduler_lesson_types', { name: extra.name, bg_color: extra.bg, border_color: extra.bd, text_color: extra.tx, sort_order: options.lessonTypes.length + 1, is_active:true });
+      if(kind === 'pool') await insertRows('pools', { name: extra.name, capacity_total: Number(extra.capacity), sort_order: options.pools.length + 1, is_active:true });
+      await loadOptions();
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to add option'); }
+  }
+
+  async function toggleOption(table, row){
+    try{ await patchRows(table, { id: row.id }, { is_active: !row.is_active }); await loadOptions(); }
+    catch(err){ handleErr(err); alert(err.message || 'Failed to update option'); }
+  }
+  async function deleteOption(table, row, label){
+    if(!confirm(`Delete "${label}" from this dropdown list? Existing schedule rows will stay unchanged.`)) return;
+    try{ await deleteRows(table, { id: row.id }); await loadOptions(); }
+    catch(err){ handleErr(err); alert(err.message || 'Failed to delete option'); }
+  }
+  async function patchOption(table, idOrMatch, patch){
+    try{
+      const match = (typeof idOrMatch === 'object' && idOrMatch !== null) ? idOrMatch : { id: idOrMatch };
+      await patchRows(table, match, patch);
+      await loadOptions();
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to update option'); }
+  }
+
+  async function duplicatePreviousWeek(){
+    try{
+      if(!isFutureSelectedWeek){ alert('Week duplication is only available for a future week.'); return; }
+      const prevWeekStart = addDays(selectedWeekStart, -7);
+      const sourceSessions = sessions.filter(s => s.weekStartDate === prevWeekStart).sort((a,b) => a.day - b.day || a.startMinute - b.startMinute);
+      if(!sourceSessions.length){ alert('No classes found in the previous week to duplicate.'); return; }
+      if(!confirm(`Duplicate all classes from ${prevWeekStart} into ${selectedWeekStart}? Existing classes in the selected week will remain.`)) return;
+      const payload = sourceSessions.map(s => ({
+        week_start_date: selectedWeekStart,
+        weekday: s.day + 1,
+        start_minute: s.startMinute,
+        duration_minutes: s.durationMinutes,
+        lesson_type: s.type,
+        lesson_type_id: s.lessonTypeId,
+        pool_id: s.poolId,
+        instructor: s.legacyInstructor
+      }));
+      const inserted = await insertRows('weekly_sessions', payload);
+      const studentPayload = [];
+      const instructorPayload = [];
+      (inserted || []).forEach((row, idx) => {
+        const src = sourceSessions[idx];
+        (src.students || []).forEach(st => studentPayload.push({ session_id: row.id, student_name: st.name }));
+        (src.instructors || []).forEach(it => instructorPayload.push({ session_id: row.id, instructor_id: it.id }));
+      });
+      if(studentPayload.length) await insertRows('weekly_session_students', studentPayload);
+      if(instructorPayload.length) await insertRows('session_instructors', instructorPayload);
+      await loadSessions();
+      setStatus(`Duplicated ${sourceSessions.length} class${sourceSessions.length===1?'':'es'} from previous week.`);
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to duplicate previous week'); }
+  }
+
+  async function clearDayClasses(dayIndex){
+    try{
+      if(!isFutureSelectedWeek){ alert('You can only remove all classes for a future week. Current week and past weeks are protected.'); return; }
+      const dayLabel = DAYS_F[dayIndex];
+      const targets = sessions.filter(s => s.weekStartDate === selectedWeekStart && s.day === dayIndex);
+      if(!targets.length){ alert(`No classes found for ${dayLabel} in the selected week.`); return; }
+      if(!confirm(`Remove all classes for ${dayLabel} in the week starting ${selectedWeekStart}? This will not affect the current week or any past week.`)) return;
+      for(const s of targets){
+        await deleteRows('weekly_session_students', { session_id: s.id });
+        await deleteRows('session_instructors', { session_id: s.id });
+        await deleteRows('weekly_sessions', { id: s.id });
+      }
+      await loadSessions();
+      setStatus(`Removed ${targets.length} class${targets.length===1?'':'es'} for ${dayLabel}.`);
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to remove day classes'); }
+  }
+
+  const monthDates = monthCells(monthCursor);
+  const selectedItems = sessionsForDate(selectedDate);
+  const selectedWeekLabel = `${selectedWeekStart} to ${addDays(selectedWeekStart, 6)}`;
+
+  return <div>
+    <div className="header"><div className="header-inner">
+      <div className="brand"><div className="logo">🏊</div><div><div style={{fontSize:16,fontWeight:800,letterSpacing:'-.4px',lineHeight:1}}>SSB Scheduler</div><div style={{fontSize:10,color:'#64748B',marginTop:2}}>Pool-aware lesson calendar</div></div></div>
+      <div style={{display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
+        <div className="small subtle"><span style={{color:'#06B6D4',fontWeight:800}}>{summary.totalStudents}</span> students · <span style={{color:'#06B6D4',fontWeight:800}}>{summary.totalSessions}</span> sessions · <span style={{color:'#06B6D4',fontWeight:800}}>{selectedWeekLabel}</span></div>
+        <div className="tabs">
+          {['day','week','month','summary','settings'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='week'?'📅 Weekly':v==='day'?'📋 Daily':v==='month'?'🗓️ Monthly':v==='summary'?'📊 Summary':'⚙️ Settings'}</button>)}
+        </div>
+      </div>
+    </div></div>
+
+    <div className="wrap">
+      {loading ? <div className="card" style={{textAlign:'center',padding:'42px'}}><div style={{fontSize:34,marginBottom:10}}>⏳</div><div>Loading scheduler…</div><div className="small subtle" style={{marginTop:6}}>{status || 'Connecting to Supabase'}</div></div> : null}
+      {!loading && <div className="card" style={{marginBottom:16}}><div style={{fontWeight:800,marginBottom:4}}>Status</div><div className="small subtle">{status || 'Ready'}</div></div>}
+      {!loading && error ? <div className="card error-card"><div style={{fontWeight:800,marginBottom:4}}>Error</div><div className="small">{error}</div></div> : null}
+
+      {!loading && view==='week' && <WeekView
+        blocksByDayPool={blocksByDayPool}
+        visiblePools={visiblePools}
+        pools={activePools()}
+        selectedPoolId={selectedPoolId}
+        setSelectedPoolId={setSelectedPoolId}
+        gridBounds={gridBounds}
+        gridSlots={gridSlots}
+        slotToMinute={slotToMinute}
+        minuteToSlot={minuteToSlot}
+        colorsFor={colorsFor}
+        lessonTypeByName={lessonTypeByName}
+        poolById={poolById}
+        onAdd={openAdd}
+        onEdit={openEdit}
+        activeLessonTypes={activeLessonTypes()}
+        selectedDate={selectedDate}
+        sessionsForDate={sessionsForDate}
+        selectedWeekStart={selectedWeekStart}
+        isFutureSelectedWeek={isFutureSelectedWeek}
+        onPrevWeek={()=>setSelectedDate(addDays(selectedWeekStart,-7))}
+        onNextWeek={()=>setSelectedDate(addDays(selectedWeekStart,7))}
+        onThisWeek={()=>setSelectedDate(todayStr())}
+        onDuplicateWeek={duplicatePreviousWeek}
+        onClearDay={clearDayClasses}
+        onJumpToDay={(dayIndex)=>{ const d=fromDateStr(selectedWeekStart); d.setDate(d.getDate()+dayIndex); setSelectedDate(toDateStr(d)); setView('day'); }}
+      />}
+
+      {!loading && view==='day' && <DailyView
+        selectedDate={selectedDate} setSelectedDate={setSelectedDate}
+        sessionsForDate={sessionsForDate} colorsFor={colorsFor}
+        lessonTypeByName={lessonTypeByName} poolById={poolById}
+        onAddAtTime={openAddAtTime} onEdit={openEdit}
+        selectedWeekStart={selectedWeekStart}
+        onPrevWeek={()=>setSelectedDate(addDays(selectedWeekStart,-7))}
+        onNextWeek={()=>setSelectedDate(addDays(selectedWeekStart,7))}
+        onThisWeek={()=>setSelectedDate(todayStr())}
+      />}
+
+      {!loading && view==='month' && <MonthView
+        monthCursor={monthCursor} setMonthCursor={setMonthCursor}
+        selectedDate={selectedDate} setSelectedDate={setSelectedDate}
+        monthDates={monthDates} sessionsForDate={sessionsForDate} colorsFor={colorsFor}
+        remarks={remarks} remarkDraft={remarkDraft} setRemarkDraft={setRemarkDraft} saveRemark={saveRemark}
+        selectedItems={selectedItems}
+      />}
+
+      {!loading && view==='summary' && <SummaryView summary={summary} pools={activePools()} />}
+
+      {!loading && view==='settings' && <SettingsView
+        options={options}
+        addOption={addOption}
+        toggleOption={toggleOption}
+        deleteOption={deleteOption}
+        patchOption={patchOption}
+      />}
+    </div>
+
+    {modal ? <SessionModal
+      modal={modal} setModal={setModal} saveBusy={saveBusy}
+      saveSession={saveSession} deleteSession={deleteSession}
+      openAddAtTime={openAddAtTime}
+      instructors={activeInstructors()}
+      lessonTypes={activeLessonTypes()}
+      pools={activePools()}
+      lessonTypeByName={lessonTypeByName}
+      poolById={poolById}
+    /> : null}
+  </div>;
+}
+
+// ============================================================================
+// WeekView (M2: pool toggle, sub-cols, capacity chips)
+// ============================================================================
+
+function WeekView(props){
+  const { blocksByDayPool, visiblePools, pools, selectedPoolId, setSelectedPoolId,
+          gridBounds, gridSlots, slotToMinute, minuteToSlot, colorsFor,
+          lessonTypeByName, poolById, onAdd, onEdit, activeLessonTypes,
+          selectedDate, sessionsForDate, selectedWeekStart, isFutureSelectedWeek,
+          onPrevWeek, onNextWeek, onThisWeek, onDuplicateWeek, onClearDay, onJumpToDay } = props;
+
+  const wb = weekBounds(selectedDate);
+  const printDays = Array.from({length:7}, (_,i) => { const d = new Date(wb.start); d.setDate(wb.start.getDate()+i); const ds = toDateStr(d); return { date:d, ds, items:sessionsForDate(ds) }; });
+  const splitMode = !selectedPoolId && visiblePools.length > 1;
+
+  const weekGrid = <>
+    {/* Pool filter */}
+    <div className="pool-tabs">
+      <button className={`pool-tab ${selectedPoolId===null?'active':''}`} onClick={()=>setSelectedPoolId(null)}>All pools</button>
+      {pools.map(p => <button key={p.id} className={`pool-tab ${selectedPoolId===p.id?'active':''}`} onClick={()=>setSelectedPoolId(p.id)}>{p.name} <span className="pool-tab-cap">cap {p.capacity_total}</span></button>)}
+    </div>
+
+    {/* Day header strip */}
+    <div className="week-head">
+      {DAYS_S.map((d,di) => {
+        const dateObj = new Date(wb.start);
+        dateObj.setDate(wb.start.getDate()+di);
+        const dateStr = dateObj.toLocaleDateString(undefined,{month:'short', day:'numeric'});
+        return <div key={d} className="week-head-cell">
+          <button className="week-day-link" onClick={() => onJumpToDay(di)} title={`Open ${DAYS_F[di]} daily view`}>
+            <div>{d}</div>
+            <div style={{fontSize:'10px',fontWeight:600,color:'#94A3B8'}}>{dateStr}</div>
+          </button>
+          {splitMode ? <div className="week-pool-strip">
+            {visiblePools.map(p => <div key={p.id} className="week-pool-label" style={{flex:1}}>{p.name}</div>)}
+          </div> : null}
+          {isFutureSelectedWeek ? <button className="week-clear-btn" onClick={(e)=>{e.stopPropagation(); onClearDay(di);}}>Remove all classes</button> : <div className="week-clear-placeholder">Protected</div>}
+        </div>;
+      })}
+    </div>
+
+    {/* Grid */}
+    <div className="week-grid">
+      <div className="time-col">
+        {Array.from({length:gridSlots}, (_,i) => <div key={i} className={`time-cell ${i%2===1?'major':'minor'}`}>{i%2===0 ? minuteToTime(slotToMinute(i)) : '·'}</div>)}
+        <div className="time-cell major">{minuteToTime(gridBounds.endMin)}</div>
+      </div>
+      {DAYS_S.map((_,di) => <div key={di} className={`day-col ${splitMode?'split':''}`}>
+        {visiblePools.map(pool => {
+          const blocks = (blocksByDayPool[di] && blocksByDayPool[di][pool.id]) || [];
+          return <div key={pool.id} className="pool-sub-col">
+            {Array.from({length:gridSlots}, (_,si) => <div key={si} className={`slot-cell ${si%2===1?'major':'minor'}`} onClick={() => onAdd(di, si, pool.id)} />)}
+            <div className="slot-cell major" onClick={() => onAdd(di, gridSlots, pool.id)} />
+            {blocks.map(block => <EventBlock
+              key={block.id}
+              block={block}
+              gridBounds={gridBounds}
+              minuteToSlot={minuteToSlot}
+              colorsFor={colorsFor}
+              lessonTypeByName={lessonTypeByName}
+              poolById={poolById}
+              showPoolBadge={!splitMode && !selectedPoolId}
+              onEdit={onEdit}
+            />)}
+          </div>;
+        })}
+      </div>)}
+    </div>
+  </>;
+
+  return <>
+    <div className="card print-target" style={{marginBottom:16}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+        <div>
+          <div style={{fontSize:18,fontWeight:800}}>Weekly View</div>
+          <div className="small subtle">This week only. Classes do not auto-repeat. Capacity chips show enrolled / max — over-capacity classes get an amber border but nothing is enforced yet.</div>
+        </div>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+          <button className="btn btn-ghost" onClick={onPrevWeek}>← Prev Week</button>
+          <div className="pill">Week of {selectedWeekStart}</div>
+          <button className="btn btn-ghost" onClick={onNextWeek}>Next Week →</button>
+          <button className="btn btn-ghost" onClick={onThisWeek}>This Week</button>
+          <button className="btn btn-primary" onClick={onDuplicateWeek} disabled={!isFutureSelectedWeek}>Duplicate Previous Week</button>
+          <button className="btn btn-print" onClick={printWeeklyView}>Print</button>
+          <button className="btn btn-print" onClick={printWeeklyTable}>Print Weekly Table</button>
+        </div>
+      </div>
+      <div className="small subtle" style={{marginTop:10, marginBottom:10}}>{isFutureSelectedWeek ? 'Future week editing enabled. "Remove all classes" only works for future weeks.' : 'Current week and past weeks are protected from bulk removal.'}</div>
+      {weekGrid}
+      <div className="legend">
+        {activeLessonTypes.map(t => { const c = colorsFor(t.name); return <span key={t.id || t.name} className="chip" style={{background:c.bg,borderColor:c.bd,color:c.tx}}>{t.name}</span>; })}
+      </div>
+    </div>
+
+    {/* Prints unchanged from M1 — flatten pool sub-cols back into per-day lists. */}
+    <div className="print-rundown">
+      <div className="print-title">Weekly Daily Rundown</div>
+      <div className="print-meta">{wb.start.toLocaleDateString()} to {wb.end.toLocaleDateString()}</div>
+      {printDays.map(({date, ds, items}) => <div className="print-day" key={ds}>
+        <h3>{date.toLocaleDateString(undefined,{weekday:'long', year:'numeric', month:'long', day:'numeric'})}</h3>
+        <table><thead><tr><th style={{width:'18%'}}>Time</th><th style={{width:'17%'}}>Lesson Type</th><th style={{width:'12%'}}>Pool</th><th style={{width:'18%'}}>Instructor</th><th>Students</th></tr></thead><tbody>
+          {items.length ? items.map(it => {
+            const p = poolById(it.poolId);
+            const instLabel = it.instructors.map(i=>i.name).join(', ') || it.legacyInstructor || '-';
+            return <tr key={it.id}><td className="print-time-cell">{formatRange(it.startMinute, it.durationMinutes)}</td><td className="print-type-cell">{it.type}</td><td>{p?p.name:'-'}</td><td>{instLabel}</td><td>{it.students.map(s=>s.name).join(', ') || '-'}</td></tr>;
+          }) : <tr className="empty-row"><td colSpan="5">No sessions</td></tr>}
+        </tbody></table>
+      </div>)}
+    </div>
+    <PrintWeeklyTableSection blocksByDayPool={blocksByDayPool} visiblePools={visiblePools} wb={wb} selectedWeekStart={selectedWeekStart} gridSlots={gridSlots} gridBounds={gridBounds} slotToMinute={slotToMinute} poolById={poolById} />
+  </>;
+}
+
+// M2: extracted event renderer with capacity chip and over-capacity styling.
+function EventBlock({ block, gridBounds, minuteToSlot, colorsFor, lessonTypeByName, poolById, showPoolBadge, onEdit }){
+  const c = colorsFor(block.type);
+  const pct = 100 / block._total;
+  const width = block._total > 1 ? `calc(${pct}% - 3px)` : 'calc(100% - 6px)';
+  const left = block._total > 1 ? `calc(${block._col * pct}% + 1.5px)` : '3px';
+  const slot = minuteToSlot(block.startMinute);
+  const height = Math.max(1, block.durationMinutes / SLOT_MIN);
+  const lt = lessonTypeByName(block.type);
+  const cap = sessionCapacity(block, lt);
+  const chip = capacityChipColors(cap.status);
+  const pool = poolById(block.poolId);
+  const isOver = cap.status === 'over';
+  const isFull = cap.status === 'full';
+  return <div className={`event ${isOver?'event-over':''} ${isFull?'event-full':''}`}
+    onClick={(e)=>{e.stopPropagation(); onEdit(block);}}
+    style={{
+      top:`calc(${slot} * ${ROW_H}px + 2px)`,
+      left, width,
+      height:`calc(${height} * ${ROW_H}px - 4px)`,
+      background:c.bg,
+      borderLeft:`3px solid ${c.bd}`,
+      borderTop:`1px solid ${isOver?'#dc2626':c.bd+'44'}`,
+      borderRight:`1px solid ${isOver?'#dc2626':c.bd+'44'}`,
+      borderBottom:`1px solid ${isOver?'#dc2626':c.bd+'44'}`,
+      color:c.tx,
+      boxShadow: isOver ? '0 0 0 1px #dc262655 inset' : undefined
+    }}>
+    <div className="event-head">
+      <div className="event-title">{block.type}</div>
+      {cap.max > 0 ? <span className="cap-chip" style={{background:chip.bg, color:chip.tx, borderColor:chip.bd}}>{cap.current}/{cap.max}</span> : <span className="cap-chip cap-chip-unknown">{cap.current}</span>}
+    </div>
+    <div className="event-sub">{(block.instructors[0]?.name) || block.legacyInstructor || '—'} · {minuteToTime(block.startMinute)}{showPoolBadge && pool ? ` · ${pool.name}` : ''}</div>
+    <div className="event-sub">{block.students.map(s=>s.name).join(', ') || '-'}</div>
+  </div>;
+}
+
+// ============================================================================
+// DailyView (M2: pool labels on each session)
+// ============================================================================
+
+function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, lessonTypeByName, poolById, onAddAtTime, onEdit, selectedWeekStart, onPrevWeek, onNextWeek, onThisWeek }){
+  const wb = weekBounds(selectedDate);
+  const weekDays = Array.from({length:7}, (_,i) => { const d = new Date(wb.start); d.setDate(wb.start.getDate()+i); return { date:d, ds:toDateStr(d), idx:i }; });
+  const items = sessionsForDate(selectedDate);
+  const hourStarts = Array.from({length:13}, (_,i) => 480 + i*60);
+  return <div className="grid">
+    <div className="card">
+      <div className="daily-screen-header" style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:12}}>
+        <div>
+          <div style={{fontSize:18,fontWeight:800}}>Full Daily View</div>
+          <div className="small subtle">8:00 AM to 9:00 PM. Every hour row is shown even when there are no sessions.</div>
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+          <button className="btn btn-ghost" onClick={onPrevWeek}>← Prev Week</button>
+          <div className="pill">Week of {selectedWeekStart}</div>
+          <button className="btn btn-ghost" onClick={onNextWeek}>Next Week →</button>
+          <button className="btn btn-ghost" onClick={onThisWeek}>This Week</button>
+          <div className="pill">{longDate(selectedDate)}</div>
+          <button className="btn btn-print" onClick={() => printDailyView(selectedDate)}>Print</button>
+        </div>
+      </div>
+      <div className="daily-day-tabs">
+        {weekDays.map(({date, ds, idx}) => <button key={ds} className={`daily-day-tab ${selectedDate===ds?'active':''}`} onClick={() => setSelectedDate(ds)}>{DAYS_F[idx]} · {date.toLocaleDateString(undefined,{month:'short', day:'numeric'})}</button>)}
+      </div>
+      <div className="daily-grid">
+        {hourStarts.map(start => {
+          const rowItems = items.filter(it => it.startMinute >= start && it.startMinute < start + 60);
+          return <div className="daily-row" key={start}>
+            <div className="daily-time">{minuteToTime(start)}</div>
+            <div className={`daily-slot ${rowItems.length ? '' : 'empty'}`}>
+              {rowItems.length ? <div className="daily-sessions">
+                {rowItems.map(it => {
+                  const c = colorsFor(it.type);
+                  const lt = lessonTypeByName(it.type);
+                  const cap = sessionCapacity(it, lt);
+                  const chip = capacityChipColors(cap.status);
+                  const pool = poolById(it.poolId);
+                  const inst = (it.instructors[0]?.name) || it.legacyInstructor || '—';
+                  return <div key={it.id} className="daily-event" onClick={() => onEdit(it)} style={{borderLeftColor:c.bd}}>
+                    <div className="daily-event-top">
+                      <div>
+                        <div className="daily-event-title">{it.type} {pool ? <span className="pool-badge">{pool.name}</span> : null}</div>
+                        <div className="daily-event-sub">{formatRange(it.startMinute, it.durationMinutes)} · {inst}</div>
+                        <div className="daily-event-sub">{it.students.map(s=>s.name).join(', ') || 'No students listed'}</div>
+                      </div>
+                      <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6}}>
+                        {cap.max > 0 ? <span className="cap-chip cap-chip-lg" style={{background:chip.bg, color:chip.tx, borderColor:chip.bd}}>{cap.current}/{cap.max}</span> : <span className="cap-chip cap-chip-lg cap-chip-unknown">{cap.current}</span>}
+                      </div>
+                    </div>
+                  </div>;
+                })}
+              </div> : <>
+                <div className="small subtle">No sessions</div>
+                <button className="btn btn-secondary small-btn" onClick={() => onAddAtTime(dateToWeekdayIndex(selectedDate), start)}>Add Session</button>
+              </>}
+              {rowItems.length ? <div style={{display:'flex',justifyContent:'flex-end',marginTop:8}}><button className="btn btn-secondary small-btn" onClick={() => onAddAtTime(dateToWeekdayIndex(selectedDate), start)}>Add Session</button></div> : null}
+            </div>
+          </div>;
+        })}
+        <div className="daily-row">
+          <div className="daily-time">{minuteToTime(1260)}</div>
+          <div className="daily-slot empty"><div className="small subtle">Day end marker</div></div>
+        </div>
+      </div>
+    </div>
+    <div className="print-daily">
+      <div className="print-title">Daily Schedule</div>
+      <div className="print-meta">{longDate(selectedDate)}</div>
+      <table className="print-daily-table">
+        <thead>
+          <tr><th style={{width:'16%'}}>Time</th><th>Session Details</th></tr>
+        </thead>
+        <tbody>
+          {hourStarts.map(start => {
+            const rowItems = items.filter(it => it.startMinute >= start && it.startMinute < start + 60);
+            return <tr key={`p-${start}`}>
+              <td>{minuteToTime(start)}</td>
+              <td>
+                {rowItems.length ? rowItems.map((it, idx) => {
+                  const pool = poolById(it.poolId);
+                  const inst = it.instructors.map(i=>i.name).join(', ') || it.legacyInstructor || 'No Instructor';
+                  return <div key={it.id} className="print-session-block">
+                    <div className="print-session-head">{formatRange(it.startMinute, it.durationMinutes)} | {it.type}{pool?` | ${pool.name}`:''} | {inst} | {it.students.length} student{it.students.length===1?'':'s'}</div>
+                    <div className="print-session-students">{it.students.length ? it.students.map(s=>s.name).join(', ') : 'No students listed'}</div>
+                    {idx < rowItems.length - 1 ? <div className="print-session-gap"></div> : null}
+                  </div>;
+                }) : <div>No sessions</div>}
+              </td>
+            </tr>;
+          })}
+          <tr><td>{minuteToTime(1260)}</td><td>Day end</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>;
+}
+
+// ============================================================================
+// MonthView (unchanged from M1)
+// ============================================================================
+
+function MonthView({ monthCursor, setMonthCursor, selectedDate, setSelectedDate, monthDates, sessionsForDate, colorsFor, remarks, remarkDraft, setRemarkDraft, saveRemark, selectedItems }){
+  const options = [];
+  for(let y=2025;y<=2032;y++) for(let m=0;m<12;m++){ const d = new Date(y,m,1); options.push(<option key={`${y}-${m}`} value={monthKey(d)}>{d.toLocaleDateString(undefined,{month:'long', year:'numeric'})}</option>); }
+  return <>
+    <div className="grid grid-2">
+      <div className="card">
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:14}}>
+          <div><div style={{fontSize:18,fontWeight:800}}>Monthly Calendar</div><div className="small subtle">Monday-first calendar. Click a day to expand the rundown below.</div></div>
+          <div style={{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
+            <button className="btn btn-ghost" onClick={() => setMonthCursor(new Date(monthCursor.getFullYear(), monthCursor.getMonth()-1, 1))}>←</button>
+            <select className="select" style={{width:240}} value={monthKey(monthCursor)} onChange={(e)=>{ const [y,m] = e.target.value.split('-').map(Number); setMonthCursor(new Date(y,m-1,1)); }}>{options}</select>
+            <button className="btn btn-ghost" onClick={() => setMonthCursor(new Date(monthCursor.getFullYear(), monthCursor.getMonth()+1, 1))}>→</button>
+          </div>
+        </div>
+        <div className="month-grid">
+          {DAYS_S.map(d => <div key={d} className="month-dow">{d}</div>)}
+          {monthDates.map(d => {
+            const ds = toDateStr(d), inMonth = d.getMonth() === monthCursor.getMonth(), items = sessionsForDate(ds), hasRemark = !!(remarks[ds] || '').trim();
+            return <div key={ds} className={`day-box ${inMonth?'':'outside'} ${selectedDate===ds?'selected':''}`} onClick={() => setSelectedDate(ds)}>
+              <div className="day-top"><div className="day-num">{d.getDate()}</div><div className={`remark-dot ${hasRemark ? 'has-content' : 'empty'}`}>+remark</div></div>
+              <div>{items.length ? items.slice(0,3).map(ev => { const c = colorsFor(ev.type); return <div key={ev.id} className="mini-item" style={{background:c.bg,borderLeftColor:c.bd,color:c.tx}}>{minuteToTime(ev.startMinute)} · {ev.type}</div>; }) : <div className="small subtle">No sessions</div>}</div>
+            </div>;
+          })}
+        </div>
+      </div>
+      <div className="card">
+        <div style={{fontSize:18,fontWeight:800}}>One-off Day Remark</div>
+        <div className="small subtle" style={{margin:'4px 0 12px'}}>This remark is saved only for <b>{longDate(selectedDate)}</b>. It does not recur.</div>
+        <textarea className="textarea" value={remarkDraft} onChange={(e)=>setRemarkDraft(e.target.value)} placeholder="Add closure note, special arrangement, replacement note, etc." />
+        <div style={{display:'flex',justifyContent:'flex-end',marginTop:10}}><button className="btn btn-primary" onClick={saveRemark}>Save Remark</button></div>
+      </div>
+    </div>
+    <div className="card" style={{marginTop:16}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:12}}>
+        <div><div style={{fontSize:18,fontWeight:800}}>Daily Rundown</div><div className="small subtle">{longDate(selectedDate)}</div></div>
+        <div className="pill">Sessions for this date in this week's schedule</div>
+      </div>
+      <div className="table-wrap"><table><thead><tr><th style={{width:130}}>Time</th><th style={{width:170}}>Lesson Type</th><th style={{width:160}}>Instructor</th><th>Students</th></tr></thead><tbody>
+        {selectedItems.length ? selectedItems.map(g => <tr key={g.id}><td>{formatRange(g.startMinute, g.durationMinutes)}</td><td><span className="pill">{g.type}</span></td><td>{g.instructors.map(i=>i.name).join(', ') || g.legacyInstructor}</td><td>{g.students.map(s=>s.name).join(', ') || '-'}</td></tr>) : <tr><td colSpan="4" className="empty">No schedule for this day.</td></tr>}
+      </tbody></table></div>
+    </div>
+  </>;
+}
+
+// ============================================================================
+// SummaryView (M2: by-pool breakdown added)
+// ============================================================================
+
+function SummaryView({ summary, pools }){
+  const typeRows = Object.entries(summary.byType).sort((a,b)=>b[1]-a[1]);
+  const instRows = Object.entries(summary.byInst).sort((a,b)=>b[1]-a[1]);
+  const poolRows = Object.entries(summary.byPool).sort((a,b)=>b[1]-a[1]);
+  return <>
+    <div className="grid grid-3">
+      <div className="card"><div className="small subtle">Total students</div><div style={{fontSize:34,fontWeight:800,color:'#06B6D4'}}>{summary.totalStudents}</div><div className="small subtle" style={{marginTop:6}}>Excludes lesson types containing "replacement" or "trial".</div></div>
+      <div className="card"><div className="small subtle">Sessions this week</div><div style={{fontSize:34,fontWeight:800,color:'#22C55E'}}>{summary.totalSessions}</div></div>
+      <div className="card"><div className="small subtle">Active pools</div><div style={{fontSize:34,fontWeight:800,color:'#F97316'}}>{pools.length}</div></div>
+    </div>
+    <div className="grid grid-3" style={{marginTop:16}}>
+      <div className="card"><div style={{fontSize:18,fontWeight:800,marginBottom:10}}>By Lesson Type</div><div className="table-wrap"><table><thead><tr><th>Lesson Type</th><th>Students</th></tr></thead><tbody>{typeRows.map(([k,v]) => <tr key={k}><td>{k}</td><td>{v}</td></tr>)}</tbody></table></div></div>
+      <div className="card"><div style={{fontSize:18,fontWeight:800,marginBottom:10}}>By Pool</div><div className="table-wrap"><table><thead><tr><th>Pool</th><th>Students</th></tr></thead><tbody>{poolRows.map(([k,v]) => <tr key={k}><td>{k}</td><td>{v}</td></tr>)}</tbody></table></div></div>
+      <div className="card"><div style={{fontSize:18,fontWeight:800,marginBottom:10}}>By Instructor</div><div className="table-wrap"><table><thead><tr><th>Instructor</th><th>Students</th></tr></thead><tbody>{instRows.map(([k,v]) => <tr key={k}><td>{k}</td><td>{v}</td></tr>)}</tbody></table></div></div>
+    </div>
+  </>;
+}
+
+// ============================================================================
+// SettingsView (M2: pools, operating hours, expanded lesson-type editor)
+// ============================================================================
+
+function SettingsView({ options, addOption, toggleOption, deleteOption, patchOption }){
+  const [newInstructor, setNewInstructor] = useState('');
+  const [newDurationLabel, setNewDurationLabel] = useState('');
+  const [newDurationSlots, setNewDurationSlots] = useState(2);
+  const [newTypeName, setNewTypeName] = useState('');
+  const [bg, setBg] = useState('#DBEAFE');
+  const [bd, setBd] = useState('#3B82F6');
+  const [tx, setTx] = useState('#1E40AF');
+  const [newPoolName, setNewPoolName] = useState('');
+  const [newPoolCap, setNewPoolCap] = useState(16);
+  const [editingLessonId, setEditingLessonId] = useState(null);
+
+  return <>
+    <div className="card" style={{marginBottom:16}}>
+      <div style={{fontSize:18,fontWeight:800}}>Settings</div>
+      <div className="small subtle" style={{marginTop:5}}>Edit pools, operating hours, instructors, lesson types, and durations. These changes do not reset your schedule data.</div>
+    </div>
+
+    {/* Pools + Operating hours */}
+    <div className="settings-cols" style={{gridTemplateColumns:'1fr 1fr'}}>
+      <div className="card">
+        <div style={{fontSize:16,fontWeight:800}}>Pools</div>
+        <div className="small subtle" style={{marginTop:4}}>capacity_total includes every body in the water, instructors included.</div>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:12}}>
+          <input className="input" style={{flex:'1 1 160px'}} placeholder="Pool name" value={newPoolName} onChange={(e)=>setNewPoolName(e.target.value)} />
+          <input className="input" style={{width:120}} type="number" min="1" placeholder="Capacity" value={newPoolCap} onChange={(e)=>setNewPoolCap(e.target.value)} />
+          <button className="btn btn-primary" onClick={()=>{ const v = newPoolName.trim(); const c = Number(newPoolCap); if(!v || !c || c < 1) return; addOption('pool', { name:v, capacity:c }); setNewPoolName(''); setNewPoolCap(16); }}>Add</button>
+        </div>
+        <div className="settings-list">
+          {options.pools.length ? options.pools.map(r => <div key={r.id} className="row-item">
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <span className="pill" style={{background:r.is_active?'#0d2338':'#1f2937',color:r.is_active?'#93c5fd':'#94a3b8'}}>{r.is_active?'Active':'Hidden'}</span>
+              <div>{r.name}</div>
+              <input className="input" style={{width:90,padding:'4px 8px',fontSize:12}} type="number" defaultValue={r.capacity_total} onBlur={(e)=>{ const v = Number(e.target.value); if(v > 0 && v !== r.capacity_total) patchOption('pools', r.id, { capacity_total: v }); }} />
+            </div>
+            <div style={{display:'flex',gap:8}}>
+              <button className="btn btn-ghost small" onClick={()=>toggleOption('pools',r)}>{r.is_active?'Hide':'Show'}</button>
+              <button className="btn btn-danger small" onClick={()=>deleteOption('pools',r,r.name)}>Delete</button>
+            </div>
+          </div>) : <div className="empty">No pools</div>}
+        </div>
+      </div>
+
+      <div className="card">
+        <div style={{fontSize:16,fontWeight:800}}>Operating Hours</div>
+        <div className="small subtle" style={{marginTop:4}}>Per-weekday open and close window. Drives the visible weekly grid bounds.</div>
+        <div className="settings-list">
+          {DAYS_F.map((label, idx) => {
+            const row = options.operatingHours.find(h => Number(h.weekday) === idx + 1);
+            if(!row) return <div key={idx} className="row-item"><div className="small subtle">{label}: not configured</div></div>;
+            const fmtTime = (m) => `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
+            return <div key={row.weekday} className="row-item">
+              <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                <div style={{minWidth:80,fontWeight:700}}>{label}</div>
+                <input className="input" style={{width:90,padding:'4px 8px',fontSize:12}} type="time" defaultValue={fmtTime(row.open_minute)} onBlur={(e)=>{ const [h,m] = e.target.value.split(':').map(Number); const v = h*60+m; if(Number.isFinite(v) && v !== row.open_minute) patchOption('operating_hours', { weekday: row.weekday }, { open_minute: v }); }} />
+                <span className="small subtle">to</span>
+                <input className="input" style={{width:90,padding:'4px 8px',fontSize:12}} type="time" defaultValue={fmtTime(row.close_minute)} onBlur={(e)=>{ const [h,m] = e.target.value.split(':').map(Number); const v = h*60+m; if(Number.isFinite(v) && v !== row.close_minute) patchOption('operating_hours', { weekday: row.weekday }, { close_minute: v }); }} />
+                <label className="small" style={{display:'flex',alignItems:'center',gap:4}}>
+                  <input type="checkbox" checked={row.is_open !== false} onChange={(e)=>patchOption('operating_hours', { weekday: row.weekday }, { is_open: e.target.checked })} />
+                  Open
+                </label>
+              </div>
+            </div>;
+          })}
+        </div>
+      </div>
+    </div>
+
+    {/* Lesson types (full width because the editor is wide) */}
+    <div className="card" style={{marginTop:16}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
+        <div>
+          <div style={{fontSize:16,fontWeight:800}}>Lesson Types</div>
+          <div className="small subtle" style={{marginTop:4}}>Add new types here. Click Edit on an existing row to set age range, ratio, billing, default pool, and other parameters.</div>
+        </div>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 88px 88px 88px auto',gap:8,marginTop:12}}>
+        <input className="input" placeholder="Add lesson type" value={newTypeName} onChange={(e)=>setNewTypeName(e.target.value)} />
+        <input className="input" type="color" value={bg} onChange={(e)=>setBg(e.target.value)} />
+        <input className="input" type="color" value={bd} onChange={(e)=>setBd(e.target.value)} />
+        <input className="input" type="color" value={tx} onChange={(e)=>setTx(e.target.value)} />
+        <button className="btn btn-primary" onClick={()=>{ const v = newTypeName.trim(); if(!v) return; addOption('lessonType', { name:v, bg, bd, tx }); setNewTypeName(''); }}>Add</button>
+      </div>
+      <div className="settings-list">
+        {options.lessonTypes.length ? options.lessonTypes.map(r => <div key={r.id} className="lesson-row">
+          <div className="row-item" style={{marginBottom:0}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+              <span className="pill" style={{background:r.is_active?'#0d2338':'#1f2937',color:r.is_active?'#93c5fd':'#94a3b8'}}>{r.is_active?'Active':'Hidden'}</span>
+              <span className="chip" style={{background:r.bg_color,borderColor:r.border_color,color:r.text_color}}>{r.name}</span>
+              <span className="small subtle">ratio 1:{r.students_per_instructor || '?'} · {r.default_duration_minutes || '?'} min · {r.billing_model || '?'} {r.billing_model==='monthly'?`${r.monthly_fee||'?'}/${r.lessons_per_month||'?'}`:r.billing_model==='credit'?`${r.credit_fee||'?'}/${r.credit_count||'?'}`:''} · {(options.pools.find(p=>p.id===r.default_pool_id)?.name) || 'no pool'}</span>
+            </div>
+            <div style={{display:'flex',gap:8}}>
+              <button className="btn btn-ghost small" onClick={()=>setEditingLessonId(editingLessonId===r.id?null:r.id)}>{editingLessonId===r.id?'Close':'Edit'}</button>
+              <button className="btn btn-ghost small" onClick={()=>toggleOption('scheduler_lesson_types',r)}>{r.is_active?'Hide':'Show'}</button>
+              <button className="btn btn-danger small" onClick={()=>deleteOption('scheduler_lesson_types',r,r.name)}>Delete</button>
+            </div>
+          </div>
+          {editingLessonId === r.id ? <LessonTypeEditor row={r} pools={options.pools} onSave={(patch)=>{ patchOption('scheduler_lesson_types', r.id, patch); }} /> : null}
+        </div>) : <div className="empty">No lesson types</div>}
+      </div>
+    </div>
+
+    {/* Instructors + Durations */}
+    <div className="settings-cols" style={{marginTop:16}}>
+      <div className="card">
+        <div style={{fontSize:16,fontWeight:800}}>Instructor</div>
+        <div style={{display:'flex',gap:8,marginTop:12}}><input className="input" placeholder="Add instructor name" value={newInstructor} onChange={(e)=>setNewInstructor(e.target.value)} /><button className="btn btn-primary" onClick={()=>{ const v = newInstructor.trim(); if(!v) return; addOption('instructor', { name:v }); setNewInstructor(''); }}>Add</button></div>
+        <div className="settings-list">{options.instructors.length ? options.instructors.map(r => <div key={r.id} className="row-item"><div style={{display:'flex',alignItems:'center',gap:8}}><span className="pill" style={{background:r.is_active?'#0d2338':'#1f2937',color:r.is_active?'#93c5fd':'#94a3b8'}}>{r.is_active?'Active':'Hidden'}</span><div>{r.name}</div></div><div style={{display:'flex',gap:8}}><button className="btn btn-ghost small" onClick={()=>toggleOption('scheduler_instructors',r)}>{r.is_active?'Hide':'Show'}</button><button className="btn btn-danger small" onClick={()=>deleteOption('scheduler_instructors',r,r.name)}>Delete</button></div></div>) : <div className="empty">No instructors</div>}</div>
+      </div>
+      <div className="card">
+        <div style={{fontSize:16,fontWeight:800}}>Duration (legacy)</div>
+        <div className="small subtle" style={{marginTop:4}}>Module 2 reads default duration from each lesson type. This list is preserved for the legacy modal dropdown.</div>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:12}}><input className="input" style={{flex:1}} placeholder="Label e.g. 60 min" value={newDurationLabel} onChange={(e)=>setNewDurationLabel(e.target.value)} /><input className="input" style={{width:100}} type="number" min="1" value={newDurationSlots} onChange={(e)=>setNewDurationSlots(e.target.value)} /><button className="btn btn-primary" onClick={()=>{ const v = newDurationLabel.trim(); const s = Number(newDurationSlots); if(!v || !s || s < 1) return; addOption('duration', { label:v, slots:s }); setNewDurationLabel(''); setNewDurationSlots(2); }}>Add</button></div>
+        <div className="settings-list">{options.durations.length ? options.durations.map(r => <div key={r.id} className="row-item"><div style={{display:'flex',alignItems:'center',gap:8}}><span className="pill" style={{background:r.is_active?'#0d2338':'#1f2937',color:r.is_active?'#93c5fd':'#94a3b8'}}>{r.is_active?'Active':'Hidden'}</span><div>{r.label} ({r.slots} slots)</div></div><div style={{display:'flex',gap:8}}><button className="btn btn-ghost small" onClick={()=>toggleOption('scheduler_durations',r)}>{r.is_active?'Hide':'Show'}</button><button className="btn btn-danger small" onClick={()=>deleteOption('scheduler_durations',r,r.label)}>Delete</button></div></div>) : <div className="empty">No durations</div>}</div>
+      </div>
+    </div>
+  </>;
+}
+
+// M2: inline editor for the new lesson-type fields. Saves on Apply.
+function LessonTypeEditor({ row, pools, onSave }){
+  const [draft, setDraft] = useState({
+    age_min_months: row.age_min_months ?? '',
+    age_max_months: row.age_max_months ?? '',
+    students_per_instructor: row.students_per_instructor ?? '',
+    default_duration_minutes: row.default_duration_minutes ?? '',
+    billing_model: row.billing_model || 'monthly',
+    monthly_fee: row.monthly_fee ?? '',
+    lessons_per_month: row.lessons_per_month ?? '',
+    credit_count: row.credit_count ?? '',
+    credit_fee: row.credit_fee ?? '',
+    trial_fee_override: row.trial_fee_override ?? '',
+    default_pool_id: row.default_pool_id || '',
+    coach_in_pool: row.coach_in_pool !== false,
+    bg_color: row.bg_color || '#DBEAFE',
+    border_color: row.border_color || '#3B82F6',
+    text_color: row.text_color || '#1E40AF'
+  });
+  function setF(k, v){ setDraft(d => ({ ...d, [k]: v })); }
+  function clean(v){ if(v === '' || v === undefined) return null; const n = Number(v); return Number.isFinite(n) ? n : v; }
+  return <div className="lesson-edit">
+    <div className="form-grid" style={{gridTemplateColumns:'repeat(4, minmax(0,1fr))'}}>
+      <div className="field"><label>Age min (months)</label><input className="input" type="number" value={draft.age_min_months} onChange={(e)=>setF('age_min_months', e.target.value)} placeholder="60 for 5 years" /></div>
+      <div className="field"><label>Age max (months)</label><input className="input" type="number" value={draft.age_max_months} onChange={(e)=>setF('age_max_months', e.target.value)} placeholder="216 for 18 years" /></div>
+      <div className="field"><label>Students per instructor</label><input className="input" type="number" value={draft.students_per_instructor} onChange={(e)=>setF('students_per_instructor', e.target.value)} placeholder="6 for 1:6" /></div>
+      <div className="field"><label>Default duration (min)</label><input className="input" type="number" value={draft.default_duration_minutes} onChange={(e)=>setF('default_duration_minutes', e.target.value)} placeholder="50" /></div>
+      <div className="field"><label>Default pool</label><select className="select" value={draft.default_pool_id} onChange={(e)=>setF('default_pool_id', e.target.value)}><option value="">(none)</option>{pools.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+      <div className="field"><label>Billing model</label><select className="select" value={draft.billing_model} onChange={(e)=>setF('billing_model', e.target.value)}><option value="monthly">Monthly</option><option value="credit">Credit</option></select></div>
+      <div className="field"><label>Coach in pool</label><div style={{display:'flex',alignItems:'center',gap:8,padding:'10px 0'}}><input type="checkbox" checked={draft.coach_in_pool} onChange={(e)=>setF('coach_in_pool', e.target.checked)} /><span className="small subtle">Uncheck for on-deck coaching (Strokelab Elite)</span></div></div>
+      {draft.billing_model === 'monthly' ? <>
+        <div className="field"><label>Monthly fee</label><input className="input" type="number" step="0.01" value={draft.monthly_fee} onChange={(e)=>setF('monthly_fee', e.target.value)} /></div>
+        <div className="field"><label>Lessons per month</label><input className="input" type="number" value={draft.lessons_per_month} onChange={(e)=>setF('lessons_per_month', e.target.value)} placeholder="4" /></div>
+      </> : <>
+        <div className="field"><label>Credit count</label><input className="input" type="number" value={draft.credit_count} onChange={(e)=>setF('credit_count', e.target.value)} placeholder="4 or 6" /></div>
+        <div className="field"><label>Credit fee (full pack)</label><input className="input" type="number" step="0.01" value={draft.credit_fee} onChange={(e)=>setF('credit_fee', e.target.value)} /></div>
+      </>}
+      <div className="field"><label>Trial fee override</label><input className="input" type="number" step="0.01" value={draft.trial_fee_override} onChange={(e)=>setF('trial_fee_override', e.target.value)} placeholder="Leave blank to use formula" /></div>
+      <div className="field"><label>Background</label><input className="input" type="color" value={draft.bg_color} onChange={(e)=>setF('bg_color', e.target.value)} /></div>
+      <div className="field"><label>Border</label><input className="input" type="color" value={draft.border_color} onChange={(e)=>setF('border_color', e.target.value)} /></div>
+      <div className="field"><label>Text</label><input className="input" type="color" value={draft.text_color} onChange={(e)=>setF('text_color', e.target.value)} /></div>
+    </div>
+    <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:10}}>
+      <button className="btn btn-primary" onClick={()=>{
+        onSave({
+          age_min_months: clean(draft.age_min_months),
+          age_max_months: clean(draft.age_max_months),
+          students_per_instructor: clean(draft.students_per_instructor),
+          default_duration_minutes: clean(draft.default_duration_minutes),
+          billing_model: draft.billing_model,
+          monthly_fee: clean(draft.monthly_fee),
+          lessons_per_month: clean(draft.lessons_per_month),
+          credit_count: clean(draft.credit_count),
+          credit_fee: clean(draft.credit_fee),
+          trial_fee_override: clean(draft.trial_fee_override),
+          default_pool_id: draft.default_pool_id || null,
+          coach_in_pool: !!draft.coach_in_pool,
+          bg_color: draft.bg_color,
+          border_color: draft.border_color,
+          text_color: draft.text_color
+        });
+      }}>Apply Changes</button>
+    </div>
+  </div>;
+}
+
+// ============================================================================
+// SessionModal (M2: pool selector, lesson-type auto-default, capacity preview)
+// ============================================================================
+
+function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById }){
+
+  // M2: union of durations — common standards plus every lesson type's default
+  // and the currently-selected duration so the dropdown always contains the
+  // active value.
+  const durationOptions = useMemo(() => {
+    const all = new Set([30, 45, 50, 60]);
+    lessonTypes.forEach(lt => { if(lt.default_duration_minutes) all.add(Number(lt.default_duration_minutes)); });
+    if(modal?.form?.durationMinutes) all.add(Number(modal.form.durationMinutes));
+    return [...all].sort((a,b)=>a-b);
+  }, [lessonTypes, modal?.form?.durationMinutes]);
+
+  function setForm(patch){ setModal({ ...modal, form: { ...modal.form, ...patch } }); }
+
+  function onTypeChange(name){
+    const lt = lessonTypes.find(t => t.name === name);
+    const patch = { type: name, lessonTypeId: lt?.id || null };
+    if(lt?.default_duration_minutes) patch.durationMinutes = Number(lt.default_duration_minutes);
+    if(lt?.default_pool_id) patch.poolId = lt.default_pool_id;
+    setForm(patch);
+  }
+
+  function onInstructorChange(id){
+    const inst = instructors.find(i => i.id === id);
+    setForm({ instructorId: id || null, instructorName: inst?.name || '' });
+  }
+
+  // Capacity preview: counts the students typed in the textarea, against the
+  // lesson type's ratio (assuming one instructor for now — splits come in M3).
+  const previewStudents = (modal?.form?.studentText || '').split(/\n|,/).map(s=>s.trim()).filter(Boolean).length;
+  const previewLt = lessonTypeByName(modal?.form?.type);
+  const previewMax = previewLt?.students_per_instructor ? Number(previewLt.students_per_instructor) : 0;
+  const previewStatus = previewMax > 0
+    ? (previewStudents > previewMax ? 'over' : previewStudents === previewMax ? 'full' : previewStudents/previewMax >= 0.8 ? 'tight' : 'open')
+    : 'unknown';
+  const previewChip = capacityChipColors(previewStatus);
+  const previewPool = poolById(modal?.form?.poolId);
+
+  return <div className="modal-backdrop"><div className="modal-card">
+    <div className="modal-head">
+      <div>
+        <div style={{fontSize:18,fontWeight:800}}>{modal.id ? 'Edit' : 'Add'} Scheduled Session</div>
+        <div className="small subtle">{modal.weekStartDate} · {DAYS_F[modal.day]} · {minuteToTime(modal.startMinute)}{previewPool ? ` · ${previewPool.name}` : ''}</div>
+      </div>
+      <button className="btn btn-ghost" onClick={() => setModal(null)}>Close</button>
+    </div>
+    <div className="modal-body">
+      <div className="form-grid">
+        <div className="field"><label>Lesson Type</label><select className="select" value={modal.form.type} onChange={(e)=>onTypeChange(e.target.value)}>{lessonTypes.map(x => <option key={x.id} value={x.name}>{x.name}</option>)}</select></div>
+        <div className="field"><label>Pool</label><select className="select" value={modal.form.poolId || ''} onChange={(e)=>setForm({ poolId: e.target.value || null })}><option value="">(no pool)</option>{pools.map(p => <option key={p.id} value={p.id}>{p.name} · cap {p.capacity_total}</option>)}</select></div>
+        <div className="field"><label>Instructor</label><select className="select" value={modal.form.instructorId || ''} onChange={(e)=>onInstructorChange(e.target.value)}><option value="">(unassigned)</option>{instructors.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></div>
+        <div className="field"><label>Duration (minutes)</label><select className="select" value={String(modal.form.durationMinutes)} onChange={(e)=>setForm({ durationMinutes: Number(e.target.value) })}>{durationOptions.map(d => <option key={d} value={d}>{d} min</option>)}</select></div>
+        <div className="field"><label>Time Slot</label><input className="input" value={formatRange(modal.startMinute, modal.form.durationMinutes)} readOnly /></div>
+        <div className="field"><label>Capacity Preview</label><div className="cap-preview"><span className="cap-chip cap-chip-lg" style={{background:previewChip.bg,color:previewChip.tx,borderColor:previewChip.bd}}>{previewStudents}{previewMax > 0 ? ` / ${previewMax}` : ''}</span><span className="small subtle">{previewMax > 0 ? (previewStatus==='over'?'Over capacity — Module 3 will block or prompt for a split.':previewStatus==='full'?'At capacity.':previewStatus==='tight'?'Near capacity.':'Has room.') : 'Lesson type has no ratio set.'}</span></div></div>
+        <div className="field" style={{gridColumn:'1 / -1'}}><label>Student Names</label><textarea className="textarea" value={modal.form.studentText} onChange={(e)=>setForm({ studentText: e.target.value })} placeholder="One student per line, or comma-separated" /><div className="hint">Saved into weekly_session_students and linked to this session.</div></div>
+      </div>
+      <div className="student-box"><div className="small subtle" style={{marginBottom:6}}>Parallel sessions and splits</div><div className="small">Multiple sessions can run at the same day and time. Each is one row in <b>weekly_sessions</b>; pools are independent. In Module 3, this modal will gain a "+ instructor" button to convert a single session into a split (two instructors, doubled capacity) without creating a parallel row.</div></div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:16,gap:12,flexWrap:'wrap'}}>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+          {modal.id ? <button className="btn btn-danger" onClick={deleteSession}>Delete Session</button> : null}
+          <button className="btn btn-ghost" onClick={() => openAddAtTime(modal.day, modal.startMinute, modal.form.poolId)}>+ Add Another Session Same Time</button>
+        </div>
+        <button className="btn btn-primary" onClick={saveSession}>{saveBusy ? 'Saving...' : 'Save Session'}</button>
+      </div>
+    </div>
+  </div></div>;
+}
+
+// ============================================================================
+// PrintWeeklyTableSection (M2: pool labels per session in cells)
+// ============================================================================
+
+function PrintWeeklyTableSection({ blocksByDayPool, visiblePools, wb, selectedWeekStart, gridSlots, gridBounds, slotToMinute, poolById }){
+  const dayHeaders = DAYS_F.map((d, di) => {
+    const dateObj = new Date(wb.start);
+    dateObj.setDate(wb.start.getDate() + di);
+    return { label: d, dateStr: dateObj.toLocaleDateString(undefined, { day:'2-digit', month:'2-digit', year:'numeric' }) };
+  });
+
+  // Flatten all pools' blocks per day for the print layout, attaching pool name.
+  const flatBlocksByDay = Array.from({length:7}, (_, di) => {
+    const all = [];
+    visiblePools.forEach(p => {
+      const list = (blocksByDayPool[di] && blocksByDayPool[di][p.id]) || [];
+      list.forEach(b => all.push({ ...b, _poolName: p.name }));
+    });
+    return all;
+  });
+
+  const startMap = {};
+  const coveredMap = {};
+  flatBlocksByDay.forEach((dayBlocks, di) => {
+    dayBlocks.forEach(block => {
+      const sk = `${di}-${block.startMinute}`;
+      if(!startMap[sk]) startMap[sk] = [];
+      startMap[sk].push(block);
+      for(let m = block.startMinute + SLOT_MIN; m < block.startMinute + block.durationMinutes; m += SLOT_MIN){
+        coveredMap[`${di}-${m}`] = true;
+      }
+    });
+  });
+
+  const rows = Array.from({ length: gridSlots }, (_, si) => {
+    const slotMin = slotToMinute(si);
+    const isHour = slotMin % 60 === 0;
+    return (
+      <tr key={si} className={isHour ? 'wt-row wt-hour-row' : 'wt-row wt-half-row'}>
+        <td className="wt-time-cell">{isHour ? <strong>{minuteToTime(slotMin)}</strong> : <span className="wt-half-label">{minuteToTime(slotMin)}</span>}</td>
+        {Array.from({ length: 7 }, (_, di) => {
+          const k = `${di}-${slotMin}`;
+          const starts = startMap[k];
+          const isCovered = coveredMap[k];
+          if(starts && starts.length){
+            return <td key={di} className="wt-cell wt-session-cell">
+              {starts.map((block, idx) => (
+                <div key={block.id} className={idx > 0 ? 'wt-sess wt-sess-sep' : 'wt-sess'}>
+                  <div className="wt-sess-type">{block.type}</div>
+                  <div className="wt-sess-meta">{(block.instructors[0]?.name) || block.legacyInstructor || '—'} &middot; {block.durationMinutes}&thinsp;min{block._poolName ? ` · ${block._poolName}` : ''}</div>
+                  {block.students.length > 0 ? <div className="wt-sess-students">{block.students.map(s=>s.name).join(', ')}</div> : null}
+                </div>
+              ))}
+            </td>;
+          }
+          if(isCovered){
+            return <td key={di} className="wt-cell wt-cont-cell"><span className="wt-cont-bar">|</span></td>;
+          }
+          return <td key={di} className="wt-cell wt-empty-cell"></td>;
+        })}
+      </tr>
+    );
+  });
+
+  return <div className="print-weekly-table">
+    <div className="wt-header">
+      <div className="wt-title">Weekly Schedule</div>
+      <div className="wt-meta">Week of {selectedWeekStart} &nbsp;&middot;&nbsp; {wb.start.toLocaleDateString(undefined,{weekday:'long',year:'numeric',month:'long',day:'numeric'})} &ndash; {wb.end.toLocaleDateString(undefined,{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</div>
+    </div>
+    <table className="wt-table">
+      <thead>
+        <tr>
+          <th className="wt-th-time">Time</th>
+          {dayHeaders.map((dh, i) => (
+            <th key={i} className="wt-th-day">
+              <div className="wt-th-dayname">{dh.label}</div>
+              <div className="wt-th-daydate">{dh.dateStr}</div>
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows}
+        <tr className="wt-row wt-hour-row">
+          <td className="wt-time-cell"><strong>{minuteToTime(gridBounds.endMin)}</strong></td>
+          {Array.from({length:7},(_,di) => <td key={di} className="wt-cell wt-empty-cell"></td>)}
+        </tr>
+      </tbody>
+    </table>
+  </div>;
+}
+
+// ============================================================================
+// Global error trap + mount
+// ============================================================================
+
+window.addEventListener('error', (ev) => {
+  const root = document.getElementById('root');
+  if(root){ root.innerHTML = `<div class="wrap"><div class="card error-card"><div style="font-size:20px;font-weight:800;margin-bottom:8px">App error</div><div class="small">${(ev.error && ev.error.message) || ev.message || 'Unknown error'}</div></div></div>`; }
+});
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
