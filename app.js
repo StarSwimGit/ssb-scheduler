@@ -1221,12 +1221,14 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
                   const chip = capacityChipColors(cap.status);
                   const pool = poolById(it.poolId);
                   const inst = (it.instructors[0]?.name) || it.legacyInstructor || '—';
-                  return <div key={it.id} className="daily-event" onClick={() => onEdit(it)} style={{borderLeftColor:c.bd}}>
+                  return <div key={it.id} className="daily-event" onClick={() => onEdit(it)} style={{background:c.bg, borderLeftColor:c.bd, color:c.tx}}>
                     <div className="daily-event-top">
-                      <div>
-                        <div className="daily-event-title">{it.type} {pool ? <span className="pool-badge">{pool.name}</span> : null}{it.familyGroupId ? <span title="Family group booking" style={{marginLeft:4}}>👪</span> : null}</div>
-                        <div className="daily-event-sub">{formatRange(it.startMinute, it.durationMinutes)} · {inst}</div>
-                        <div className="daily-event-sub">{it.students.map(s=>s.name+ageSuffix(s)).join(', ') || 'No students listed'}</div>
+                      <div style={{minWidth:0,flex:1}}>
+                        <div className="daily-event-title" style={{color:c.tx}}>{it.type} {pool ? <span className="pool-badge">{pool.name}</span> : null}{it.familyGroupId ? <span title="Family group booking" style={{marginLeft:4}}>👪</span> : null}</div>
+                        <div className="daily-event-sub">{compactRange(it.startMinute, it.durationMinutes)} · {inst}</div>
+                        {it.students.length
+                          ? <div className="daily-event-students">{it.students.map((s, si) => <span key={s.id || si} className="daily-event-stu">{s.name + ageSuffix(s)}</span>)}</div>
+                          : <div className="daily-event-sub">No students listed</div>}
                         {it.students.filter(s=>s.remark).map((s,ri)=><div key={ri} className="daily-event-note">📝 {shortName(s.name)}: {s.remark}</div>)}
                       </div>
                       <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6}}>
