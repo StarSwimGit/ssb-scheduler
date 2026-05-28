@@ -198,6 +198,29 @@
     .lt-packages-head{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
     .lt-packages-list{display:flex;flex-direction:column;gap:6px}
     .lt-packages-add{margin-top:14px;padding-top:12px;border-top:1px dashed var(--border-2)}
+
+    /* ── Lesson Type row — legible, scannable, prominent name chip ─────── */
+    .lt-row-card{background:var(--surface);border:1px solid var(--border-2);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:11px;box-shadow:var(--shadow);transition:opacity .15s ease,box-shadow .15s ease,border-color .15s ease}
+    .lt-row-card:hover{border-color:#D4D4E6;box-shadow:0 6px 22px rgba(30,27,75,0.09)}
+    .lt-row-hidden{opacity:.55}
+    .lt-row-top{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap}
+    .lt-row-lead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0;flex:1}
+    .lt-name-chip{font-size:15px;font-weight:800;padding:7px 14px;border-radius:999px;border-width:2px;border-style:solid;letter-spacing:-.1px;white-space:nowrap;line-height:1.15}
+    .lt-classes-pill{font-size:11px;font-weight:700;padding:5px 10px;border-radius:999px;background:var(--surface-2);color:var(--text-2);border:1px solid var(--border-2);white-space:nowrap}
+    .lt-row-actions{display:flex;gap:6px;align-items:center;flex-shrink:0;flex-wrap:wrap}
+    .lt-row-meta{display:flex;gap:8px;flex-wrap:wrap;padding-left:4px}
+    .lt-meta-tile{display:flex;flex-direction:column;gap:2px;padding:6px 12px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:10px;min-width:88px}
+    .lt-meta-label{font-size:9px;text-transform:uppercase;letter-spacing:.85px;font-weight:800;color:var(--text-3);line-height:1}
+    .lt-meta-value{font-size:13px;font-weight:700;color:var(--text);line-height:1.15}
+    .lt-meta-empty{color:var(--text-3);font-weight:500}
+
+    /* Packages button — soft brand presence with an inline count badge */
+    .btn-packages{background:var(--primary-soft);color:var(--primary-on-soft);border:1px solid transparent;display:inline-flex;align-items:center;gap:7px;padding:6px 8px 6px 12px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;line-height:1.4;transition:background .15s ease,color .15s ease}
+    .btn-packages:hover{background:#E0DAFF}
+    .btn-packages.active{background:var(--primary);color:#fff}
+    .pkg-count-badge{background:#fff;color:var(--primary-on-soft);font-size:11px;padding:1px 7px;border-radius:999px;font-weight:800;min-width:18px;text-align:center;border:1px solid var(--border-2)}
+    .btn-packages.active .pkg-count-badge{background:rgba(255,255,255,0.22);color:#fff;border-color:transparent}
+    .btn.btn-active{background:var(--primary);color:#fff;border-color:var(--primary)}
     /* Trial annotation — drawn from the swimmer's package (any package whose
        name contains "trial"). Pill in the modal slot, subtle mark in cards. */
     .trial-pill{display:inline-flex;align-items:center;height:36px;padding:0 10px;font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;background:#FEE2E2;color:#B91C1C;border:1px solid #FCA5A5;border-radius:8px;white-space:nowrap;align-self:center;flex:0 0 auto}
