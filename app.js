@@ -88,10 +88,10 @@ function ageSuffix(s){ return (s && s.age !== null && s.age !== undefined && s.a
 // Build the modal's student rows: existing students first, padded with blanks
 // up to the lesson type's ratio (so "max 4" shows 4 boxes). Falls back to 4.
 function buildStudentRows(existing, cap){
-  const rows = (existing || []).map(s => ({ studentId: s.studentId || null, name: s.name || '', age: (s.age === null || s.age === undefined ? '' : String(s.age)) }));
+  const rows = (existing || []).map(s => ({ studentId: s.studentId || null, name: s.name || '', age: (s.age === null || s.age === undefined ? '' : String(s.age)), remark: s.remark || '' }));
   const c = Number(cap) > 0 ? Number(cap) : 4;
   const target = Math.max(c, rows.length, 1);
-  while(rows.length < target) rows.push({ studentId:null, name:'', age:'' });
+  while(rows.length < target) rows.push({ studentId:null, name:'', age:'', remark:'' });
   return rows;
 }
 // Re-normalize rows when the lesson type changes: keep filled rows, pad to the new ratio.
@@ -100,7 +100,7 @@ function rebuildRowsForCap(rows, cap){
   const c = Number(cap) > 0 ? Number(cap) : 4;
   const target = Math.max(c, filled.length, 1);
   const out = filled.slice();
-  while(out.length < target) out.push({ studentId:null, name:'', age:'' });
+  while(out.length < target) out.push({ studentId:null, name:'', age:'', remark:'' });
   return out;
 }
 function formatRange(startMin, durationMin){ return `${minuteToTime(startMin)}–${minuteToTime(startMin + durationMin)}`; }
@@ -287,7 +287,7 @@ function App(){
     (studentRows || []).forEach(r => {
       const key = String(r.session_id);
       if(!studentsBySession[key]) studentsBySession[key] = [];
-      studentsBySession[key].push({ id:r.id, studentId:r.student_id || null, name:r.student_name || '', age:(r.student_age === null || r.student_age === undefined ? null : Number(r.student_age)) });
+      studentsBySession[key].push({ id:r.id, studentId:r.student_id || null, name:r.student_name || '', age:(r.student_age === null || r.student_age === undefined ? null : Number(r.student_age)), remark:r.remark || '' });
     });
     const instructorsBySession = {};
     (instructorJoinRows || []).forEach(r => {
@@ -552,9 +552,9 @@ function App(){
         const inserted = await insertRows('weekly_sessions', payload);
         sessionId = inserted?.[0]?.id;
       }
-      const rows = (modal.form.studentRows || []).map(r => ({ studentId:r.studentId || null, name:(r.name || '').trim(), age:r.age })).filter(r => r.name || r.studentId);
+      const rows = (modal.form.studentRows || []).map(r => ({ studentId:r.studentId || null, name:(r.name || '').trim(), age:r.age, remark:(r.remark || '').trim() })).filter(r => r.name || r.studentId);
       if(sessionId && rows.length){
-        await insertRows('weekly_session_students', rows.map(r => ({ session_id: sessionId, student_id: r.studentId, student_name: r.name, student_age: (r.age === '' || r.age === null || r.age === undefined) ? null : Number(r.age) })));
+        await insertRows('weekly_session_students', rows.map(r => ({ session_id: sessionId, student_id: r.studentId, student_name: r.name, student_age: (r.age === '' || r.age === null || r.age === undefined) ? null : Number(r.age), remark: r.remark || null })));
       }
       if(sessionId && inst){
         await insertRows('session_instructors', [{ session_id: sessionId, instructor_id: inst.id }]);
@@ -835,7 +835,7 @@ function App(){
         if(instr) titleBits.push(instr);
         mergeFull(aoa.length); aoa.push([titleBits.join('  ·  '),'','','','','','']);
         aoa.push(['No.','Name','Age','Gender','Remarks', dateLabel, 'Payment / Notes']);
-        s.students.forEach((stu, i) => aoa.push([i+1, stu.name || '', (stu.age === null || stu.age === undefined || stu.age === '') ? '' : stu.age, '', '', '', '']));
+        s.students.forEach((stu, i) => aoa.push([i+1, stu.name || '', (stu.age === null || stu.age === undefined || stu.age === '') ? '' : stu.age, '', stu.remark || '', '', '']));
         const fillTo = Math.max(cap, s.students.length) + 2;
         for(let i = s.students.length; i < fillTo; i++) aoa.push([i+1, '', '', '', '', '', '']);
         aoa.push(['','','','','','T : ____________________','']);
@@ -2029,8 +2029,8 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
   }
 
   function setRow(i, key, val){ const rows = (modal.form.studentRows || []).slice(); rows[i] = { ...rows[i], [key]: val }; setForm({ studentRows: rows }); }
-  function addRow(){ setForm({ studentRows: [...(modal.form.studentRows || []), { name:'', age:'' }] }); }
-  function removeRow(i){ const rows = (modal.form.studentRows || []).slice(); rows.splice(i, 1); if(!rows.length) rows.push({ name:'', age:'' }); setForm({ studentRows: rows }); }
+  function addRow(){ setForm({ studentRows: [...(modal.form.studentRows || []), { studentId:null, name:'', age:'', remark:'' }] }); }
+  function removeRow(i){ const rows = (modal.form.studentRows || []).slice(); rows.splice(i, 1); if(!rows.length) rows.push({ studentId:null, name:'', age:'', remark:'' }); setForm({ studentRows: rows }); }
 
   function onInstructorChange(id){
     const inst = instructors.find(i => i.id === id);
@@ -2040,9 +2040,11 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
   // Pick a swimmer into a slot from the registry; snapshot name+age. null clears.
   function pickStudent(i, student){
     const rows = (modal.form.studentRows || []).slice();
-    rows[i] = student ? { studentId: student.id, name: student.name, age: (student.age === null || student.age === undefined ? '' : String(student.age)) } : { studentId:null, name:'', age:'' };
+    const keepRemark = student ? (rows[i]?.remark || '') : '';
+    rows[i] = student ? { studentId: student.id, name: student.name, age: (student.age === null || student.age === undefined ? '' : String(student.age)), remark: keepRemark } : { studentId:null, name:'', age:'', remark:'' };
     setForm({ studentRows: rows });
   }
+  function setRemark(i, val){ const rows = (modal.form.studentRows || []).slice(); rows[i] = { ...rows[i], remark: val }; setForm({ studentRows: rows }); }
 
   // Bind this session to a family group and drop ALL its members into the slots
   // at once (padded to the lesson-type ratio). groupId '' clears the binding.
@@ -2111,6 +2113,7 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
             {(modal.form.studentRows || []).map((r, i) => <div className="stu-row" key={i}>
               <span className="stu-num">{i+1}</span>
               <StudentSelect valueId={r.studentId} fallbackLabel={r.studentId ? null : (r.name ? `${r.name}${r.age ? ` (${r.age})` : ''}` : '')} studentById={studentById} candidates={candidates} onPick={(stu)=>pickStudent(i, stu)} conflict={rowConflict(r, i)} />
+              <input className="input stu-remark" placeholder="Remark (optional)" value={r.remark || ''} onChange={(e)=>setRemark(i, e.target.value)} />
               <button className="btn btn-ghost stu-x" title="Remove slot" onClick={()=>removeRow(i)}>×</button>
             </div>)}
           </div>
