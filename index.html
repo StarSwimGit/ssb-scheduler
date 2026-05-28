@@ -227,11 +227,14 @@
     .daily-slot{padding:10px 12px;background:var(--surface)}
     .daily-slot.empty{display:flex;align-items:center;justify-content:space-between;gap:12px}
     .daily-sessions{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;align-items:start}
-    .daily-event{border:1px solid var(--border-2);border-left:4px solid var(--primary);border-radius:11px;padding:10px 12px;background:var(--surface-2);cursor:pointer}
+    .daily-event{border:1px solid rgba(0,0,0,0.06);border-left:6px solid var(--primary);border-radius:11px;padding:11px 13px;background:var(--surface-2);cursor:pointer;transition:transform .08s ease, box-shadow .12s ease}
+    .daily-event:hover{transform:translateY(-1px);box-shadow:var(--shadow)}
     .daily-event-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
-    .daily-event-title{font-size:16px;font-weight:800}
-    .daily-event-sub{font-size:14px;color:var(--text-2);margin-top:2px}
-    .daily-event-note{font-size:12.5px;color:var(--amber-tx);font-weight:600;margin-top:3px}
+    .daily-event-title{font-size:15px;font-weight:800;line-height:1.2}
+    .daily-event-sub{font-size:13px;color:currentColor;opacity:.82;margin-top:3px;font-weight:600}
+    .daily-event-students{display:grid;grid-template-columns:1fr 1fr;column-gap:10px;row-gap:1px;margin-top:6px}
+    .daily-event-stu{font-size:13px;line-height:1.35;color:currentColor;opacity:.92;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+    .daily-event-note{font-size:12.5px;color:var(--amber-tx);font-weight:700;margin-top:4px;background:rgba(255,255,255,0.55);padding:2px 7px;border-radius:6px;display:inline-block}
     .student-count{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:26px;padding:0 8px;border-radius:999px;background:var(--primary-soft);color:var(--primary-on-soft);font-size:12px;font-weight:800}
     .error-card{margin-top:16px;background:var(--red-bg);border-color:var(--red-bd);color:var(--red-tx)}
     .print-week{display:none}.print-rundown{display:none}.print-daily{display:none}.print-weekly-table{display:none}
