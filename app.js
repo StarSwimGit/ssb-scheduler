@@ -774,7 +774,12 @@ function App(){
       const prevWeekStart = addDays(selectedWeekStart, -7);
       const sourceSessions = sessions.filter(s => s.weekStartDate === prevWeekStart).sort((a,b) => a.day - b.day || a.startMinute - b.startMinute);
       if(!sourceSessions.length){ alert('No classes found in the previous week to duplicate.'); return; }
-      if(!confirm(`Duplicate all classes from ${prevWeekStart} into ${selectedWeekStart}? Existing classes in the selected week will remain.`)) return;
+      // Pre-count trial swimmers in the source so we can mention it in the confirm prompt.
+      const trialInSource = sourceSessions.reduce((n, s) => n + (s.students || []).filter(st => st.studentId && trialStudentIds.has(st.studentId)).length, 0);
+      const trialNote = trialInSource
+        ? `\n\nNote: ${trialInSource} trial swimmer${trialInSource===1?'':'s'} on these classes won’t be carried over — trial bookings are one-offs by design. Re-add them next week if they convert to a regular package.`
+        : '';
+      if(!confirm(`Duplicate all classes from ${prevWeekStart} into ${selectedWeekStart}? Existing classes in the selected week will remain.${trialNote}`)) return;
       const payload = sourceSessions.map(s => ({
         week_start_date: selectedWeekStart,
         weekday: s.day + 1,
@@ -789,15 +794,19 @@ function App(){
       const inserted = await insertRows('weekly_sessions', payload);
       const studentPayload = [];
       const instructorPayload = [];
+      let skippedTrials = 0;
       (inserted || []).forEach((row, idx) => {
         const src = sourceSessions[idx];
-        (src.students || []).forEach(st => studentPayload.push({ session_id: row.id, student_id: st.studentId || null, student_name: st.name, student_age: (st.age === null || st.age === undefined) ? null : Number(st.age) }));
+        (src.students || []).forEach(st => {
+          if(st.studentId && trialStudentIds.has(st.studentId)){ skippedTrials++; return; }
+          studentPayload.push({ session_id: row.id, student_id: st.studentId || null, student_name: st.name, student_age: (st.age === null || st.age === undefined) ? null : Number(st.age) });
+        });
         (src.instructors || []).forEach(it => instructorPayload.push({ session_id: row.id, instructor_id: it.id }));
       });
       if(studentPayload.length) await insertRows('weekly_session_students', studentPayload);
       if(instructorPayload.length) await insertRows('session_instructors', instructorPayload);
       await loadSessions();
-      setStatus(`Duplicated ${sourceSessions.length} class${sourceSessions.length===1?'':'es'} from previous week.`);
+      setStatus(`Duplicated ${sourceSessions.length} class${sourceSessions.length===1?'':'es'} from previous week${skippedTrials ? ` · skipped ${skippedTrials} trial swimmer${skippedTrials===1?'':'s'}` : ''}.`);
     } catch(err){ handleErr(err); alert(err.message || 'Failed to duplicate previous week'); }
   }
 
@@ -881,6 +890,14 @@ function App(){
   }, [sessions]);
 
   const studentById = useMemo(() => { const m = {}; students.forEach(s => m[s.id] = s); return m; }, [students]);
+  // Set of swimmer IDs currently on a "trial" package (one-off bookings). Drives
+  // the trial annotation in the modal/cards and the duplicate-week skip rule.
+  const trialStudentIds = useMemo(() => {
+    const trialPkgIds = new Set((options.packages || []).filter(p => (p.name || '').toLowerCase().includes('trial')).map(p => p.id));
+    const ids = new Set();
+    students.forEach(s => { if(s.packageId && trialPkgIds.has(s.packageId)) ids.add(s.id); });
+    return ids;
+  }, [students, options.packages]);
   const groupById = useMemo(() => { const m = {}; familyGroups.forEach(g => m[g.id] = g); return m; }, [familyGroups]);
   const membersByGroup = useMemo(() => { const m = {}; students.forEach(s => { if(s.familyGroupId){ (m[s.familyGroupId] = m[s.familyGroupId] || []).push(s); } }); return m; }, [students]);
 
@@ -958,6 +975,7 @@ function App(){
         onToggleAllTypes={toggleAllTypes}
         allTypesShown={allTypesShown}
         onExportExcel={exportWeekExcel}
+        trialStudentIds={trialStudentIds}
       />}
 
       {!loading && view==='day' && <DailyView
@@ -971,6 +989,7 @@ function App(){
         onNextWeek={()=>setSelectedDate(addDays(selectedDate,7))}
         onThisWeek={()=>setSelectedDate(todayStr())}
         onExportExcel={exportWeekExcel}
+        trialStudentIds={trialStudentIds}
       />}
 
       {!loading && view==='month' && <MonthView
@@ -1055,6 +1074,7 @@ function App(){
       weekEnrollments={weekEnrollments}
       familyGroups={familyGroups}
       membersByGroup={membersByGroup}
+      trialStudentIds={trialStudentIds}
     /> : null}
   </div>;
 }
@@ -1069,7 +1089,8 @@ function WeekView(props){
           lessonTypeByName, poolById, onAdd, onEdit, activeLessonTypes,
           selectedDate, sessionsForDate, selectedWeekStart, currentWeekStart, isFutureSelectedWeek,
           onPrevWeek, onNextWeek, onThisWeek, onDuplicateWeek, onClearDay, onJumpToDay,
-          isTypeEnabled, onToggleType, onToggleAllTypes, allTypesShown, onExportExcel } = props;
+          isTypeEnabled, onToggleType, onToggleAllTypes, allTypesShown, onExportExcel,
+          trialStudentIds } = props;
 
   const [printMenu, setPrintMenu] = useState(false);
 
@@ -1109,7 +1130,7 @@ function WeekView(props){
         {DAYS_S.map((_,di) => {
           const cell = weekBlocks[di].packed.filter(b => b.startMinute >= h && b.startMinute < h + 60);
           return <div key={di+'-'+h} className="wa-cell" onClick={() => onAdd(di, minuteToSlot(h), selectedPoolId || undefined)}>
-            {cell.map(block => <AgendaCard key={block.id} block={block} colorsFor={colorsFor} lessonTypeByName={lessonTypeByName} poolById={poolById} showPoolBadge={showPoolBadge} onEdit={onEdit} />)}
+            {cell.map(block => <AgendaCard key={block.id} block={block} colorsFor={colorsFor} lessonTypeByName={lessonTypeByName} poolById={poolById} showPoolBadge={showPoolBadge} onEdit={onEdit} trialStudentIds={trialStudentIds} />)}
           </div>;
         })}
       </React.Fragment>)}
@@ -1170,7 +1191,7 @@ function WeekView(props){
 
 // M2.2: agenda card — a static, full-width card inside a day-hour cell. Details
 // stack on separate lines; the student list wraps to use vertical space.
-function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadge, onEdit }){
+function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadge, onEdit, trialStudentIds }){
   const c = colorsFor(block.type);
   const lt = lessonTypeByName(block.type);
   const cap = sessionCapacity(block, lt);
@@ -1188,7 +1209,7 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
     <div className="wa-card-line">{showPoolBadge && pool ? <span className="event-pool-pill">{pool.name}</span> : null}{compactRange(block.startMinute, block.durationMinutes)}</div>
     <div className="wa-card-line wa-card-inst">{inst}</div>
     {block.students.length
-      ? <div className="wa-card-students">{block.students.map((s,i) => <span key={s.id || i} className="wa-stu" title={studentLabel(s)}>{shortName(s.name) + ageSuffix(s)}{s.remark ? ` — ${s.remark}` : ''}</span>)}</div>
+      ? <div className="wa-card-students">{block.students.map((s,i) => { const isTrial = !!(s.studentId && trialStudentIds && trialStudentIds.has(s.studentId)); return <span key={s.id || i} className="wa-stu" title={studentLabel(s) + (isTrial ? ' (trial)' : '')}>{shortName(s.name) + ageSuffix(s)}{isTrial ? <span className="trial-mark"> (trial)</span> : null}{s.remark ? ` — ${s.remark}` : ''}</span>; })}</div>
       : <div className="wa-card-line wa-card-students-empty">—</div>}
   </div>;
 }
@@ -1197,7 +1218,7 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
 // DailyView (M2: pool labels on each session)
 // ============================================================================
 
-function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, lessonTypeByName, poolById, onAddAtTime, onEdit, selectedWeekStart, currentWeekStart, onPrevWeek, onNextWeek, onThisWeek, onExportExcel }){
+function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, lessonTypeByName, poolById, onAddAtTime, onEdit, selectedWeekStart, currentWeekStart, onPrevWeek, onNextWeek, onThisWeek, onExportExcel, trialStudentIds }){
   const wb = weekBounds(selectedDate);
   const weekDays = Array.from({length:7}, (_,i) => { const d = new Date(wb.start); d.setDate(wb.start.getDate()+i); return { date:d, ds:toDateStr(d), idx:i }; });
   const items = sessionsForDate(selectedDate);
@@ -1238,7 +1259,7 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
                         <div className="daily-event-title" style={{color:c.tx}}>{it.type} {pool ? <span className="pool-badge">{pool.name}</span> : null}{it.familyGroupId ? <span title="Family group booking" style={{marginLeft:4}}>👪</span> : null}</div>
                         <div className="daily-event-sub">{compactRange(it.startMinute, it.durationMinutes)} · {inst}</div>
                         {it.students.length
-                          ? <div className="daily-event-students">{it.students.map((s, si) => <span key={s.id || si} className="daily-event-stu">{s.name + ageSuffix(s)}</span>)}</div>
+                          ? <div className="daily-event-students">{it.students.map((s, si) => { const isTrial = !!(s.studentId && trialStudentIds && trialStudentIds.has(s.studentId)); return <span key={s.id || si} className="daily-event-stu" title={isTrial ? 'Trial — one-off booking' : undefined}>{s.name + ageSuffix(s)}{isTrial ? <span className="trial-mark"> (trial)</span> : null}</span>; })}</div>
                           : <div className="daily-event-sub">No students listed</div>}
                         {it.students.filter(s=>s.remark).map((s,ri)=><div key={ri} className="daily-event-note">📝 {shortName(s.name)}: {s.remark}</div>)}
                       </div>
@@ -2119,7 +2140,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
   </>;
 }
 
-function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById, students, studentById, weekEnrollments, familyGroups, membersByGroup }){
+function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById, students, studentById, weekEnrollments, familyGroups, membersByGroup, trialStudentIds }){
 
   // M2: union of durations — common standards plus every lesson type's default
   // and the currently-selected duration so the dropdown always contains the
@@ -2224,13 +2245,14 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
         <div className="field" style={{gridColumn:'1 / -1'}}>
           <label>Swimmers {previewMax > 0 ? `· ${previewMax} slots (max for this type)` : ''}</label>
           <div className="stu-list">
-            {(modal.form.studentRows || []).map((r, i) => <div className="stu-row" key={i}>
+            {(modal.form.studentRows || []).map((r, i) => { const isTrial = !!(r.studentId && trialStudentIds && trialStudentIds.has(r.studentId)); return <div className="stu-row" key={i}>
               <span className="stu-num">{i+1}</span>
               <div className="stu-fields">
                 <StudentSelect valueId={r.studentId} fallbackLabel={r.studentId ? null : (r.name ? `${r.name}${r.age ? ` (${r.age})` : ''}` : '')} studentById={studentById} candidates={candidates} onPick={(stu)=>pickStudent(i, stu)} conflict={rowConflict(r, i)} />
+                {isTrial ? <span className="trial-pill" title="This swimmer is on a Trial package — one-off booking that won't carry over when duplicating weeks.">trial</span> : null}
                 <input className="input stu-remark" placeholder="Remark (optional)" value={r.remark || ''} onChange={(e)=>setRemark(i, e.target.value)} />
               </div>
-            </div>)}
+            </div>; })}
           </div>
           <div className="hint" style={{marginTop:8}}>{bucketFallback ? 'No swimmers tagged for this lesson type yet — showing all. Tag them in the Swimmers tab.' : 'Slots are fixed to the lesson type’s maximum. Leave a slot empty to skip it, or clear a slot with its ×.'}</div>
         </div>
