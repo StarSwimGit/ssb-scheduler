@@ -1,4 +1,3 @@
-
 // ============================================================================
 // SSB Scheduler app.js — Module 2 build
 // ============================================================================
@@ -297,30 +296,27 @@ function App(){
 
   const weekSessions = useMemo(() => sessions.filter(s => s.weekStartDate === selectedWeekStart), [sessions, selectedWeekStart]);
 
-  // M2: build a (day, poolId) → packed-columns map. Pool null sessions still
-  // render under whichever sub-col we point them at — they're flagged so the
-  // capacity chip says "no pool", and the user can fix in the modal.
-  const visiblePools = useMemo(() => {
-    const pools = activePools();
-    if(selectedPoolId){
-      const one = pools.find(p => p.id === selectedPoolId);
-      return one ? [one] : pools;
-    }
-    return pools;
-  }, [options.pools, selectedPoolId]);
-
-  const blocksByDayPool = useMemo(() => {
-    const allActive = activePools();
-    const fallbackPoolId = allActive[0]?.id || null;
+  // M2.1: pool is no longer a structural column split — it's a badge. We pack
+  // all of a day's sessions (optionally filtered to one pool) into a single
+  // aligned column grid. peak = the day's maximum simultaneous sessions, which
+  // drives that day's width so the busiest cluster still clears a readable
+  // minimum. Null-pool sessions fold into the first active pool for filtering.
+  const weekBlocks = useMemo(() => {
+    const fallbackPoolId = activePools()[0]?.id || null;
     return Array.from({length:7}, (_, day) => {
-      const map = {};
-      visiblePools.forEach(pool => {
-        const items = weekSessions.filter(s => s.day === day && (s.poolId || fallbackPoolId) === pool.id);
-        map[pool.id] = packParallelColumns(items);
-      });
-      return map;
+      let items = weekSessions.filter(s => s.day === day);
+      if(selectedPoolId) items = items.filter(s => (s.poolId || fallbackPoolId) === selectedPoolId);
+      const packed = packParallelColumns(items);
+      const peak = packed.length ? packed[0]._total : 1;
+      return { packed, peak: Math.max(1, peak) };
     });
-  }, [weekSessions, visiblePools, options.pools]);
+  }, [weekSessions, selectedPoolId, options.pools]);
+
+  // All-pools packing, ignoring the filter — used for the printed weekly table
+  // so a printout is always the complete record.
+  const weekBlocksAllPools = useMemo(() => {
+    return Array.from({length:7}, (_, day) => packParallelColumns(weekSessions.filter(s => s.day === day)));
+  }, [weekSessions]);
 
   const summary = useMemo(() => {
     const byType = {}, byInst = {}, byPool = {};
@@ -550,8 +546,8 @@ function App(){
       {!loading && error ? <div className="card error-card"><div style={{fontWeight:800,marginBottom:4}}>Error</div><div className="small">{error}</div></div> : null}
 
       {!loading && view==='week' && <WeekView
-        blocksByDayPool={blocksByDayPool}
-        visiblePools={visiblePools}
+        weekBlocks={weekBlocks}
+        weekBlocksAllPools={weekBlocksAllPools}
         pools={activePools()}
         selectedPoolId={selectedPoolId}
         setSelectedPoolId={setSelectedPoolId}
@@ -625,7 +621,7 @@ function App(){
 // ============================================================================
 
 function WeekView(props){
-  const { blocksByDayPool, visiblePools, pools, selectedPoolId, setSelectedPoolId,
+  const { weekBlocks, weekBlocksAllPools, pools, selectedPoolId, setSelectedPoolId,
           gridBounds, gridSlots, slotToMinute, minuteToSlot, colorsFor,
           lessonTypeByName, poolById, onAdd, onEdit, activeLessonTypes,
           selectedDate, sessionsForDate, selectedWeekStart, isFutureSelectedWeek,
@@ -633,60 +629,67 @@ function WeekView(props){
 
   const wb = weekBounds(selectedDate);
   const printDays = Array.from({length:7}, (_,i) => { const d = new Date(wb.start); d.setDate(wb.start.getDate()+i); const ds = toDateStr(d); return { date:d, ds, items:sessionsForDate(ds) }; });
-  const splitMode = !selectedPoolId && visiblePools.length > 1;
+
+  // Width model: each day claims flex-grow proportional to its peak overlap and
+  // a hard min-width of peak × COL_MIN_W. On a wide screen the days grow to fill;
+  // when the summed minimums exceed the viewport the canvas overflows and the
+  // grid scrolls horizontally with the time axis pinned.
+  const COL_MIN_W = 132;
+  const TIME_W = 96;
+  const showPoolBadge = !selectedPoolId && pools.length > 1;
+  const totalCols = weekBlocks.reduce((s,d) => s + d.peak, 0);
+  const canvasMinWidth = TIME_W + totalCols * COL_MIN_W;
+  const dayStyle = (peak) => ({ flexGrow: peak, flexShrink: 0, flexBasis: 0, minWidth: peak * COL_MIN_W });
 
   const weekGrid = <>
-    {/* Pool filter */}
     <div className="pool-tabs">
       <button className={`pool-tab ${selectedPoolId===null?'active':''}`} onClick={()=>setSelectedPoolId(null)}>All pools</button>
       {pools.map(p => <button key={p.id} className={`pool-tab ${selectedPoolId===p.id?'active':''}`} onClick={()=>setSelectedPoolId(p.id)}>{p.name} <span className="pool-tab-cap">cap {p.capacity_total}</span></button>)}
     </div>
 
-    {/* Day header strip */}
-    <div className="week-head">
-      {DAYS_S.map((d,di) => {
-        const dateObj = new Date(wb.start);
-        dateObj.setDate(wb.start.getDate()+di);
-        const dateStr = dateObj.toLocaleDateString(undefined,{month:'short', day:'numeric'});
-        return <div key={d} className="week-head-cell">
-          <button className="week-day-link" onClick={() => onJumpToDay(di)} title={`Open ${DAYS_F[di]} daily view`}>
-            <div>{d}</div>
-            <div style={{fontSize:'10px',fontWeight:600,color:'#94A3B8'}}>{dateStr}</div>
-          </button>
-          {splitMode ? <div className="week-pool-strip">
-            {visiblePools.map(p => <div key={p.id} className="week-pool-label" style={{flex:1}}>{p.name}</div>)}
-          </div> : null}
-          {isFutureSelectedWeek ? <button className="week-clear-btn" onClick={(e)=>{e.stopPropagation(); onClearDay(di);}}>Remove all classes</button> : <div className="week-clear-placeholder">Protected</div>}
-        </div>;
-      })}
-    </div>
+    <div className="week-scroll">
+      <div className="week-canvas" style={{minWidth: canvasMinWidth}}>
+        {/* Header row */}
+        <div className="week-head-row">
+          <div className="week-corner" />
+          {DAYS_S.map((d,di) => {
+            const dateObj = new Date(wb.start); dateObj.setDate(wb.start.getDate()+di);
+            const dateStr = dateObj.toLocaleDateString(undefined,{month:'short', day:'numeric'});
+            return <div key={d} className="week-day-head" style={dayStyle(weekBlocks[di].peak)}>
+              <button className="week-day-link" onClick={() => onJumpToDay(di)} title={`Open ${DAYS_F[di]} daily view`}>
+                <div>{d}</div>
+                <div style={{fontSize:'10px',fontWeight:600,color:'#94A3B8'}}>{dateStr}</div>
+              </button>
+              {isFutureSelectedWeek ? <button className="week-clear-btn" onClick={(e)=>{e.stopPropagation(); onClearDay(di);}}>Remove all classes</button> : <div className="week-clear-placeholder">Protected</div>}
+            </div>;
+          })}
+        </div>
 
-    {/* Grid */}
-    <div className="week-grid">
-      <div className="time-col">
-        {Array.from({length:gridSlots}, (_,i) => <div key={i} className={`time-cell ${i%2===1?'major':'minor'}`}>{i%2===0 ? minuteToTime(slotToMinute(i)) : '·'}</div>)}
-        <div className="time-cell major">{minuteToTime(gridBounds.endMin)}</div>
+        {/* Body row */}
+        <div className="week-body-row">
+          <div className="time-col">
+            {Array.from({length:gridSlots}, (_,i) => <div key={i} className={`time-cell ${i%2===1?'major':'minor'}`}>{i%2===0 ? minuteToTime(slotToMinute(i)) : '·'}</div>)}
+            <div className="time-cell major">{minuteToTime(gridBounds.endMin)}</div>
+          </div>
+          {DAYS_S.map((_,di) => {
+            const { packed, peak } = weekBlocks[di];
+            return <div key={di} className="day-col" style={dayStyle(peak)}>
+              {Array.from({length:gridSlots}, (_,si) => <div key={si} className={`slot-cell ${si%2===1?'major':'minor'}`} onClick={() => onAdd(di, si, selectedPoolId || undefined)} />)}
+              <div className="slot-cell major" onClick={() => onAdd(di, gridSlots, selectedPoolId || undefined)} />
+              {packed.map(block => <EventBlock
+                key={block.id}
+                block={block}
+                minuteToSlot={minuteToSlot}
+                colorsFor={colorsFor}
+                lessonTypeByName={lessonTypeByName}
+                poolById={poolById}
+                showPoolBadge={showPoolBadge}
+                onEdit={onEdit}
+              />)}
+            </div>;
+          })}
+        </div>
       </div>
-      {DAYS_S.map((_,di) => <div key={di} className={`day-col ${splitMode?'split':''}`}>
-        {visiblePools.map(pool => {
-          const blocks = (blocksByDayPool[di] && blocksByDayPool[di][pool.id]) || [];
-          return <div key={pool.id} className="pool-sub-col">
-            {Array.from({length:gridSlots}, (_,si) => <div key={si} className={`slot-cell ${si%2===1?'major':'minor'}`} onClick={() => onAdd(di, si, pool.id)} />)}
-            <div className="slot-cell major" onClick={() => onAdd(di, gridSlots, pool.id)} />
-            {blocks.map(block => <EventBlock
-              key={block.id}
-              block={block}
-              gridBounds={gridBounds}
-              minuteToSlot={minuteToSlot}
-              colorsFor={colorsFor}
-              lessonTypeByName={lessonTypeByName}
-              poolById={poolById}
-              showPoolBadge={!splitMode && !selectedPoolId}
-              onEdit={onEdit}
-            />)}
-          </div>;
-        })}
-      </div>)}
     </div>
   </>;
 
@@ -695,7 +698,7 @@ function WeekView(props){
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap'}}>
         <div>
           <div style={{fontSize:18,fontWeight:800}}>Weekly View</div>
-          <div className="small subtle">This week only. Classes do not auto-repeat. Capacity chips show enrolled / max — over-capacity classes get an amber border but nothing is enforced yet.</div>
+          <div className="small subtle">This week only. Pool shown as a badge — use the pool tabs to focus one pool. Busy days widen and scroll sideways; the time axis stays pinned.</div>
         </div>
         <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
           <button className="btn btn-ghost" onClick={onPrevWeek}>← Prev Week</button>
@@ -714,7 +717,6 @@ function WeekView(props){
       </div>
     </div>
 
-    {/* Prints unchanged from M1 — flatten pool sub-cols back into per-day lists. */}
     <div className="print-rundown">
       <div className="print-title">Weekly Daily Rundown</div>
       <div className="print-meta">{wb.start.toLocaleDateString()} to {wb.end.toLocaleDateString()}</div>
@@ -729,12 +731,14 @@ function WeekView(props){
         </tbody></table>
       </div>)}
     </div>
-    <PrintWeeklyTableSection blocksByDayPool={blocksByDayPool} visiblePools={visiblePools} wb={wb} selectedWeekStart={selectedWeekStart} gridSlots={gridSlots} gridBounds={gridBounds} slotToMinute={slotToMinute} poolById={poolById} />
+    <PrintWeeklyTableSection weekBlocksAllPools={weekBlocksAllPools} wb={wb} selectedWeekStart={selectedWeekStart} gridSlots={gridSlots} gridBounds={gridBounds} slotToMinute={slotToMinute} poolById={poolById} />
   </>;
 }
 
-// M2: extracted event renderer with capacity chip and over-capacity styling.
-function EventBlock({ block, gridBounds, minuteToSlot, colorsFor, lessonTypeByName, poolById, showPoolBadge, onEdit }){
+// M2.1: event renderer. Width = a lane in the day's aligned column grid
+// (block._total lanes, this event sits in lane block._col). Pool shows as a
+// small badge in all-pools mode.
+function EventBlock({ block, minuteToSlot, colorsFor, lessonTypeByName, poolById, showPoolBadge, onEdit }){
   const c = colorsFor(block.type);
   const pct = 100 / block._total;
   const width = block._total > 1 ? `calc(${pct}% - 3px)` : 'calc(100% - 6px)';
@@ -765,7 +769,7 @@ function EventBlock({ block, gridBounds, minuteToSlot, colorsFor, lessonTypeByNa
       <div className="event-title">{block.type}</div>
       {cap.max > 0 ? <span className="cap-chip" style={{background:chip.bg, color:chip.tx, borderColor:chip.bd}}>{cap.current}/{cap.max}</span> : <span className="cap-chip cap-chip-unknown">{cap.current}</span>}
     </div>
-    <div className="event-sub">{(block.instructors[0]?.name) || block.legacyInstructor || '—'} · {minuteToTime(block.startMinute)}{showPoolBadge && pool ? ` · ${pool.name}` : ''}</div>
+    <div className="event-sub">{showPoolBadge && pool ? <span className="event-pool-pill">{pool.name}</span> : null}{minuteToTime(block.startMinute)} · {(block.instructors[0]?.name) || block.legacyInstructor || '—'}</div>
     <div className="event-sub">{block.students.map(s=>s.name).join(', ') || '-'}</div>
   </div>;
 }
@@ -1206,21 +1210,16 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
 // PrintWeeklyTableSection (M2: pool labels per session in cells)
 // ============================================================================
 
-function PrintWeeklyTableSection({ blocksByDayPool, visiblePools, wb, selectedWeekStart, gridSlots, gridBounds, slotToMinute, poolById }){
+function PrintWeeklyTableSection({ weekBlocksAllPools, wb, selectedWeekStart, gridSlots, gridBounds, slotToMinute, poolById }){
   const dayHeaders = DAYS_F.map((d, di) => {
     const dateObj = new Date(wb.start);
     dateObj.setDate(wb.start.getDate() + di);
     return { label: d, dateStr: dateObj.toLocaleDateString(undefined, { day:'2-digit', month:'2-digit', year:'numeric' }) };
   });
 
-  // Flatten all pools' blocks per day for the print layout, attaching pool name.
+  // Each day is already a packed array of all-pool blocks; attach pool name.
   const flatBlocksByDay = Array.from({length:7}, (_, di) => {
-    const all = [];
-    visiblePools.forEach(p => {
-      const list = (blocksByDayPool[di] && blocksByDayPool[di][p.id]) || [];
-      list.forEach(b => all.push({ ...b, _poolName: p.name }));
-    });
-    return all;
+    return (weekBlocksAllPools[di] || []).map(b => ({ ...b, _poolName: (poolById(b.poolId)?.name) || '' }));
   });
 
   const startMap = {};
