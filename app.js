@@ -738,6 +738,19 @@ function App(){
     catch(err){ handleErr(err); alert(err.message || 'Failed to update group membership'); }
   }
 
+  // Move an item from one index to another (used by drag-and-drop), then reindex.
+  async function moveOption(table, list, from, to){
+    if(from === to || from == null || to == null) return;
+    const arr = (list || []).slice();
+    if(from < 0 || to < 0 || from >= arr.length || to >= arr.length) return;
+    const [it] = arr.splice(from, 1);
+    arr.splice(to, 0, it);
+    try{
+      await Promise.all(arr.map((r, i) => patchRows(table, { id: r.id }, { sort_order: i + 1 })));
+      await loadOptions();
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to reorder'); }
+  }
+
   async function duplicatePreviousWeek(){
     try{
       if(!isFutureSelectedWeek){ alert('Week duplication is only available for a future week.'); return; }
@@ -1000,6 +1013,7 @@ function App(){
         deleteOption={deleteOption}
         patchOption={patchOption}
         reorderOption={reorderOption}
+        moveOption={moveOption}
         saveLessonType={saveLessonType}
         deleteLessonType={deleteLessonType}
         lessonTypeCounts={lessonTypeCounts}
@@ -1233,17 +1247,19 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
           {hourStarts.map(start => {
             const rowItems = items.filter(it => it.startMinute >= start && it.startMinute < start + 60);
             return <tr key={`p-${start}`}>
-              <td>{minuteToTime(start)}</td>
+              <td className="print-time-cell">{minuteToTime(start)}</td>
               <td>
-                {rowItems.length ? rowItems.map((it, idx) => {
-                  const pool = poolById(it.poolId);
-                  const inst = it.instructors.map(i=>i.name).join(', ') || it.legacyInstructor || 'No Instructor';
-                  return <div key={it.id} className="print-session-block">
-                    <div className="print-session-head">{formatRange(it.startMinute, it.durationMinutes)} | {it.type}{pool?` | ${pool.name}`:''} | {inst} | {it.students.length} student{it.students.length===1?'':'s'}</div>
-                    <div className="print-session-students">{it.students.length ? it.students.map(s=>s.name+ageSuffix(s)).join(', ') : 'No students listed'}</div>
-                    {idx < rowItems.length - 1 ? <div className="print-session-gap"></div> : null}
-                  </div>;
-                }) : <div>No sessions</div>}
+                {rowItems.length ? <div className="print-day-cols">
+                  {rowItems.map(it => {
+                    const pool = poolById(it.poolId);
+                    const inst = it.instructors.map(i=>i.name).join(', ') || it.legacyInstructor || 'No Instructor';
+                    return <div key={it.id} className="print-day-col">
+                      <div className="print-session-head">{formatRange(it.startMinute, it.durationMinutes)} · {it.type}</div>
+                      <div className="print-session-head" style={{fontWeight:400}}>{pool ? `${pool.name} · ` : ''}{inst} · {it.students.length} student{it.students.length===1?'':'s'}</div>
+                      <div className="print-session-students">{it.students.length ? it.students.map(s=>s.name+ageSuffix(s)).join(', ') : 'No students listed'}</div>
+                    </div>;
+                  })}
+                </div> : <div>No sessions</div>}
               </td>
             </tr>;
           })}
@@ -1394,7 +1410,10 @@ function PackageEditor({ row, onSave, onCancel }){
   </div>;
 }
 
-function SettingsView({ options, status, addOption, toggleOption, deleteOption, patchOption, reorderOption, saveLessonType, deleteLessonType, lessonTypeCounts }){
+function SettingsView({ options, status, addOption, toggleOption, deleteOption, patchOption, reorderOption, moveOption, saveLessonType, deleteLessonType, lessonTypeCounts }){
+  const dragRef = React.useRef({ canDrag:false });
+  const [dragIdx, setDragIdx] = useState(null);
+  const [overIdx, setOverIdx] = useState(null);
   const [newInstructor, setNewInstructor] = useState('');
   const [newTypeName, setNewTypeName] = useState('');
   const [bg, setBg] = useState('#DBEAFE');
@@ -1540,9 +1559,20 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
       </div>
 
       <div className="settings-list">
-        {options.lessonTypes.length ? options.lessonTypes.map(r => { const n = counts[r.id] || 0; return <div key={r.id} className="lesson-row">
+        {options.lessonTypes.length ? options.lessonTypes.map((r, idx) => { const n = counts[r.id] || 0; return <div key={r.id}
+          className={`lesson-row ${dragIdx===idx?'lt-dragging':''} ${overIdx===idx&&dragIdx!=null&&dragIdx!==idx?'lt-drop':''}`}
+          draggable
+          onDragStart={(e)=>{ if(!dragRef.current.canDrag){ e.preventDefault(); return; } setDragIdx(idx); try{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', String(idx)); }catch(_){} }}
+          onDragOver={(e)=>{ if(dragIdx==null) return; e.preventDefault(); if(overIdx!==idx) setOverIdx(idx); }}
+          onDrop={(e)=>{ e.preventDefault(); if(dragIdx!=null && dragIdx!==idx) moveOption('scheduler_lesson_types', options.lessonTypes, dragIdx, idx); setDragIdx(null); setOverIdx(null); dragRef.current.canDrag=false; }}
+          onDragEnd={()=>{ setDragIdx(null); setOverIdx(null); dragRef.current.canDrag=false; }}>
           <div className="row-item" style={{marginBottom:0}}>
             <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+              <span className="grip" title="Drag to reorder" onMouseDown={()=>{ dragRef.current.canDrag=true; }} onTouchStart={()=>{ dragRef.current.canDrag=true; }}>⠿</span>
+              <span className="reorder">
+                <button className="reorder-btn" disabled={idx===0} title="Move up" onClick={()=>reorderOption('scheduler_lesson_types', options.lessonTypes, idx, -1)}>↑</button>
+                <button className="reorder-btn" disabled={idx===options.lessonTypes.length-1} title="Move down" onClick={()=>reorderOption('scheduler_lesson_types', options.lessonTypes, idx, 1)}>↓</button>
+              </span>
               <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
               <span className="chip" style={{background:r.bg_color,borderColor:r.border_color,color:r.text_color,fontWeight:800}}>{r.name}</span>
               <span className="pill" title="Classes on the schedule using this type">{n} class{n===1?'':'es'}</span>
