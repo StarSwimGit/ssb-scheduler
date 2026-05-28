@@ -485,10 +485,53 @@ function App(){
     try{
       if(kind === 'instructor') await insertRows('scheduler_instructors', { name: extra.name, sort_order: options.instructors.length + 1, is_active:true });
       if(kind === 'duration') await insertRows('scheduler_durations', { label: extra.label, slots: Number(extra.slots), sort_order: options.durations.length + 1, is_active:true });
-      if(kind === 'lessonType') await insertRows('scheduler_lesson_types', { name: extra.name, bg_color: extra.bg, border_color: extra.bd, text_color: extra.tx, sort_order: options.lessonTypes.length + 1, is_active:true });
+      if(kind === 'lessonType'){
+        const inserted = await insertRows('scheduler_lesson_types', { name: extra.name, bg_color: extra.bg, border_color: extra.bd, text_color: extra.tx, sort_order: options.lessonTypes.length + 1, is_active:true });
+        const newId = inserted?.[0]?.id;
+        // Auto-relink: any decoupled sessions that still carry this exact name (and no link) reattach to the new type.
+        if(newId){
+          await rest(`weekly_sessions?lesson_type=eq.${encodeURIComponent(extra.name)}&lesson_type_id=is.null`, { method:'PATCH', headers:{ Prefer:'return=minimal' }, body: JSON.stringify({ lesson_type_id: newId }) });
+        }
+        await loadSessions();
+      }
       if(kind === 'pool') await insertRows('pools', { name: extra.name, capacity_total: Number(extra.capacity), sort_order: options.pools.length + 1, is_active:true });
       await loadOptions();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to add option'); }
+  }
+
+  // Edit a lesson type. If the name changes, cascade the new name onto every
+  // linked session's text column so colors and labels stay correct everywhere.
+  async function saveLessonType(row, patch){
+    try{
+      setError('');
+      await patchRows('scheduler_lesson_types', { id: row.id }, patch);
+      if(patch.name && patch.name !== row.name){
+        await rest(`weekly_sessions?lesson_type_id=eq.${encodeURIComponent(row.id)}`, { method:'PATCH', headers:{ Prefer:'return=minimal' }, body: JSON.stringify({ lesson_type: patch.name }) });
+      }
+      await loadOptions();
+      await loadSessions();
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to update lesson type'); }
+  }
+
+  // Delete a lesson type but keep its classes. Sessions are decoupled
+  // (lesson_type_id → null) while their lesson_type text name is preserved, so
+  // re-creating a type with the same name relinks them automatically.
+  async function deleteLessonType(row){
+    const linked = sessions.filter(s => s.lessonTypeId === row.id).length;
+    const msg = linked > 0
+      ? `${linked} class${linked===1?'':'es'} currently use "${row.name}".\n\nDeleting will UNLINK them: the classes stay in the schedule and keep the name "${row.name}", but lose this color/metadata link. Re-creating a lesson type with the exact same name will automatically relink them.\n\nProceed?`
+      : `Delete lesson type "${row.name}"? No classes are currently using it.`;
+    if(!confirm(msg)) return;
+    try{
+      setError('');
+      if(linked > 0){
+        await rest(`weekly_sessions?lesson_type_id=eq.${encodeURIComponent(row.id)}`, { method:'PATCH', headers:{ Prefer:'return=minimal' }, body: JSON.stringify({ lesson_type_id: null }) });
+      }
+      await deleteRows('scheduler_lesson_types', { id: row.id });
+      await loadOptions();
+      await loadSessions();
+      setStatus(linked > 0 ? `Unlinked ${linked} class${linked===1?'':'es'}; "${row.name}" kept on the schedule.` : `Deleted "${row.name}".`);
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to delete lesson type'); }
   }
 
   async function toggleOption(table, row){
@@ -560,6 +603,11 @@ function App(){
   const monthDates = monthCells(monthCursor);
   const selectedItems = sessionsForDate(selectedDate);
   const selectedWeekLabel = `${selectedWeekStart} to ${addDays(selectedWeekStart, 6)}`;
+  const lessonTypeCounts = useMemo(() => {
+    const m = {};
+    sessions.forEach(s => { if(s.lessonTypeId) m[s.lessonTypeId] = (m[s.lessonTypeId] || 0) + 1; });
+    return m;
+  }, [sessions]);
 
   return <div>
     <div className="header"><div className="header-inner">
@@ -574,7 +622,7 @@ function App(){
 
     <div className="wrap">
       {loading ? <div className="card" style={{textAlign:'center',padding:'42px'}}><div style={{fontSize:34,marginBottom:10}}>⏳</div><div>Loading scheduler…</div><div className="small subtle" style={{marginTop:6}}>{status || 'Connecting to Supabase'}</div></div> : null}
-      {!loading && <div className="card" style={{marginBottom:16}}><div style={{fontWeight:800,marginBottom:4}}>Status</div><div className="small subtle">{status || 'Ready'}</div></div>}
+      {!loading && view!=='settings' && <div className="card" style={{marginBottom:16}}><div style={{fontWeight:800,marginBottom:4}}>Status</div><div className="small subtle">{status || 'Ready'}</div></div>}
       {!loading && error ? <div className="card error-card"><div style={{fontWeight:800,marginBottom:4}}>Error</div><div className="small">{error}</div></div> : null}
 
       {!loading && view==='week' && <WeekView
@@ -630,10 +678,14 @@ function App(){
 
       {!loading && view==='settings' && <SettingsView
         options={options}
+        status={status}
         addOption={addOption}
         toggleOption={toggleOption}
         deleteOption={deleteOption}
         patchOption={patchOption}
+        saveLessonType={saveLessonType}
+        deleteLessonType={deleteLessonType}
+        lessonTypeCounts={lessonTypeCounts}
       />}
     </div>
 
@@ -948,10 +1000,8 @@ function SummaryView({ summary, pools }){
 // SettingsView (M2: pools, operating hours, expanded lesson-type editor)
 // ============================================================================
 
-function SettingsView({ options, addOption, toggleOption, deleteOption, patchOption }){
+function SettingsView({ options, status, addOption, toggleOption, deleteOption, patchOption, saveLessonType, deleteLessonType, lessonTypeCounts }){
   const [newInstructor, setNewInstructor] = useState('');
-  const [newDurationLabel, setNewDurationLabel] = useState('');
-  const [newDurationSlots, setNewDurationSlots] = useState(2);
   const [newTypeName, setNewTypeName] = useState('');
   const [bg, setBg] = useState('#DBEAFE');
   const [bd, setBd] = useState('#3B82F6');
@@ -959,31 +1009,40 @@ function SettingsView({ options, addOption, toggleOption, deleteOption, patchOpt
   const [newPoolName, setNewPoolName] = useState('');
   const [newPoolCap, setNewPoolCap] = useState(16);
   const [editingLessonId, setEditingLessonId] = useState(null);
+  const counts = lessonTypeCounts || {};
 
   return <>
-    <div className="card" style={{marginBottom:16}}>
-      <div style={{fontSize:18,fontWeight:800}}>Settings</div>
-      <div className="small subtle" style={{marginTop:5}}>Edit pools, operating hours, instructors, lesson types, and durations. These changes do not reset your schedule data.</div>
+    {/* Single status + settings band */}
+    <div className="card" style={{marginBottom:16,display:'flex',alignItems:'center',gap:20,flexWrap:'wrap'}}>
+      <div style={{display:'flex',alignItems:'center',gap:11}}>
+        <span style={{width:9,height:9,borderRadius:999,background:'var(--teal)',boxShadow:'0 0 0 4px rgba(31,169,143,0.16)',flexShrink:0}}></span>
+        <div><div style={{fontSize:10,textTransform:'uppercase',letterSpacing:'.7px',color:'var(--text-2)',fontWeight:700}}>Status</div><div style={{fontSize:15,fontWeight:800}}>{status || 'Connected'}</div></div>
+      </div>
+      <div style={{width:1,alignSelf:'stretch',background:'var(--border)'}}></div>
+      <div style={{flex:'1 1 240px',minWidth:0}}>
+        <div style={{fontSize:15,fontWeight:800}}>Settings</div>
+        <div className="small subtle" style={{marginTop:2}}>Edit pools, operating hours, instructors, and lesson types. These changes do not reset your schedule data.</div>
+      </div>
     </div>
 
-    {/* Pools + Operating hours */}
-    <div className="settings-cols" style={{gridTemplateColumns:'1fr 1fr'}}>
+    {/* Pools / Operating Hours / Instructors — three across */}
+    <div className="settings-cols">
       <div className="card">
         <div style={{fontSize:16,fontWeight:800}}>Pools</div>
-        <div className="small subtle" style={{marginTop:4}}>capacity_total includes every body in the water, instructors included.</div>
+        <div className="small subtle" style={{marginTop:4}}>Capacity includes every body in the water, instructors included.</div>
         <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:12}}>
-          <input className="input" style={{flex:'1 1 160px'}} placeholder="Pool name" value={newPoolName} onChange={(e)=>setNewPoolName(e.target.value)} />
-          <input className="input" style={{width:120}} type="number" min="1" placeholder="Capacity" value={newPoolCap} onChange={(e)=>setNewPoolCap(e.target.value)} />
+          <input className="input" style={{flex:'1 1 130px'}} placeholder="Pool name" value={newPoolName} onChange={(e)=>setNewPoolName(e.target.value)} />
+          <input className="input" style={{width:96}} type="number" min="1" placeholder="Cap" value={newPoolCap} onChange={(e)=>setNewPoolCap(e.target.value)} />
           <button className="btn btn-primary" onClick={()=>{ const v = newPoolName.trim(); const c = Number(newPoolCap); if(!v || !c || c < 1) return; addOption('pool', { name:v, capacity:c }); setNewPoolName(''); setNewPoolCap(16); }}>Add</button>
         </div>
         <div className="settings-list">
           {options.pools.length ? options.pools.map(r => <div key={r.id} className="row-item">
-            <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
               <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
-              <div>{r.name}</div>
-              <input className="input" style={{width:90,padding:'4px 8px',fontSize:12}} type="number" defaultValue={r.capacity_total} onBlur={(e)=>{ const v = Number(e.target.value); if(v > 0 && v !== r.capacity_total) patchOption('pools', r.id, { capacity_total: v }); }} />
+              <div style={{fontWeight:600}}>{r.name}</div>
+              <input className="input" style={{width:74,padding:'4px 8px',fontSize:12}} type="number" defaultValue={r.capacity_total} onBlur={(e)=>{ const v = Number(e.target.value); if(v > 0 && v !== r.capacity_total) patchOption('pools', r.id, { capacity_total: v }); }} />
             </div>
-            <div style={{display:'flex',gap:8}}>
+            <div style={{display:'flex',gap:6}}>
               <button className="btn btn-ghost small" onClick={()=>toggleOption('pools',r)}>{r.is_active?'Hide':'Show'}</button>
               <button className="btn btn-danger small" onClick={()=>deleteOption('pools',r,r.name)}>Delete</button>
             </div>
@@ -1000,11 +1059,11 @@ function SettingsView({ options, addOption, toggleOption, deleteOption, patchOpt
             if(!row) return <div key={idx} className="row-item"><div className="small subtle">{label}: not configured</div></div>;
             const fmtTime = (m) => `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
             return <div key={row.weekday} className="row-item">
-              <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-                <div style={{minWidth:80,fontWeight:700}}>{label}</div>
-                <input className="input" style={{width:140,padding:'6px 8px',fontSize:13}} type="time" defaultValue={fmtTime(row.open_minute)} onBlur={(e)=>{ const [h,m] = e.target.value.split(':').map(Number); const v = h*60+m; if(Number.isFinite(v) && v !== row.open_minute) patchOption('operating_hours', { weekday: row.weekday }, { open_minute: v }); }} />
+              <div style={{display:'flex',alignItems:'center',gap:7,flexWrap:'wrap'}}>
+                <div style={{minWidth:74,fontWeight:700}}>{label}</div>
+                <input className="input" style={{width:128,padding:'6px 8px',fontSize:13}} type="time" defaultValue={fmtTime(row.open_minute)} onBlur={(e)=>{ const [h,m] = e.target.value.split(':').map(Number); const v = h*60+m; if(Number.isFinite(v) && v !== row.open_minute) patchOption('operating_hours', { weekday: row.weekday }, { open_minute: v }); }} />
                 <span className="small subtle">to</span>
-                <input className="input" style={{width:140,padding:'6px 8px',fontSize:13}} type="time" defaultValue={fmtTime(row.close_minute)} onBlur={(e)=>{ const [h,m] = e.target.value.split(':').map(Number); const v = h*60+m; if(Number.isFinite(v) && v !== row.close_minute) patchOption('operating_hours', { weekday: row.weekday }, { close_minute: v }); }} />
+                <input className="input" style={{width:128,padding:'6px 8px',fontSize:13}} type="time" defaultValue={fmtTime(row.close_minute)} onBlur={(e)=>{ const [h,m] = e.target.value.split(':').map(Number); const v = h*60+m; if(Number.isFinite(v) && v !== row.close_minute) patchOption('operating_hours', { weekday: row.weekday }, { close_minute: v }); }} />
                 <label className="small" style={{display:'flex',alignItems:'center',gap:4}}>
                   <input type="checkbox" checked={row.is_open !== false} onChange={(e)=>patchOption('operating_hours', { weekday: row.weekday }, { is_open: e.target.checked })} />
                   Open
@@ -1014,54 +1073,46 @@ function SettingsView({ options, addOption, toggleOption, deleteOption, patchOpt
           })}
         </div>
       </div>
+
+      <div className="card">
+        <div style={{fontSize:16,fontWeight:800}}>Instructors</div>
+        <div className="small subtle" style={{marginTop:4}}>Names available in the session instructor dropdown.</div>
+        <div style={{display:'flex',gap:8,marginTop:12}}><input className="input" placeholder="Add instructor name" value={newInstructor} onChange={(e)=>setNewInstructor(e.target.value)} /><button className="btn btn-primary" onClick={()=>{ const v = newInstructor.trim(); if(!v) return; addOption('instructor', { name:v }); setNewInstructor(''); }}>Add</button></div>
+        <div className="settings-list">{options.instructors.length ? options.instructors.map(r => <div key={r.id} className="row-item"><div style={{display:'flex',alignItems:'center',gap:8}}><span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span><div style={{fontWeight:600}}>{r.name}</div></div><div style={{display:'flex',gap:6}}><button className="btn btn-ghost small" onClick={()=>toggleOption('scheduler_instructors',r)}>{r.is_active?'Hide':'Show'}</button><button className="btn btn-danger small" onClick={()=>deleteOption('scheduler_instructors',r,r.name)}>Delete</button></div></div>) : <div className="empty">No instructors</div>}</div>
+      </div>
     </div>
 
-    {/* Lesson types (full width because the editor is wide) */}
+    {/* Lesson types — full width */}
     <div className="card" style={{marginTop:16}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
-        <div>
-          <div style={{fontSize:16,fontWeight:800}}>Lesson Types</div>
-          <div className="small subtle" style={{marginTop:4}}>Add new types here. Click Edit on an existing row to set age range, ratio, billing, default pool, and other parameters.</div>
-        </div>
+      <div style={{fontSize:18,fontWeight:800}}>Lesson Types</div>
+      <div className="small subtle" style={{marginTop:4}}>Create a type and pick its colors. Click Edit on a row to rename it, set age range, ratio, billing, and default pool. Renaming or recoloring updates every class on the schedule.</div>
+
+      <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) 78px 78px 78px 132px auto',gap:10,alignItems:'end',marginTop:14}}>
+        <div className="field" style={{margin:0}}><label>Name</label><input className="input" placeholder="e.g. LTS Group" value={newTypeName} onChange={(e)=>setNewTypeName(e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Background</label><input className="swatch" type="color" value={bg} onChange={(e)=>setBg(e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Border</label><input className="swatch" type="color" value={bd} onChange={(e)=>setBd(e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Text</label><input className="swatch" type="color" value={tx} onChange={(e)=>setTx(e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Preview</label><span className="chip" style={{display:'inline-flex',alignItems:'center',justifyContent:'center',height:38,background:bg,borderColor:bd,color:tx,fontWeight:800}}>{newTypeName.trim() || 'Sample'}</span></div>
+        <button className="btn btn-primary" style={{height:38}} onClick={()=>{ const v = newTypeName.trim(); if(!v) return; addOption('lessonType', { name:v, bg, bd, tx }); setNewTypeName(''); }}>Add</button>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 88px 88px 88px auto',gap:8,marginTop:12}}>
-        <input className="input" placeholder="Add lesson type" value={newTypeName} onChange={(e)=>setNewTypeName(e.target.value)} />
-        <input className="input" type="color" value={bg} onChange={(e)=>setBg(e.target.value)} />
-        <input className="input" type="color" value={bd} onChange={(e)=>setBd(e.target.value)} />
-        <input className="input" type="color" value={tx} onChange={(e)=>setTx(e.target.value)} />
-        <button className="btn btn-primary" onClick={()=>{ const v = newTypeName.trim(); if(!v) return; addOption('lessonType', { name:v, bg, bd, tx }); setNewTypeName(''); }}>Add</button>
-      </div>
+
       <div className="settings-list">
-        {options.lessonTypes.length ? options.lessonTypes.map(r => <div key={r.id} className="lesson-row">
+        {options.lessonTypes.length ? options.lessonTypes.map(r => { const n = counts[r.id] || 0; return <div key={r.id} className="lesson-row">
           <div className="row-item" style={{marginBottom:0}}>
             <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
               <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
-              <span className="chip" style={{background:r.bg_color,borderColor:r.border_color,color:r.text_color}}>{r.name}</span>
-              <span className="small subtle">ratio 1:{r.students_per_instructor || '?'} · {r.default_duration_minutes || '?'} min · {r.billing_model || '?'} {r.billing_model==='monthly'?`${r.monthly_fee||'?'}/${r.lessons_per_month||'?'}`:r.billing_model==='credit'?`${r.credit_fee||'?'}/${r.credit_count||'?'}`:''} · {(options.pools.find(p=>p.id===r.default_pool_id)?.name) || 'no pool'}</span>
+              <span className="chip" style={{background:r.bg_color,borderColor:r.border_color,color:r.text_color,fontWeight:800}}>{r.name}</span>
+              <span className="pill" title="Classes on the schedule using this type">{n} class{n===1?'':'es'}</span>
+              <span className="small subtle">ratio 1:{r.students_per_instructor || '?'} · {r.default_duration_minutes || '?'} min · {r.billing_model || '?'} · {(options.pools.find(p=>p.id===r.default_pool_id)?.name) || 'no pool'}</span>
             </div>
-            <div style={{display:'flex',gap:8}}>
+            <div style={{display:'flex',gap:6}}>
               <button className="btn btn-ghost small" onClick={()=>setEditingLessonId(editingLessonId===r.id?null:r.id)}>{editingLessonId===r.id?'Close':'Edit'}</button>
               <button className="btn btn-ghost small" onClick={()=>toggleOption('scheduler_lesson_types',r)}>{r.is_active?'Hide':'Show'}</button>
-              <button className="btn btn-danger small" onClick={()=>deleteOption('scheduler_lesson_types',r,r.name)}>Delete</button>
+              <button className="btn btn-danger small" onClick={()=>deleteLessonType(r)}>Delete</button>
             </div>
           </div>
-          {editingLessonId === r.id ? <LessonTypeEditor row={r} pools={options.pools} onSave={(patch)=>{ patchOption('scheduler_lesson_types', r.id, patch); }} /> : null}
-        </div>) : <div className="empty">No lesson types</div>}
-      </div>
-    </div>
-
-    {/* Instructors + Durations */}
-    <div className="settings-cols" style={{marginTop:16}}>
-      <div className="card">
-        <div style={{fontSize:16,fontWeight:800}}>Instructor</div>
-        <div style={{display:'flex',gap:8,marginTop:12}}><input className="input" placeholder="Add instructor name" value={newInstructor} onChange={(e)=>setNewInstructor(e.target.value)} /><button className="btn btn-primary" onClick={()=>{ const v = newInstructor.trim(); if(!v) return; addOption('instructor', { name:v }); setNewInstructor(''); }}>Add</button></div>
-        <div className="settings-list">{options.instructors.length ? options.instructors.map(r => <div key={r.id} className="row-item"><div style={{display:'flex',alignItems:'center',gap:8}}><span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span><div>{r.name}</div></div><div style={{display:'flex',gap:8}}><button className="btn btn-ghost small" onClick={()=>toggleOption('scheduler_instructors',r)}>{r.is_active?'Hide':'Show'}</button><button className="btn btn-danger small" onClick={()=>deleteOption('scheduler_instructors',r,r.name)}>Delete</button></div></div>) : <div className="empty">No instructors</div>}</div>
-      </div>
-      <div className="card">
-        <div style={{fontSize:16,fontWeight:800}}>Duration (legacy)</div>
-        <div className="small subtle" style={{marginTop:4}}>Module 2 reads default duration from each lesson type. This list is preserved for the legacy modal dropdown.</div>
-        <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:12}}><input className="input" style={{flex:1}} placeholder="Label e.g. 60 min" value={newDurationLabel} onChange={(e)=>setNewDurationLabel(e.target.value)} /><input className="input" style={{width:100}} type="number" min="1" value={newDurationSlots} onChange={(e)=>setNewDurationSlots(e.target.value)} /><button className="btn btn-primary" onClick={()=>{ const v = newDurationLabel.trim(); const s = Number(newDurationSlots); if(!v || !s || s < 1) return; addOption('duration', { label:v, slots:s }); setNewDurationLabel(''); setNewDurationSlots(2); }}>Add</button></div>
-        <div className="settings-list">{options.durations.length ? options.durations.map(r => <div key={r.id} className="row-item"><div style={{display:'flex',alignItems:'center',gap:8}}><span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span><div>{r.label} ({r.slots} slots)</div></div><div style={{display:'flex',gap:8}}><button className="btn btn-ghost small" onClick={()=>toggleOption('scheduler_durations',r)}>{r.is_active?'Hide':'Show'}</button><button className="btn btn-danger small" onClick={()=>deleteOption('scheduler_durations',r,r.label)}>Delete</button></div></div>) : <div className="empty">No durations</div>}</div>
+          {editingLessonId === r.id ? <LessonTypeEditor row={r} pools={options.pools} onSave={(patch)=>{ saveLessonType(r, patch); setEditingLessonId(null); }} /> : null}
+        </div>; }) : <div className="empty">No lesson types</div>}
       </div>
     </div>
   </>;
@@ -1070,6 +1121,7 @@ function SettingsView({ options, addOption, toggleOption, deleteOption, patchOpt
 // M2: inline editor for the new lesson-type fields. Saves on Apply.
 function LessonTypeEditor({ row, pools, onSave }){
   const [draft, setDraft] = useState({
+    name: row.name || '',
     age_min_months: row.age_min_months ?? '',
     age_max_months: row.age_max_months ?? '',
     students_per_instructor: row.students_per_instructor ?? '',
@@ -1090,6 +1142,7 @@ function LessonTypeEditor({ row, pools, onSave }){
   function clean(v){ if(v === '' || v === undefined) return null; const n = Number(v); return Number.isFinite(n) ? n : v; }
   return <div className="lesson-edit">
     <div className="form-grid" style={{gridTemplateColumns:'repeat(4, minmax(0,1fr))'}}>
+      <div className="field" style={{gridColumn:'1 / 3'}}><label>Name</label><input className="input" value={draft.name} onChange={(e)=>setF('name', e.target.value)} placeholder="Lesson type name" /></div>
       <div className="field"><label>Age min (months)</label><input className="input" type="number" value={draft.age_min_months} onChange={(e)=>setF('age_min_months', e.target.value)} placeholder="60 for 5 years" /></div>
       <div className="field"><label>Age max (months)</label><input className="input" type="number" value={draft.age_max_months} onChange={(e)=>setF('age_max_months', e.target.value)} placeholder="216 for 18 years" /></div>
       <div className="field"><label>Students per instructor</label><input className="input" type="number" value={draft.students_per_instructor} onChange={(e)=>setF('students_per_instructor', e.target.value)} placeholder="6 for 1:6" /></div>
@@ -1105,13 +1158,14 @@ function LessonTypeEditor({ row, pools, onSave }){
         <div className="field"><label>Credit fee (full pack)</label><input className="input" type="number" step="0.01" value={draft.credit_fee} onChange={(e)=>setF('credit_fee', e.target.value)} /></div>
       </>}
       <div className="field"><label>Trial fee override</label><input className="input" type="number" step="0.01" value={draft.trial_fee_override} onChange={(e)=>setF('trial_fee_override', e.target.value)} placeholder="Leave blank to use formula" /></div>
-      <div className="field"><label>Background</label><input className="input" type="color" value={draft.bg_color} onChange={(e)=>setF('bg_color', e.target.value)} /></div>
-      <div className="field"><label>Border</label><input className="input" type="color" value={draft.border_color} onChange={(e)=>setF('border_color', e.target.value)} /></div>
-      <div className="field"><label>Text</label><input className="input" type="color" value={draft.text_color} onChange={(e)=>setF('text_color', e.target.value)} /></div>
+      <div className="field"><label>Background</label><input className="swatch" type="color" value={draft.bg_color} onChange={(e)=>setF('bg_color', e.target.value)} /></div>
+      <div className="field"><label>Border</label><input className="swatch" type="color" value={draft.border_color} onChange={(e)=>setF('border_color', e.target.value)} /></div>
+      <div className="field"><label>Text</label><input className="swatch" type="color" value={draft.text_color} onChange={(e)=>setF('text_color', e.target.value)} /></div>
     </div>
     <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:10}}>
       <button className="btn btn-primary" onClick={()=>{
         onSave({
+          name: draft.name.trim() || row.name,
           age_min_months: clean(draft.age_min_months),
           age_max_months: clean(draft.age_max_months),
           students_per_instructor: clean(draft.students_per_instructor),
