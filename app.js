@@ -225,7 +225,7 @@ function App(){
   const [sessions,setSessions] = useState([]);
   const [students,setStudents] = useState([]);
   const [remarks,setRemarks] = useState({});
-  const [options,setOptions] = useState({ instructors:[], durations:[], lessonTypes:[], pools:[], operatingHours:[] });
+  const [options,setOptions] = useState({ instructors:[], durations:[], lessonTypes:[], pools:[], operatingHours:[], packages:[] });
   const [monthCursor,setMonthCursor] = useState(new Date());
   const [selectedDate,setSelectedDate] = useState(todayStr());
   const [selectedPoolId,setSelectedPoolId] = useState(null);  // M2: null = all pools
@@ -253,19 +253,21 @@ function App(){
 
   // M2: also loads pools and operating_hours.
   async function loadOptions(){
-    const [instructors, durations, lessonTypes, pools, operatingHours] = await Promise.all([
+    const [instructors, durations, lessonTypes, pools, operatingHours, packages] = await Promise.all([
       selectRows('scheduler_instructors', '*', '&order=sort_order.asc,name.asc'),
       selectRows('scheduler_durations', '*', '&order=sort_order.asc,slots.asc'),
       selectRows('scheduler_lesson_types', '*', '&order=sort_order.asc,name.asc'),
       selectRows('pools', '*', '&order=sort_order.asc,name.asc'),
-      selectRows('operating_hours', '*', '&order=weekday.asc')
+      selectRows('operating_hours', '*', '&order=weekday.asc'),
+      selectRows('packages', '*', '&order=sort_order.asc,name.asc').catch(()=>[])
     ]);
     setOptions({
       instructors: instructors || [],
       durations: durations || [],
       lessonTypes: lessonTypes || [],
       pools: pools || [],
-      operatingHours: operatingHours || []
+      operatingHours: operatingHours || [],
+      packages: packages || []
     });
   }
 
@@ -317,6 +319,7 @@ function App(){
         name: r.name || '',
         age: (r.age === null || r.age === undefined ? null : Number(r.age)),
         package: r.package || '',
+        packageId: r.package_id || null,
         lessonTypeIds: Array.isArray(r.lesson_type_ids) ? r.lesson_type_ids : [],
         isActive: r.is_active !== false
       })));
@@ -336,6 +339,8 @@ function App(){
   function activeDurations(){ return options.durations.filter(x => x.is_active !== false); }
   function activeLessonTypes(){ return options.lessonTypes.filter(x => x.is_active !== false); }
   function activePools(){ return options.pools.filter(x => x.is_active !== false); }
+  function activePackages(){ return options.packages.filter(x => x.is_active !== false); }
+  function packageById(id){ return options.packages.find(p => p.id === id) || null; }
 
   function lessonTypeByName(name){ return options.lessonTypes.find(t => t.name === name) || null; }
   function lessonTypeById(id){ return options.lessonTypes.find(t => t.id === id) || null; }
@@ -548,6 +553,7 @@ function App(){
         await loadSessions();
       }
       if(kind === 'pool') await insertRows('pools', { name: extra.name, capacity_total: Number(extra.capacity), sort_order: options.pools.length + 1, is_active:true });
+      if(kind === 'package') await insertRows('packages', { name: extra.name, pax: (extra.pax === '' || extra.pax == null) ? null : Number(extra.pax), amount: (extra.amount === '' || extra.amount == null) ? null : Number(extra.amount), sort_order: options.packages.length + 1, is_active:true });
       await loadOptions();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to add option'); }
   }
@@ -605,10 +611,11 @@ function App(){
   }
 
   // ───── Swimmer registry CRUD ──────────────────────────────────────────────
-  async function addStudent({ name, age, package: pkg, lessonTypeIds }){
+  async function addStudent({ name, age, packageId, lessonTypeIds }){
     try{
       setError('');
-      await insertRows('students', { name, age: (age === '' || age == null) ? null : Number(age), package: pkg || null, lesson_type_ids: lessonTypeIds || [], is_active: true });
+      const pkg = packageId ? packageById(packageId) : null;
+      await insertRows('students', { name, age: (age === '' || age == null) ? null : Number(age), package_id: packageId || null, package: pkg ? pkg.name : null, lesson_type_ids: lessonTypeIds || [], is_active: true });
       await loadStudents();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to add swimmer'); }
   }
@@ -618,7 +625,7 @@ function App(){
       const body = {};
       if('name' in patch) body.name = patch.name;
       if('age' in patch) body.age = (patch.age === '' || patch.age == null) ? null : Number(patch.age);
-      if('package' in patch) body.package = patch.package || null;
+      if('packageId' in patch){ const pkg = patch.packageId ? packageById(patch.packageId) : null; body.package_id = patch.packageId || null; body.package = pkg ? pkg.name : null; }
       if('lessonTypeIds' in patch) body.lesson_type_ids = patch.lessonTypeIds || [];
       await patchRows('students', { id }, body);
       await loadStudents();
@@ -852,6 +859,8 @@ function App(){
         students={students}
         lessonTypes={activeLessonTypes()}
         lessonTypeById={lessonTypeById}
+        packages={activePackages()}
+        packageById={packageById}
         scheduleByStudent={scheduleByStudent}
         addStudent={addStudent}
         updateStudent={updateStudent}
@@ -1202,6 +1211,9 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
   const [tx, setTx] = useState('#1E40AF');
   const [newPoolName, setNewPoolName] = useState('');
   const [newPoolCap, setNewPoolCap] = useState(16);
+  const [newPkgName, setNewPkgName] = useState('');
+  const [newPkgPax, setNewPkgPax] = useState('');
+  const [newPkgAmount, setNewPkgAmount] = useState('');
   const [editingLessonId, setEditingLessonId] = useState(null);
   const counts = lessonTypeCounts || {};
 
@@ -1273,6 +1285,31 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
         <div className="small subtle" style={{marginTop:4}}>Names available in the session instructor dropdown.</div>
         <div style={{display:'flex',gap:8,marginTop:12}}><input className="input" placeholder="Add instructor name" value={newInstructor} onChange={(e)=>setNewInstructor(e.target.value)} /><button className="btn btn-primary" onClick={()=>{ const v = newInstructor.trim(); if(!v) return; addOption('instructor', { name:v }); setNewInstructor(''); }}>Add</button></div>
         <div className="settings-list">{options.instructors.length ? options.instructors.map(r => <div key={r.id} className="row-item"><div style={{display:'flex',alignItems:'center',gap:8}}><span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span><div style={{fontWeight:600}}>{r.name}</div></div><div style={{display:'flex',gap:6}}><button className="btn btn-ghost small" onClick={()=>toggleOption('scheduler_instructors',r)}>{r.is_active?'Hide':'Show'}</button><button className="btn btn-danger small" onClick={()=>deleteOption('scheduler_instructors',r,r.name)}>Delete</button></div></div>) : <div className="empty">No instructors</div>}</div>
+      </div>
+    </div>
+
+    {/* Packages */}
+    <div className="card" style={{marginTop:16}}>
+      <div style={{fontSize:16,fontWeight:800}}>Packages</div>
+      <div className="small subtle" style={{marginTop:4}}>Named price arrangements. Each swimmer picks one of these on the Swimmers page. Pax is how many swimmers the package covers.</div>
+      <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) 90px 130px auto',gap:10,alignItems:'end',marginTop:12}}>
+        <div className="field" style={{margin:0}}><label>Package name</label><input className="input" placeholder="e.g. LTS Family of 4" value={newPkgName} onChange={(e)=>setNewPkgName(e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Pax</label><input className="input" type="number" min="1" placeholder="4" value={newPkgPax} onChange={(e)=>setNewPkgPax(e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Amount (RM)</label><input className="input" type="number" min="0" step="0.01" placeholder="600" value={newPkgAmount} onChange={(e)=>setNewPkgAmount(e.target.value)} /></div>
+        <button className="btn btn-primary" onClick={()=>{ const v = newPkgName.trim(); if(!v) return; addOption('package', { name:v, pax:newPkgPax, amount:newPkgAmount }); setNewPkgName(''); setNewPkgPax(''); setNewPkgAmount(''); }}>Add</button>
+      </div>
+      <div className="settings-list">
+        {options.packages && options.packages.length ? options.packages.map(r => <div key={r.id} className="row-item">
+          <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+            <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
+            <div style={{fontWeight:700}}>{r.name}</div>
+            <span className="small subtle">{r.pax != null ? `${r.pax} pax` : '—'} · {r.amount != null ? `RM${r.amount}` : 'no amount'}</span>
+          </div>
+          <div style={{display:'flex',gap:6}}>
+            <button className="btn btn-ghost small" onClick={()=>toggleOption('packages',r)}>{r.is_active?'Hide':'Show'}</button>
+            <button className="btn btn-danger small" onClick={()=>deleteOption('packages',r,r.name)}>Delete</button>
+          </div>
+        </div>) : <div className="empty">No packages yet</div>}
       </div>
     </div>
 
@@ -1412,32 +1449,33 @@ function StudentSelect({ valueId, fallbackLabel, studentById, candidates, onPick
   </div>;
 }
 
-function StudentEditor({ row, lessonTypes, onSave }){
+function StudentEditor({ row, lessonTypes, packages, onSave }){
   const [name, setName] = useState(row.name || '');
   const [age, setAge] = useState(row.age == null ? '' : String(row.age));
-  const [pkg, setPkg] = useState(row.package || '');
+  const [pkgId, setPkgId] = useState(row.packageId || '');
   const [types, setTypes] = useState((row.lessonTypeIds || []).slice());
   function toggle(id){ setTypes(t => t.includes(id) ? t.filter(x => x !== id) : [...t, id]); }
   return <div className="lesson-edit">
     <div className="form-grid" style={{gridTemplateColumns:'minmax(0,1.4fr) 80px minmax(0,1fr)'}}>
       <div className="field"><label>Name</label><input className="input" value={name} onChange={e=>setName(e.target.value)} /></div>
       <div className="field"><label>Age</label><input className="input" type="number" min="0" max="120" value={age} onChange={e=>setAge(e.target.value)} /></div>
-      <div className="field"><label>Package</label><input className="input" value={pkg} onChange={e=>setPkg(e.target.value)} /></div>
+      <div className="field"><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">(none)</option>{(packages||[]).map(p => <option key={p.id} value={p.id}>{p.name}{p.pax!=null?` · ${p.pax}pax`:''}{p.amount!=null?` · RM${p.amount}`:''}</option>)}</select></div>
     </div>
     <div className="field" style={{marginTop:10}}><label>Lesson types</label><div className="type-picks">{lessonTypes.map(t => { const on = types.includes(t.id); return <button key={t.id} type="button" className={`chip chip-toggle ${on ? '' : 'chip-off'}`} style={on ? {background:t.bg_color,borderColor:t.border_color,color:t.text_color} : undefined} onClick={()=>toggle(t.id)}>{t.name}</button>; })}</div></div>
-    <div style={{display:'flex',justifyContent:'flex-end',marginTop:10}}><button className="btn btn-primary" onClick={()=>{ const v = name.trim(); if(!v) return; onSave({ name:v, age, package:pkg, lessonTypeIds:types }); }}>Save Swimmer</button></div>
+    <div style={{display:'flex',justifyContent:'flex-end',marginTop:10}}><button className="btn btn-primary" onClick={()=>{ const v = name.trim(); if(!v) return; onSave({ name:v, age, packageId:pkgId || null, lessonTypeIds:types }); }}>Save Swimmer</button></div>
   </div>;
 }
 
-function StudentsView({ students, lessonTypes, lessonTypeById, scheduleByStudent, addStudent, updateStudent, deleteStudent }){
+function StudentsView({ students, lessonTypes, lessonTypeById, packages, packageById, scheduleByStudent, addStudent, updateStudent, deleteStudent }){
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
-  const [pkg, setPkg] = useState('');
+  const [pkgId, setPkgId] = useState('');
   const [types, setTypes] = useState([]);
   const [editId, setEditId] = useState(null);
   const [q, setQ] = useState('');
   function toggleType(id){ setTypes(t => t.includes(id) ? t.filter(x => x !== id) : [...t, id]); }
   function colorsForId(id){ const t = lessonTypeById(id); return t ? { bg:t.bg_color, bd:t.border_color, tx:t.text_color, name:t.name } : { bg:'#eee', bd:'#ccc', tx:'#333', name:'(removed)' }; }
+  function packageLabel(s){ const p = s.packageId ? packageById(s.packageId) : null; if(p) return `${p.name}${p.amount != null ? ` · RM${p.amount}` : ''}`; return s.package || '—'; }
   function scheduleLines(id){
     const slots = scheduleByStudent[id] || [];
     if(!slots.length) return null;
@@ -1454,12 +1492,12 @@ function StudentsView({ students, lessonTypes, lessonTypeById, scheduleByStudent
       <div style={{display:'grid',gridTemplateColumns:'minmax(0,1.4fr) 80px minmax(0,1fr)',gap:10,marginTop:14}}>
         <div className="field" style={{margin:0}}><label>Name</label><input className="input" value={name} onChange={e=>setName(e.target.value)} placeholder="Swimmer name" /></div>
         <div className="field" style={{margin:0}}><label>Age</label><input className="input" type="number" min="0" max="120" value={age} onChange={e=>setAge(e.target.value)} placeholder="Yrs" /></div>
-        <div className="field" style={{margin:0}}><label>Package</label><input className="input" value={pkg} onChange={e=>setPkg(e.target.value)} placeholder="e.g. RM600 family of 4" /></div>
+        <div className="field" style={{margin:0}}><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">(none)</option>{(packages||[]).map(p => <option key={p.id} value={p.id}>{p.name}{p.pax!=null?` · ${p.pax}pax`:''}{p.amount!=null?` · RM${p.amount}`:''}</option>)}</select></div>
       </div>
       <div className="field" style={{marginTop:10}}><label>Lesson types (bucket — pick one or more)</label>
         <div className="type-picks">{lessonTypes.map(t => { const on = types.includes(t.id); return <button key={t.id} type="button" className={`chip chip-toggle ${on ? '' : 'chip-off'}`} style={on ? {background:t.bg_color,borderColor:t.border_color,color:t.text_color} : undefined} onClick={()=>toggleType(t.id)}>{t.name}</button>; })}{lessonTypes.length ? null : <span className="subtle small">Add lesson types in Settings first.</span>}</div>
       </div>
-      <div style={{display:'flex',justifyContent:'flex-end',marginTop:12}}><button className="btn btn-primary" onClick={()=>{ const v = name.trim(); if(!v) return; addStudent({ name:v, age, package:pkg, lessonTypeIds:types }); setName(''); setAge(''); setPkg(''); setTypes([]); }}>Add Swimmer</button></div>
+      <div style={{display:'flex',justifyContent:'flex-end',marginTop:12}}><button className="btn btn-primary" onClick={()=>{ const v = name.trim(); if(!v) return; addStudent({ name:v, age, packageId:pkgId || null, lessonTypeIds:types }); setName(''); setAge(''); setPkgId(''); setTypes([]); }}>Add Swimmer</button></div>
     </div>
 
     <div className="card">
@@ -1468,18 +1506,18 @@ function StudentsView({ students, lessonTypes, lessonTypeById, scheduleByStudent
         <input className="input" style={{maxWidth:260}} placeholder="Search swimmers…" value={q} onChange={e=>setQ(e.target.value)} />
       </div>
       <div className="table-wrap">
-        <table><thead><tr><th style={{width:'18%'}}>Name</th><th style={{width:50}}>Age</th><th style={{width:'15%'}}>Package</th><th style={{width:'18%'}}>Lesson Types</th><th>Schedule (day &amp; time)</th><th style={{width:128}}></th></tr></thead>
+        <table><thead><tr><th style={{width:'18%'}}>Name</th><th style={{width:50}}>Age</th><th style={{width:'17%'}}>Package</th><th style={{width:'18%'}}>Lesson Types</th><th>Schedule (day &amp; time)</th><th style={{width:128}}></th></tr></thead>
         <tbody>
           {list.length ? list.map(s => { const sched = scheduleLines(s.id); return <React.Fragment key={s.id}>
             <tr>
               <td style={{fontWeight:700}}>{s.name}</td>
               <td>{s.age != null ? s.age : '—'}</td>
-              <td>{s.package || '—'}</td>
+              <td>{packageLabel(s)}</td>
               <td><div style={{display:'flex',flexWrap:'wrap',gap:4}}>{(s.lessonTypeIds || []).length ? s.lessonTypeIds.map(id => { const c = colorsForId(id); return <span key={id} className="chip" style={{background:c.bg,borderColor:c.bd,color:c.tx,fontSize:11,padding:'2px 8px'}}>{c.name}</span>; }) : <span className="subtle">—</span>}</div></td>
               <td>{sched ? sched.map((g, gi) => <div key={gi} style={{marginBottom:2}}><span style={{fontWeight:700}}>{g.type}:</span> <span className="subtle">{g.times.join(', ')}</span></div>) : <span className="subtle">Not scheduled</span>}</td>
               <td><div style={{display:'flex',gap:6,justifyContent:'flex-end'}}><button className="btn btn-ghost small" onClick={()=>setEditId(editId===s.id?null:s.id)}>{editId===s.id?'Close':'Edit'}</button><button className="btn btn-danger small" onClick={()=>deleteStudent(s)}>Delete</button></div></td>
             </tr>
-            {editId === s.id ? <tr><td colSpan="6" style={{padding:0}}><StudentEditor row={s} lessonTypes={lessonTypes} onSave={(patch)=>{ updateStudent(s.id, patch); setEditId(null); }} /></td></tr> : null}
+            {editId === s.id ? <tr><td colSpan="6" style={{padding:0}}><StudentEditor row={s} lessonTypes={lessonTypes} packages={packages} onSave={(patch)=>{ updateStudent(s.id, patch); setEditId(null); }} /></td></tr> : null}
           </React.Fragment>; }) : <tr><td colSpan="6" className="empty">No swimmers registered yet.</td></tr>}
         </tbody></table>
       </div>
