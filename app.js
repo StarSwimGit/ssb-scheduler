@@ -105,6 +105,10 @@ function rebuildRowsForCap(rows, cap){
   return out;
 }
 function formatRange(startMin, durationMin){ return `${minuteToTime(startMin)}–${minuteToTime(startMin + durationMin)}`; }
+// Compact form for tight cards: drops ":00" and the space before AM/PM, keeps
+// non-zero minutes ("11AM", "11:30AM", "12PM-1PM").
+function compactTime(mins){ const h24 = Math.floor(mins / 60), m = mins % 60, ampm = h24 < 12 ? 'AM' : 'PM'; const h = h24 % 12 || 12; return m === 0 ? `${h}${ampm}` : `${h}:${String(m).padStart(2,'0')}${ampm}`; }
+function compactRange(startMin, durationMin){ return `${compactTime(startMin)}-${compactTime(startMin + durationMin)}`; }
 function longDate(s){ return fromDateStr(s).toLocaleDateString(undefined, { weekday:'long', year:'numeric', month:'long', day:'numeric' }); }
 function monthCells(d){ const y=d.getFullYear(), m=d.getMonth(); const first=new Date(y,m,1); const offset=(first.getDay()+6)%7; const start=new Date(y,m,1-offset); return Array.from({length:42},(_,i)=>{ const x=new Date(start); x.setDate(start.getDate()+i); return x; }); }
 function monthKey(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
@@ -1170,7 +1174,7 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
       <span className="wa-card-title">{block.type}</span>
       {cap.max > 0 ? <span className="cap-chip" style={{background:chip.bg, color:chip.tx, borderColor:chip.bd}}>{cap.current}/{cap.max}</span> : <span className="cap-chip cap-chip-unknown">{cap.current}</span>}
     </div>
-    <div className="wa-card-line">{showPoolBadge && pool ? <span className="event-pool-pill">{pool.name}</span> : null}{formatRange(block.startMinute, block.durationMinutes)}</div>
+    <div className="wa-card-line">{showPoolBadge && pool ? <span className="event-pool-pill">{pool.name}</span> : null}{compactRange(block.startMinute, block.durationMinutes)}</div>
     <div className="wa-card-line wa-card-inst">{inst}</div>
     {block.students.length
       ? <div className="wa-card-students">{block.students.map((s,i) => <span key={s.id || i} className="wa-stu" title={studentLabel(s)}>{shortName(s.name) + ageSuffix(s)}{s.remark ? ` — ${s.remark}` : ''}</span>)}</div>
