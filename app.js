@@ -81,6 +81,8 @@ function todayStr(){ return toDateStr(new Date()); }
 function minuteToTime(mins){ const h24 = Math.floor(mins / 60), m = mins % 60, ampm = h24 < 12 ? 'AM' : 'PM'; const h = h24 % 12 || 12; return `${h}:${String(m).padStart(2,'0')} ${ampm}`; }
 // Compact label for whole-hour agenda rows: "10 AM", "12 PM", "1:30 PM".
 function hourLabel(mins){ const h24 = Math.floor(mins / 60), m = mins % 60, ampm = h24 < 12 ? 'AM' : 'PM'; const h = h24 % 12 || 12; return m === 0 ? `${h} ${ampm}` : `${h}:${String(m).padStart(2,'0')} ${ampm}`; }
+// Display-only: shorten a full name to its first two words ("Ashton Ang Zi Yang" → "Ashton Ang"). Full name is untouched in the database.
+function shortName(name){ const parts = String(name || '').trim().split(/\s+/).filter(Boolean); return parts.slice(0, 2).join(' '); }
 function formatRange(startMin, durationMin){ return `${minuteToTime(startMin)}–${minuteToTime(startMin + durationMin)}`; }
 function longDate(s){ return fromDateStr(s).toLocaleDateString(undefined, { weekday:'long', year:'numeric', month:'long', day:'numeric' }); }
 function monthCells(d){ const y=d.getFullYear(), m=d.getMonth(); const first=new Date(y,m,1); const offset=(first.getDay()+6)%7; const start=new Date(y,m,1-offset); return Array.from({length:42},(_,i)=>{ const x=new Date(start); x.setDate(start.getDate()+i); return x; }); }
@@ -768,8 +770,10 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
       {cap.max > 0 ? <span className="cap-chip" style={{background:chip.bg, color:chip.tx, borderColor:chip.bd}}>{cap.current}/{cap.max}</span> : <span className="cap-chip cap-chip-unknown">{cap.current}</span>}
     </div>
     <div className="wa-card-line">{showPoolBadge && pool ? <span className="event-pool-pill">{pool.name}</span> : null}{formatRange(block.startMinute, block.durationMinutes)}</div>
-    <div className="wa-card-line">{inst}</div>
-    <div className="wa-card-line wa-card-students">{block.students.map(s=>s.name).join(', ') || '—'}</div>
+    <div className="wa-card-line wa-card-inst">{inst}</div>
+    {block.students.length
+      ? <div className="wa-card-students">{block.students.map((s,i) => <span key={s.id || i} className="wa-stu" title={s.name}>{shortName(s.name)}</span>)}</div>
+      : <div className="wa-card-line wa-card-students-empty">—</div>}
   </div>;
 }
 
