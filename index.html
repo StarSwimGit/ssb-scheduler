@@ -64,6 +64,19 @@
     .today-btn.is-current,.today-btn:disabled{opacity:.45;cursor:default}
     .period-nav-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
     .nav-note{font-size:12px;color:#64748B;margin-bottom:12px}
+    /* ── Full-width weekly agenda ── */
+    .wagenda{display:grid;grid-template-columns:62px repeat(7,minmax(0,1fr));background:#0B1629;border:1px solid #1A3050;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,0.4)}
+    .wa-corner{background:#060E1A;border-bottom:1px solid #1A3050}
+    .wa-dayhead{background:#0B1629;border-bottom:1px solid #1A3050;border-left:1px solid #1A3050;padding:6px 5px 7px;display:flex;flex-direction:column;gap:5px;text-align:center}
+    .wa-time{background:#060E1A;border-bottom:1px solid #0F1E30;border-right:1px solid #1A3050;color:#67E8F9;font-weight:800;font-size:13px;display:flex;align-items:flex-start;justify-content:flex-end;padding:7px 8px 0 0}
+    .wa-cell{border-bottom:1px solid #0F1E30;border-left:1px solid #14253B;padding:5px;display:flex;flex-direction:column;gap:5px;min-height:46px;cursor:pointer}
+    .wa-cell:hover{background:rgba(6,182,212,0.045)}
+    .wa-card{border-radius:8px;padding:6px 8px;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,0.18)}
+    .wa-card.event-over{box-shadow:0 0 0 1.5px rgba(220,38,38,0.55) inset}
+    .wa-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:5px}
+    .wa-card-title{font-size:12.5px;font-weight:800;line-height:1.2;min-width:0;overflow:hidden;text-overflow:ellipsis}
+    .wa-card-line{font-size:11px;line-height:1.35;opacity:.92;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+    .wa-card-students{opacity:.78;white-space:normal;overflow:visible}
     .event-head{display:flex;align-items:flex-start;justify-content:space-between;gap:4px}
     .event-head .event-title{flex:1;min-width:0}
     .cap-chip{flex-shrink:0;font-size:9px;font-weight:800;padding:1px 5px;border-radius:8px;border:1px solid transparent;line-height:1.35;letter-spacing:.3px;white-space:nowrap}
@@ -166,7 +179,7 @@
       .wt-empty-cell{background:#fff !important}
     }
 
-    @media (max-width:1024px){.grid-2,.grid-3,.settings-cols,.form-grid{grid-template-columns:1fr}.header{padding:10px 16px}.header-inner{height:auto;align-items:flex-start;flex-direction:column}.wrap{padding:16px}.month-grid{grid-template-columns:repeat(2,1fr)}.time-col,.week-corner{width:72px;flex-basis:72px}.time-cell{font-size:13px}.daily-row{grid-template-columns:88px 1fr}.daily-time{font-size:14px}}
+    @media (max-width:1024px){.grid-2,.grid-3,.settings-cols,.form-grid{grid-template-columns:1fr}.header{padding:10px 16px}.header-inner{height:auto;align-items:flex-start;flex-direction:column}.wrap{padding:16px}.month-grid{grid-template-columns:repeat(2,1fr)}.time-col,.week-corner{width:72px;flex-basis:72px}.time-cell{font-size:13px}.daily-row{grid-template-columns:88px 1fr}.daily-time{font-size:14px}.wagenda{grid-template-columns:46px repeat(7,minmax(0,1fr))}.wa-time{font-size:11px;padding-right:5px}.wa-card-title{font-size:11px}.wa-card-line{font-size:10px}}
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
