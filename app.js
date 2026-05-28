@@ -1633,21 +1633,44 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
       </div>
 
       <div className="settings-list">
-        {options.lessonTypes.length ? options.lessonTypes.map((r, idx) => { const n = counts[r.id] || 0; return <div key={r.id}
+        {options.lessonTypes.length ? options.lessonTypes.map((r, idx) => { const n = counts[r.id] || 0; const pkgCount = (options.packages||[]).filter(p=>p.lesson_type_id===r.id).length; const poolName = (options.pools.find(p=>p.id===r.default_pool_id)?.name); const editingThis = editingLessonId===r.id; const pkgPanelOpen = pkgPanelLtId===r.id; return <div key={r.id}
           className={`lesson-row ${dragClass('lt', idx)}`} {...dragProps('lt', 'scheduler_lesson_types', options.lessonTypes, idx)}>
-          <div className="row-item" style={{marginBottom:0}}>
-            <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-              {reorderCluster('lt', 'scheduler_lesson_types', options.lessonTypes, idx)}
-              <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
-              <span className="chip" style={{background:r.bg_color,borderColor:r.border_color,color:r.text_color,fontWeight:800}}>{r.name}</span>
-              <span className="pill" title="Classes on the schedule using this type">{n} class{n===1?'':'es'}</span>
-              <span className="small subtle">ratio 1:{r.students_per_instructor || '?'} · {r.default_duration_minutes || '?'} min · {r.billing_model || '?'} · {(options.pools.find(p=>p.id===r.default_pool_id)?.name) || 'no pool'}</span>
+          <div className={`lt-row-card ${!r.is_active ? 'lt-row-hidden' : ''}`}>
+            <div className="lt-row-top">
+              <div className="lt-row-lead">
+                {reorderCluster('lt', 'scheduler_lesson_types', options.lessonTypes, idx)}
+                <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
+                <span className="lt-name-chip" style={{background:r.bg_color,borderColor:r.border_color,color:r.text_color}}>{r.name}</span>
+                <span className="lt-classes-pill" title="Classes on the schedule using this type">{n} {n===1?'class':'classes'}</span>
+              </div>
+              <div className="lt-row-actions">
+                <button className={`btn-packages ${pkgPanelOpen?'active':''}`} onClick={()=>setPkgPanelLtId(pkgPanelOpen?null:r.id)} title="Manage packages nested under this lesson type">Packages <span className="pkg-count-badge">{pkgCount}</span></button>
+                <button className={`btn btn-ghost small ${editingThis?'btn-active':''}`} onClick={()=>setEditingLessonId(editingThis?null:r.id)}>{editingThis?'Close':'Edit'}</button>
+                <button className="btn btn-ghost small" onClick={()=>toggleOption('scheduler_lesson_types',r)}>{r.is_active?'Hide':'Show'}</button>
+                <button className="btn btn-danger small" onClick={()=>deleteLessonType(r)}>Delete</button>
+              </div>
             </div>
-            <div style={{display:'flex',gap:6}}>
-              <button className="btn btn-ghost small" onClick={()=>setPkgPanelLtId(pkgPanelLtId===r.id?null:r.id)} title="Manage packages for this lesson type">Packages ({(options.packages||[]).filter(p=>p.lesson_type_id===r.id).length})</button>
-              <button className="btn btn-ghost small" onClick={()=>setEditingLessonId(editingLessonId===r.id?null:r.id)}>{editingLessonId===r.id?'Close':'Edit'}</button>
-              <button className="btn btn-ghost small" onClick={()=>toggleOption('scheduler_lesson_types',r)}>{r.is_active?'Hide':'Show'}</button>
-              <button className="btn btn-danger small" onClick={()=>deleteLessonType(r)}>Delete</button>
+            <div className="lt-row-meta">
+              <div className="lt-meta-tile">
+                <span className="lt-meta-label">Ratio</span>
+                <span className={`lt-meta-value ${r.students_per_instructor?'':'lt-meta-empty'}`}>{r.students_per_instructor ? `1:${r.students_per_instructor}` : '—'}</span>
+              </div>
+              <div className="lt-meta-tile">
+                <span className="lt-meta-label">Duration</span>
+                <span className={`lt-meta-value ${r.default_duration_minutes?'':'lt-meta-empty'}`}>{r.default_duration_minutes ? `${r.default_duration_minutes} min` : '—'}</span>
+              </div>
+              <div className="lt-meta-tile">
+                <span className="lt-meta-label">Billing</span>
+                <span className={`lt-meta-value ${r.billing_model?'':'lt-meta-empty'}`}>{r.billing_model || '—'}</span>
+              </div>
+              <div className="lt-meta-tile">
+                <span className="lt-meta-label">Default Pool</span>
+                <span className={`lt-meta-value ${poolName?'':'lt-meta-empty'}`}>{poolName || 'None set'}</span>
+              </div>
+              <div className="lt-meta-tile">
+                <span className="lt-meta-label">Age</span>
+                <span className={`lt-meta-value ${(r.age_min_months!=null||r.age_max_months!=null)?'':'lt-meta-empty'}`}>{(r.age_min_months!=null||r.age_max_months!=null) ? `${r.age_min_months!=null?Math.floor(r.age_min_months/12)+'y':'·'}–${r.age_max_months!=null?Math.floor(r.age_max_months/12)+'y':'·'}` : 'Any age'}</span>
+              </div>
             </div>
           </div>
           {editingLessonId === r.id ? <LessonTypeEditor row={r} pools={options.pools} onSave={(patch)=>{ saveLessonType(r, patch); setEditingLessonId(null); }} /> : null}
