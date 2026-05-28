@@ -208,6 +208,7 @@ function App(){
   const [monthCursor,setMonthCursor] = useState(new Date());
   const [selectedDate,setSelectedDate] = useState(todayStr());
   const [selectedPoolId,setSelectedPoolId] = useState(null);  // M2: null = all pools
+  const [enabledTypes,setEnabledTypes] = useState(null);      // null = all lesson types shown
   const [modal,setModal] = useState(null);
   const [saveBusy,setSaveBusy] = useState(false);
   const [remarkDraft,setRemarkDraft] = useState('');
@@ -338,11 +339,28 @@ function App(){
     return Array.from({length:7}, (_, day) => {
       let items = weekSessions.filter(s => s.day === day);
       if(selectedPoolId) items = items.filter(s => (s.poolId || fallbackPoolId) === selectedPoolId);
+      if(enabledTypes !== null) items = items.filter(s => enabledTypes.has(s.type));
       const packed = packParallelColumns(items);
       const peak = packed.length ? packed[0]._total : 1;
       return { packed, peak: Math.max(1, peak) };
     });
-  }, [weekSessions, selectedPoolId, options.pools]);
+  }, [weekSessions, selectedPoolId, enabledTypes, options.pools]);
+
+  // ── Lesson-type legend filters ──
+  const allTypesShown = useMemo(() => {
+    if(enabledTypes === null) return true;
+    const names = activeLessonTypes().map(t => t.name);
+    return names.length > 0 && names.every(n => enabledTypes.has(n));
+  }, [enabledTypes, options.lessonTypes]);
+  function isTypeEnabled(name){ return enabledTypes === null ? true : enabledTypes.has(name); }
+  function toggleType(name){
+    setEnabledTypes(prev => {
+      const base = prev === null ? new Set(activeLessonTypes().map(t => t.name)) : new Set(prev);
+      if(base.has(name)) base.delete(name); else base.add(name);
+      return base;
+    });
+  }
+  function toggleAllTypes(){ setEnabledTypes(allTypesShown ? new Set() : null); }
 
   // All-pools packing, ignoring the filter — used for the printed weekly table
   // so a printout is always the complete record.
@@ -600,6 +618,59 @@ function App(){
     } catch(err){ handleErr(err); alert(err.message || 'Failed to remove day classes'); }
   }
 
+  // Export the selected week as a multi-tab attendance roster (one tab per day
+  // that has classes), mirroring the AquaLabz monthly-roster layout: numbered
+  // student rows with Name/Age/Gender/Remarks, a per-date attendance column,
+  // a payment/notes column, and a teacher signature line per class.
+  function exportWeekExcel(){
+    if(typeof XLSX === 'undefined'){ alert('Excel library is still loading. Please try again in a moment.'); return; }
+    const DSHORT = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    const sheets = [];
+    for(let day = 0; day < 7; day++){
+      const ds = addDays(selectedWeekStart, day);
+      const dObj = fromDateStr(ds);
+      const daySessions = weekSessions.filter(s => s.day === day).sort((a,b) => a.startMinute - b.startMinute || String(a.type).localeCompare(String(b.type)));
+      if(!daySessions.length) continue;
+      const dateLabel = `${dObj.getDate()}/${dObj.getMonth()+1}/${dObj.getFullYear()}`;
+      const longDay = dObj.toLocaleDateString(undefined, { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+      const aoa = [];
+      const merges = [];
+      const mergeFull = (r) => merges.push({ s:{ r, c:0 }, e:{ r, c:6 } });
+      mergeFull(aoa.length); aoa.push([`AquaLabz — ${longDay}`,'','','','','','']);
+      mergeFull(aoa.length); aoa.push(['✓ = attended,  X = absent','','','','','','']);
+      aoa.push(['','','','','','','']);
+      daySessions.forEach(s => {
+        const lt = lessonTypeByName(s.type);
+        const cap = lt && lt.students_per_instructor ? Number(lt.students_per_instructor) : 0;
+        const instr = s.instructors.map(i=>i.name).join(', ') || s.legacyInstructor || '';
+        const pool = poolById(s.poolId)?.name || '';
+        const titleBits = [s.type || 'Class', formatRange(s.startMinute, s.durationMinutes)];
+        if(pool) titleBits.push(pool);
+        if(instr) titleBits.push(instr);
+        mergeFull(aoa.length); aoa.push([titleBits.join('  ·  '),'','','','','','']);
+        aoa.push(['No.','Name','Age','Gender','Remarks', dateLabel, 'Payment / Notes']);
+        s.students.forEach((stu, i) => aoa.push([i+1, stu.name || '', '', '', '', '', '']));
+        const fillTo = Math.max(cap, s.students.length) + 2;
+        for(let i = s.students.length; i < fillTo; i++) aoa.push([i+1, '', '', '', '', '', '']);
+        aoa.push(['','','','','','T : ____________________','']);
+        aoa.push(['','','','','','','']);
+      });
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = [{wch:5},{wch:30},{wch:8},{wch:11},{wch:22},{wch:13},{wch:28}];
+      ws['!merges'] = merges;
+      sheets.push({ name: `${DSHORT[day]} ${dObj.getDate()} ${dObj.toLocaleDateString(undefined,{month:'short'})}`.slice(0,31), ws });
+    }
+    if(!sheets.length){ alert('No classes are scheduled in this week, so there is nothing to export.'); return; }
+    const wb = XLSX.utils.book_new();
+    sheets.forEach(s => XLSX.utils.book_append_sheet(wb, s.ws, s.name));
+    const start = fromDateStr(selectedWeekStart);
+    const end = fromDateStr(addDays(selectedWeekStart, 6));
+    const fmt = (d) => `${d.getDate()} ${d.toLocaleDateString(undefined,{month:'short'})}`;
+    const fname = `${start.toLocaleDateString(undefined,{month:'long'})} ${start.getFullYear()} (${fmt(start)} - ${fmt(end)}).xlsx`;
+    XLSX.writeFile(wb, fname);
+    setStatus(`Exported ${sheets.length} day${sheets.length===1?'':'s'} to ${fname}`);
+  }
+
   const monthDates = monthCells(monthCursor);
   const selectedItems = sessionsForDate(selectedDate);
   const selectedWeekLabel = `${selectedWeekStart} to ${addDays(selectedWeekStart, 6)}`;
@@ -652,6 +723,11 @@ function App(){
         onDuplicateWeek={duplicatePreviousWeek}
         onClearDay={clearDayClasses}
         onJumpToDay={(dayIndex)=>{ const d=fromDateStr(selectedWeekStart); d.setDate(d.getDate()+dayIndex); setSelectedDate(toDateStr(d)); setView('day'); }}
+        isTypeEnabled={isTypeEnabled}
+        onToggleType={toggleType}
+        onToggleAllTypes={toggleAllTypes}
+        allTypesShown={allTypesShown}
+        onExportExcel={exportWeekExcel}
       />}
 
       {!loading && view==='day' && <DailyView
@@ -664,6 +740,7 @@ function App(){
         onPrevWeek={()=>setSelectedDate(addDays(selectedDate,-7))}
         onNextWeek={()=>setSelectedDate(addDays(selectedDate,7))}
         onThisWeek={()=>setSelectedDate(todayStr())}
+        onExportExcel={exportWeekExcel}
       />}
 
       {!loading && view==='month' && <MonthView
@@ -711,7 +788,8 @@ function WeekView(props){
           gridBounds, gridSlots, slotToMinute, minuteToSlot, colorsFor,
           lessonTypeByName, poolById, onAdd, onEdit, activeLessonTypes,
           selectedDate, sessionsForDate, selectedWeekStart, currentWeekStart, isFutureSelectedWeek,
-          onPrevWeek, onNextWeek, onThisWeek, onDuplicateWeek, onClearDay, onJumpToDay } = props;
+          onPrevWeek, onNextWeek, onThisWeek, onDuplicateWeek, onClearDay, onJumpToDay,
+          isTypeEnabled, onToggleType, onToggleAllTypes, allTypesShown, onExportExcel } = props;
 
   const [printMenu, setPrintMenu] = useState(false);
 
@@ -778,11 +856,17 @@ function WeekView(props){
             </div>
           </> : null}
         </div>
+        <button className="btn btn-print" onClick={onExportExcel} title="Download this week as a multi-tab attendance roster">Export Excel</button>
       </PeriodNav>
       <div className="nav-note">{isFutureSelectedWeek ? 'Future week — "Remove all classes" and "Duplicate Previous Week" are enabled.' : 'Current and past weeks are protected from bulk removal.'}</div>
       {weekGrid}
-      <div className="legend">
-        {activeLessonTypes.map(t => { const c = colorsFor(t.name); return <span key={t.id || t.name} className="chip" style={{background:c.bg,borderColor:c.bd,color:c.tx}}>{t.name}</span>; })}
+      <div className="legend-bar">
+        <div className="legend" style={{marginTop:0,flex:1}}>
+          {activeLessonTypes.map(t => { const c = colorsFor(t.name); const on = isTypeEnabled(t.name); return <button key={t.id || t.name} className={`chip chip-toggle ${on?'':'chip-off'}`} style={on?{background:c.bg,borderColor:c.bd,color:c.tx}:undefined} onClick={()=>onToggleType(t.name)} title={on?'Showing — click to hide':'Hidden — click to show'}>{t.name}</button>; })}
+        </div>
+        <button className={`legend-allbtn ${allTypesShown?'':'is-off'}`} onClick={onToggleAllTypes}>
+          <span className="dot" />{allTypesShown ? 'Hide all' : 'Show all'}
+        </button>
       </div>
     </div>
 
@@ -833,7 +917,7 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
 // DailyView (M2: pool labels on each session)
 // ============================================================================
 
-function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, lessonTypeByName, poolById, onAddAtTime, onEdit, selectedWeekStart, currentWeekStart, onPrevWeek, onNextWeek, onThisWeek }){
+function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, lessonTypeByName, poolById, onAddAtTime, onEdit, selectedWeekStart, currentWeekStart, onPrevWeek, onNextWeek, onThisWeek, onExportExcel }){
   const wb = weekBounds(selectedDate);
   const weekDays = Array.from({length:7}, (_,i) => { const d = new Date(wb.start); d.setDate(wb.start.getDate()+i); return { date:d, ds:toDateStr(d), idx:i }; });
   const items = sessionsForDate(selectedDate);
@@ -848,6 +932,7 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
       </div>
       <PeriodNav rangeLabel={weekRangeLabel(selectedWeekStart)} onPrev={onPrevWeek} onNext={onNextWeek} onToday={onThisWeek} isCurrent={selectedWeekStart === currentWeekStart}>
         <button className="btn btn-print" onClick={() => printDailyView(selectedDate)}>Print</button>
+        <button className="btn btn-print" onClick={onExportExcel} title="Download this week as a multi-tab attendance roster">Export Excel</button>
       </PeriodNav>
       <div className="nav-note">Showing <b style={{color:'var(--text)'}}>{longDate(selectedDate)}</b></div>
       <div className="daily-day-tabs">
