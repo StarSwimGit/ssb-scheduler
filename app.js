@@ -165,6 +165,34 @@ function packParallelColumns(items){
 // App
 // ============================================================================
 
+// M2.1: human week-range label, e.g. "May 25 – 31, 2026" or "May 25 – Jun 1, 2026".
+function weekRangeLabel(wkStart){
+  const start = fromDateStr(wkStart);
+  const end = new Date(start); end.setDate(start.getDate()+6);
+  const sM = start.toLocaleDateString(undefined,{month:'short'});
+  const eM = end.toLocaleDateString(undefined,{month:'short'});
+  const sY = start.getFullYear(), eY = end.getFullYear();
+  if(sY !== eY) return `${sM} ${start.getDate()}, ${sY} – ${eM} ${end.getDate()}, ${eY}`;
+  if(sM === eM) return `${sM} ${start.getDate()} – ${end.getDate()}, ${eY}`;
+  return `${sM} ${start.getDate()} – ${eM} ${end.getDate()}, ${eY}`;
+}
+
+// M2.1: one navigation band shared by Weekly and Daily. A week stepper with a
+// readable range label, a "This Week" reset, and a right-aligned actions slot.
+function PeriodNav({ rangeLabel, onPrev, onNext, onToday, isCurrent, children }){
+  return <div className="period-nav">
+    <div className="period-nav-left">
+      <div className="period-stepper">
+        <button className="step-btn" onClick={onPrev} title="Previous week" aria-label="Previous week">‹</button>
+        <div className="period-label">{rangeLabel}</div>
+        <button className="step-btn" onClick={onNext} title="Next week" aria-label="Next week">›</button>
+      </div>
+      <button className={`today-btn ${isCurrent?'is-current':''}`} onClick={onToday} disabled={isCurrent} title="Jump to the current week">This Week</button>
+    </div>
+    {children ? <div className="period-nav-actions">{children}</div> : null}
+  </div>;
+}
+
 function App(){
   const [view,setView] = useState('week');
   const [loading,setLoading] = useState(true);
@@ -564,9 +592,10 @@ function App(){
         selectedDate={selectedDate}
         sessionsForDate={sessionsForDate}
         selectedWeekStart={selectedWeekStart}
+        currentWeekStart={currentWeekStart}
         isFutureSelectedWeek={isFutureSelectedWeek}
-        onPrevWeek={()=>setSelectedDate(addDays(selectedWeekStart,-7))}
-        onNextWeek={()=>setSelectedDate(addDays(selectedWeekStart,7))}
+        onPrevWeek={()=>setSelectedDate(addDays(selectedDate,-7))}
+        onNextWeek={()=>setSelectedDate(addDays(selectedDate,7))}
         onThisWeek={()=>setSelectedDate(todayStr())}
         onDuplicateWeek={duplicatePreviousWeek}
         onClearDay={clearDayClasses}
@@ -579,8 +608,9 @@ function App(){
         lessonTypeByName={lessonTypeByName} poolById={poolById}
         onAddAtTime={openAddAtTime} onEdit={openEdit}
         selectedWeekStart={selectedWeekStart}
-        onPrevWeek={()=>setSelectedDate(addDays(selectedWeekStart,-7))}
-        onNextWeek={()=>setSelectedDate(addDays(selectedWeekStart,7))}
+        currentWeekStart={currentWeekStart}
+        onPrevWeek={()=>setSelectedDate(addDays(selectedDate,-7))}
+        onNextWeek={()=>setSelectedDate(addDays(selectedDate,7))}
         onThisWeek={()=>setSelectedDate(todayStr())}
       />}
 
@@ -624,7 +654,7 @@ function WeekView(props){
   const { weekBlocks, weekBlocksAllPools, pools, selectedPoolId, setSelectedPoolId,
           gridBounds, gridSlots, slotToMinute, minuteToSlot, colorsFor,
           lessonTypeByName, poolById, onAdd, onEdit, activeLessonTypes,
-          selectedDate, sessionsForDate, selectedWeekStart, isFutureSelectedWeek,
+          selectedDate, sessionsForDate, selectedWeekStart, currentWeekStart, isFutureSelectedWeek,
           onPrevWeek, onNextWeek, onThisWeek, onDuplicateWeek, onClearDay, onJumpToDay } = props;
 
   const wb = weekBounds(selectedDate);
@@ -695,22 +725,18 @@ function WeekView(props){
 
   return <>
     <div className="card print-target" style={{marginBottom:16}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+      <div className="view-head">
         <div>
-          <div style={{fontSize:18,fontWeight:800}}>Weekly View</div>
-          <div className="small subtle">This week only. Pool shown as a badge — use the pool tabs to focus one pool. Busy days widen and scroll sideways; the time axis stays pinned.</div>
-        </div>
-        <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
-          <button className="btn btn-ghost" onClick={onPrevWeek}>← Prev Week</button>
-          <div className="pill">Week of {selectedWeekStart}</div>
-          <button className="btn btn-ghost" onClick={onNextWeek}>Next Week →</button>
-          <button className="btn btn-ghost" onClick={onThisWeek}>This Week</button>
-          <button className="btn btn-primary" onClick={onDuplicateWeek} disabled={!isFutureSelectedWeek}>Duplicate Previous Week</button>
-          <button className="btn btn-print" onClick={printWeeklyView}>Print</button>
-          <button className="btn btn-print" onClick={printWeeklyTable}>Print Weekly Table</button>
+          <div className="view-title">Weekly View</div>
+          <div className="small subtle">Pool shown as a badge — use the pool tabs to focus one pool. Busy days widen and scroll sideways; the time axis stays pinned.</div>
         </div>
       </div>
-      <div className="small subtle" style={{marginTop:10, marginBottom:10}}>{isFutureSelectedWeek ? 'Future week editing enabled. "Remove all classes" only works for future weeks.' : 'Current week and past weeks are protected from bulk removal.'}</div>
+      <PeriodNav rangeLabel={weekRangeLabel(selectedWeekStart)} onPrev={onPrevWeek} onNext={onNextWeek} onToday={onThisWeek} isCurrent={selectedWeekStart === currentWeekStart}>
+        <button className="btn btn-primary" onClick={onDuplicateWeek} disabled={!isFutureSelectedWeek}>Duplicate Previous Week</button>
+        <button className="btn btn-print" onClick={printWeeklyView}>Print</button>
+        <button className="btn btn-print" onClick={printWeeklyTable}>Print Weekly Table</button>
+      </PeriodNav>
+      <div className="nav-note">{isFutureSelectedWeek ? 'Future week — "Remove all classes" and "Duplicate Previous Week" are enabled.' : 'Current and past weeks are protected from bulk removal.'}</div>
       {weekGrid}
       <div className="legend">
         {activeLessonTypes.map(t => { const c = colorsFor(t.name); return <span key={t.id || t.name} className="chip" style={{background:c.bg,borderColor:c.bd,color:c.tx}}>{t.name}</span>; })}
@@ -778,29 +804,25 @@ function EventBlock({ block, minuteToSlot, colorsFor, lessonTypeByName, poolById
 // DailyView (M2: pool labels on each session)
 // ============================================================================
 
-function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, lessonTypeByName, poolById, onAddAtTime, onEdit, selectedWeekStart, onPrevWeek, onNextWeek, onThisWeek }){
+function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, lessonTypeByName, poolById, onAddAtTime, onEdit, selectedWeekStart, currentWeekStart, onPrevWeek, onNextWeek, onThisWeek }){
   const wb = weekBounds(selectedDate);
   const weekDays = Array.from({length:7}, (_,i) => { const d = new Date(wb.start); d.setDate(wb.start.getDate()+i); return { date:d, ds:toDateStr(d), idx:i }; });
   const items = sessionsForDate(selectedDate);
   const hourStarts = Array.from({length:13}, (_,i) => 480 + i*60);
   return <div className="grid">
     <div className="card">
-      <div className="daily-screen-header" style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:12}}>
+      <div className="view-head">
         <div>
-          <div style={{fontSize:18,fontWeight:800}}>Full Daily View</div>
-          <div className="small subtle">8:00 AM to 9:00 PM. Every hour row is shown even when there are no sessions.</div>
-        </div>
-        <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
-          <button className="btn btn-ghost" onClick={onPrevWeek}>← Prev Week</button>
-          <div className="pill">Week of {selectedWeekStart}</div>
-          <button className="btn btn-ghost" onClick={onNextWeek}>Next Week →</button>
-          <button className="btn btn-ghost" onClick={onThisWeek}>This Week</button>
-          <div className="pill">{longDate(selectedDate)}</div>
-          <button className="btn btn-print" onClick={() => printDailyView(selectedDate)}>Print</button>
+          <div className="view-title">Daily View</div>
+          <div className="small subtle">Hour-by-hour for the selected day. Every hour is shown even when empty.</div>
         </div>
       </div>
+      <PeriodNav rangeLabel={weekRangeLabel(selectedWeekStart)} onPrev={onPrevWeek} onNext={onNextWeek} onToday={onThisWeek} isCurrent={selectedWeekStart === currentWeekStart}>
+        <button className="btn btn-print" onClick={() => printDailyView(selectedDate)}>Print</button>
+      </PeriodNav>
+      <div className="nav-note">Showing <b style={{color:'#cbd5e1'}}>{longDate(selectedDate)}</b></div>
       <div className="daily-day-tabs">
-        {weekDays.map(({date, ds, idx}) => <button key={ds} className={`daily-day-tab ${selectedDate===ds?'active':''}`} onClick={() => setSelectedDate(ds)}>{DAYS_F[idx]} · {date.toLocaleDateString(undefined,{month:'short', day:'numeric'})}</button>)}
+        {weekDays.map(({date, ds, idx}) => <button key={ds} className={`daily-day-tab ${selectedDate===ds?'active':''}`} onClick={() => setSelectedDate(ds)}>{DAYS_S[idx]} · {date.toLocaleDateString(undefined,{month:'short', day:'numeric'})}</button>)}
       </div>
       <div className="daily-grid">
         {hourStarts.map(start => {
