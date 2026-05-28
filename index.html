@@ -64,11 +64,18 @@
     .today-btn.is-current,.today-btn:disabled{opacity:.45;cursor:default}
     .period-nav-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
     .nav-note{font-size:12px;color:#64748B;margin-bottom:12px}
+    .print-wrap{position:relative;display:inline-block}
+    .caret{font-size:10px;opacity:.7;margin-left:2px}
+    .menu-backdrop{position:fixed;inset:0;z-index:40}
+    .drop-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:41;background:#0B1629;border:1px solid #274060;border-radius:11px;padding:5px;min-width:210px;box-shadow:0 14px 34px rgba(0,0,0,0.55)}
+    .drop-item{display:flex;flex-direction:column;gap:2px;width:100%;text-align:left;background:transparent;border:none;color:#e2e8f0;padding:9px 11px;border-radius:8px;cursor:pointer;font-weight:700;font-size:13px}
+    .drop-item:hover{background:rgba(6,182,212,0.12)}
+    .drop-hint{font-size:11px;font-weight:500;color:#64748B}
     /* ── Full-width weekly agenda ── */
     .wagenda{display:grid;grid-template-columns:62px repeat(7,minmax(0,1fr));background:#0B1629;border:1px solid #1A3050;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,0.4)}
     .wa-corner{background:#060E1A;border-bottom:1px solid #1A3050}
     .wa-dayhead{background:#0B1629;border-bottom:1px solid #1A3050;border-left:1px solid #1A3050;padding:6px 5px 7px;display:flex;flex-direction:column;gap:5px;text-align:center}
-    .wa-time{background:#060E1A;border-bottom:1px solid #0F1E30;border-right:1px solid #1A3050;color:#67E8F9;font-weight:800;font-size:13px;display:flex;align-items:flex-start;justify-content:flex-end;padding:7px 8px 0 0}
+    .wa-time{background:#060E1A;border-bottom:1px solid #0F1E30;border-right:1px solid #1A3050;color:#67E8F9;font-weight:700;font-size:12.5px;letter-spacing:.2px;white-space:nowrap;display:flex;align-items:flex-start;justify-content:flex-end;padding:8px 9px 0 4px}
     .wa-cell{border-bottom:1px solid #0F1E30;border-left:1px solid #14253B;padding:5px;display:flex;flex-direction:column;gap:5px;min-height:46px;cursor:pointer}
     .wa-cell:hover{background:rgba(6,182,212,0.045)}
     .wa-card{border-radius:8px;padding:6px 8px;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,0.18)}
