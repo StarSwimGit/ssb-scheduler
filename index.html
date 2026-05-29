@@ -272,6 +272,23 @@
     .reschedule-from-badge{font-size:12px;font-weight:700;color:var(--primary-on-soft)}
     .reschedule-form{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;padding:10px 0 4px;border-top:1px dashed var(--border-2);margin-top:4px}
     .swimmer-add-row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+
+    /* ── Swimmer list sort tabs ─────────────────────────────────────────── */
+    .sort-tabs{display:inline-flex;background:var(--surface-2);border:1px solid var(--border-2);border-radius:8px;padding:2px;gap:2px}
+    .sort-tab{appearance:none;background:transparent;border:none;padding:5px 10px;border-radius:6px;font-size:11px;font-weight:700;color:var(--text-2);cursor:pointer;transition:background .12s,color .12s;white-space:nowrap}
+    .sort-tab:hover{background:var(--surface)}
+    .sort-tab.active{background:#fff;color:var(--primary-on-soft);box-shadow:0 1px 3px rgba(30,27,75,.09)}
+
+    /* ── Family group header row & indented members ─────────────────────── */
+    .swimmer-group-header td{background:var(--surface-2);padding:6px 10px !important;border-bottom:1px solid var(--border-2)}
+    .group-header-label{font-size:11px;font-weight:800;color:var(--text-2);letter-spacing:.3px;text-transform:uppercase}
+    .swimmer-in-group td:first-child{padding-left:22px !important}
+
+    /* ── Credits cell in swimmer list ───────────────────────────────────── */
+    .credit-cell{display:flex;flex-direction:column;gap:1px}
+    .credit-cell-num{font-size:15px;font-weight:800;color:var(--text);line-height:1.1}
+    .credit-cell-num.credit-low{color:var(--red-tx)}
+    .credit-cell-sub{font-size:10px;color:var(--text-3);line-height:1.2}
     .reschedule-tag{font-size:11px;font-weight:800;color:var(--primary-on-soft);background:var(--primary-soft);border:1px solid #D9D4F0;padding:1px 5px;border-radius:5px;margin-left:5px;cursor:default}
 
     /* ── Credit balance UI ──────────────────────────────────────────────── */
