@@ -239,6 +239,7 @@ function App(){
   const [selectedDate,setSelectedDate] = useState(todayStr());
   const [selectedPoolId,setSelectedPoolId] = useState(null);  // M2: null = all pools
   const [enabledTypes,setEnabledTypes] = useState(null);      // null = all lesson types shown
+  const [selectedInstructors,setSelectedInstructors] = useState(new Set()); // empty = no instructor filter
   const [modal,setModal] = useState(null);
   const [saveBusy,setSaveBusy] = useState(false);
   const [remarkDraft,setRemarkDraft] = useState('');
@@ -489,17 +490,34 @@ function App(){
   // aligned column grid. peak = the day's maximum simultaneous sessions, which
   // drives that day's width so the busiest cluster still clears a readable
   // minimum. Null-pool sessions fold into the first active pool for filtering.
+  // ── Combined filter pipeline ───────────────────────────────────────────
+  // Two filter dimensions stack: lesson types (enabledTypes set) and
+  // instructors (selectedInstructors set). A session is shown only when
+  // both filters pass. Instructor selection has a cascade: picking
+  // instructors auto-narrows the visible lesson types to the union of what
+  // they teach (the user's intent: "select instructor → only their classes
+  // visible"). Manual type toggles afterward refine within that set.
+  function passesFilters(s){
+    if(enabledTypes !== null && !enabledTypes.has(s.type)) return false;
+    if(selectedInstructors.size > 0){
+      const ids = (s.instructors || []).map(i => i.id);
+      if(!ids.some(id => selectedInstructors.has(id))) return false;
+    }
+    return true;
+  }
+  function filteredSessionsForDate(dateStr){ return sessionsForDate(dateStr).filter(passesFilters); }
+
   const weekBlocks = useMemo(() => {
     const fallbackPoolId = activePools()[0]?.id || null;
     return Array.from({length:7}, (_, day) => {
       let items = weekSessions.filter(s => s.day === day);
       if(selectedPoolId) items = items.filter(s => (s.poolId || fallbackPoolId) === selectedPoolId);
-      if(enabledTypes !== null) items = items.filter(s => enabledTypes.has(s.type));
+      items = items.filter(passesFilters);
       const packed = packParallelColumns(items);
       const peak = packed.length ? packed[0]._total : 1;
       return { packed, peak: Math.max(1, peak) };
     });
-  }, [weekSessions, selectedPoolId, enabledTypes, options.pools]);
+  }, [weekSessions, selectedPoolId, enabledTypes, selectedInstructors, options.pools]);
 
   // ── Lesson-type legend filters ──
   const allTypesShown = useMemo(() => {
@@ -516,6 +534,27 @@ function App(){
     });
   }
   function toggleAllTypes(){ setEnabledTypes(allTypesShown ? new Set() : null); }
+
+  // ── Instructor legend filters with cascade ──
+  function isInstructorActive(id){ return selectedInstructors.has(id); }
+  function toggleInstructor(id){
+    const next = new Set(selectedInstructors);
+    if(next.has(id)) next.delete(id); else next.add(id);
+    setSelectedInstructors(next);
+    // Cascade: instructor selection rewrites the visible types to the union
+    // of what the selected instructors teach this week. Deselecting the last
+    // instructor restores the all-types-on state.
+    if(next.size === 0){
+      setEnabledTypes(null);
+    } else {
+      const taught = new Set();
+      sessions.forEach(s => {
+        if((s.instructors || []).some(i => next.has(i.id))) taught.add(s.type);
+      });
+      setEnabledTypes(taught);
+    }
+  }
+  function clearInstructors(){ setSelectedInstructors(new Set()); setEnabledTypes(null); }
 
   // All-pools packing, ignoring the filter — used for the printed weekly table
   // so a printout is always the complete record.
@@ -1215,6 +1254,11 @@ function App(){
         onToggleType={toggleType}
         onToggleAllTypes={toggleAllTypes}
         allTypesShown={allTypesShown}
+        activeInstructors={activeInstructors()}
+        isInstructorActive={isInstructorActive}
+        onToggleInstructor={toggleInstructor}
+        onClearInstructors={clearInstructors}
+        instructorFilterActive={selectedInstructors.size > 0}
         onExportExcel={exportWeekExcel}
         trialStudentIds={trialStudentIds}
         creditByKey={creditByKey}
@@ -1222,7 +1266,7 @@ function App(){
 
       {!loading && view==='day' && <DailyView
         selectedDate={selectedDate} setSelectedDate={setSelectedDate}
-        sessionsForDate={sessionsForDate} colorsFor={colorsFor}
+        sessionsForDate={filteredSessionsForDate} colorsFor={colorsFor}
         lessonTypeByName={lessonTypeByName} poolById={poolById}
         onAddAtTime={openAddAtTime} onEdit={openEdit}
         selectedWeekStart={selectedWeekStart}
@@ -1231,6 +1275,17 @@ function App(){
         onNextWeek={()=>setSelectedDate(addDays(selectedDate,7))}
         onThisWeek={()=>setSelectedDate(todayStr())}
         onExportExcel={exportWeekExcel}
+        activeLessonTypes={activeLessonTypes()}
+        isTypeEnabled={isTypeEnabled}
+        onToggleType={toggleType}
+        onToggleAllTypes={toggleAllTypes}
+        allTypesShown={allTypesShown}
+        activeInstructors={activeInstructors()}
+        isInstructorActive={isInstructorActive}
+        onToggleInstructor={toggleInstructor}
+        onClearInstructors={clearInstructors}
+        instructorFilterActive={selectedInstructors.size > 0}
+        colorsFor={colorsFor}
         trialStudentIds={trialStudentIds}
         creditByKey={creditByKey}
       />}
@@ -1342,6 +1397,7 @@ function WeekView(props){
           selectedDate, sessionsForDate, selectedWeekStart, currentWeekStart, isFutureSelectedWeek,
           onPrevWeek, onNextWeek, onThisWeek, onDuplicateWeek, onClearDay, onJumpToDay,
           isTypeEnabled, onToggleType, onToggleAllTypes, allTypesShown, onExportExcel,
+          activeInstructors, isInstructorActive, onToggleInstructor, onClearInstructors, instructorFilterActive,
           trialStudentIds, creditByKey } = props;
 
   const [printMenu, setPrintMenu] = useState(false);
@@ -1413,13 +1469,29 @@ function WeekView(props){
       </PeriodNav>
       <div className="nav-note">{isFutureSelectedWeek ? 'Future week — "Remove all classes" and "Duplicate Previous Week" are enabled.' : 'Current and past weeks are protected from bulk removal.'}</div>
       {weekGrid}
-      <div className="legend-bar">
-        <div className="legend" style={{marginTop:0,flex:1}}>
-          {activeLessonTypes.map(t => { const c = colorsFor(t.name); const on = isTypeEnabled(t.name); return <button key={t.id || t.name} className={`chip chip-toggle ${on?'':'chip-off'}`} style={on?{background:c.bg,borderColor:c.bd,color:c.tx}:undefined} onClick={()=>onToggleType(t.name)} title={on?'Showing — click to hide':'Hidden — click to show'}>{t.name}</button>; })}
+      <div className="legend-bar legend-bar-v">
+        <div className="legend-row">
+          <span className="legend-label">Types</span>
+          <div className="legend">
+            {activeLessonTypes.map(t => { const c = colorsFor(t.name); const on = isTypeEnabled(t.name); return <button key={t.id || t.name} className={`chip chip-toggle ${on?'':'chip-off'}`} style={on?{background:c.bg,borderColor:c.bd,color:c.tx}:undefined} onClick={()=>onToggleType(t.name)} title={on?'Showing — click to hide':'Hidden — click to show'}>{t.name}</button>; })}
+          </div>
+          <button className={`legend-allbtn ${allTypesShown?'':'is-off'}`} onClick={onToggleAllTypes}>
+            <span className="dot" />{allTypesShown ? 'Hide all' : 'Show all'}
+          </button>
         </div>
-        <button className={`legend-allbtn ${allTypesShown?'':'is-off'}`} onClick={onToggleAllTypes}>
-          <span className="dot" />{allTypesShown ? 'Hide all' : 'Show all'}
-        </button>
+        <div className="legend-row legend-row-instructors">
+          <span className="legend-label">Instructors</span>
+          <div className="legend">
+            {(activeInstructors || []).length === 0 ? <span className="small subtle">No instructors</span> : (activeInstructors || []).map(inst => {
+              const on = isInstructorActive(inst.id);
+              const gIcon = inst.gender === 'female' ? '♀' : (inst.gender === 'male' ? '♂' : '');
+              return <button key={inst.id} className={`chip chip-instructor ${on?'is-on':''}`} onClick={()=>onToggleInstructor(inst.id)} title={on?`Filtering — click to remove ${inst.name}`:`Click to filter to ${inst.name}'s classes`}>{gIcon ? <span className="inst-chip-g" aria-hidden="true">{gIcon}</span> : null}{inst.name}</button>;
+            })}
+          </div>
+          <button className={`legend-allbtn ${instructorFilterActive?'':'is-off'}`} onClick={onClearInstructors} disabled={!instructorFilterActive} title={instructorFilterActive?'Remove instructor filter':'No instructor filter active'}>
+            <span className="dot" />{instructorFilterActive ? 'Clear' : 'No filter'}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -1479,7 +1551,7 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
 // DailyView (M2: pool labels on each session)
 // ============================================================================
 
-function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, lessonTypeByName, poolById, onAddAtTime, onEdit, selectedWeekStart, currentWeekStart, onPrevWeek, onNextWeek, onThisWeek, onExportExcel, trialStudentIds, creditByKey }){
+function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, lessonTypeByName, poolById, onAddAtTime, onEdit, selectedWeekStart, currentWeekStart, onPrevWeek, onNextWeek, onThisWeek, onExportExcel, activeLessonTypes, isTypeEnabled, onToggleType, onToggleAllTypes, allTypesShown, activeInstructors, isInstructorActive, onToggleInstructor, onClearInstructors, instructorFilterActive, trialStudentIds, creditByKey }){
   const wb = weekBounds(selectedDate);
   const weekDays = Array.from({length:7}, (_,i) => { const d = new Date(wb.start); d.setDate(wb.start.getDate()+i); return { date:d, ds:toDateStr(d), idx:i }; });
   const items = sessionsForDate(selectedDate);
@@ -1499,6 +1571,30 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
       <div className="nav-note">Showing <b style={{color:'var(--text)'}}>{longDate(selectedDate)}</b></div>
       <div className="daily-day-tabs">
         {weekDays.map(({date, ds, idx}) => <button key={ds} className={`daily-day-tab ${selectedDate===ds?'active':''}`} onClick={() => setSelectedDate(ds)}>{DAYS_S[idx]} · {date.toLocaleDateString(undefined,{month:'short', day:'numeric'})}</button>)}
+      </div>
+      <div className="legend-bar legend-bar-v" style={{marginBottom:12}}>
+        <div className="legend-row">
+          <span className="legend-label">Types</span>
+          <div className="legend">
+            {(activeLessonTypes || []).map(t => { const c = colorsFor(t.name); const on = isTypeEnabled(t.name); return <button key={t.id || t.name} className={`chip chip-toggle ${on?'':'chip-off'}`} style={on?{background:c.bg,borderColor:c.bd,color:c.tx}:undefined} onClick={()=>onToggleType(t.name)} title={on?'Showing — click to hide':'Hidden — click to show'}>{t.name}</button>; })}
+          </div>
+          <button className={`legend-allbtn ${allTypesShown?'':'is-off'}`} onClick={onToggleAllTypes}>
+            <span className="dot" />{allTypesShown ? 'Hide all' : 'Show all'}
+          </button>
+        </div>
+        <div className="legend-row legend-row-instructors">
+          <span className="legend-label">Instructors</span>
+          <div className="legend">
+            {(activeInstructors || []).length === 0 ? <span className="small subtle">No instructors</span> : (activeInstructors || []).map(inst => {
+              const on = isInstructorActive(inst.id);
+              const gIcon = inst.gender === 'female' ? '♀' : (inst.gender === 'male' ? '♂' : '');
+              return <button key={inst.id} className={`chip chip-instructor ${on?'is-on':''}`} onClick={()=>onToggleInstructor(inst.id)} title={on?`Filtering — click to remove ${inst.name}`:`Click to filter to ${inst.name}'s classes`}>{gIcon ? <span className="inst-chip-g" aria-hidden="true">{gIcon}</span> : null}{inst.name}</button>;
+            })}
+          </div>
+          <button className={`legend-allbtn ${instructorFilterActive?'':'is-off'}`} onClick={onClearInstructors} disabled={!instructorFilterActive}>
+            <span className="dot" />{instructorFilterActive ? 'Clear' : 'No filter'}
+          </button>
+        </div>
       </div>
       <div className="daily-grid">
         {hourStarts.map(start => {
