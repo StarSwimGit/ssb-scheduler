@@ -2228,7 +2228,7 @@ function FamilyGroupsPanel({ groups, students, groupPackages, lessonTypes, packa
 
     <div style={{display:'flex',gap:10,alignItems:'flex-end',marginTop:14,flexWrap:'wrap'}}>
       <div className="field" style={{margin:0,minWidth:200,flex:1}}><label>New group name</label><input className="input" placeholder="e.g. Tan Family" value={name} onChange={e=>setName(e.target.value)} /></div>
-      <div className="field" style={{margin:0,minWidth:220}}><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">Select a package…</option>{packageOptionGroups(groupPackages, lessonTypes)}</select></div>
+      <div className="field" style={{margin:0,minWidth:220}}><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">Select a package…</option>{packageOptionGroups(groupPackages.filter(p=>p.pax>1), lessonTypes)}</select></div>
       <button className="btn btn-primary" disabled={!groupPackages.length} onClick={()=>{ const v=name.trim(); if(!v||!pkgId) return; addGroup({ name:v, packageId:pkgId }); setName(''); setPkgId(''); }}>Create Group</button>
     </div>
     {groupPackages.length ? null : <div className="hint" style={{marginTop:8}}>No packages yet. Add one in Settings → Packages first.</div>}
@@ -2259,7 +2259,7 @@ function FamilyGroupsPanel({ groups, students, groupPackages, lessonTypes, packa
           {editId===g.id ? <div className="gb-edit">
             <div style={{display:'flex',gap:10,alignItems:'flex-end',flexWrap:'wrap'}}>
               <div className="field" style={{margin:0,flex:1,minWidth:180}}><label>Group name</label><input className="input" defaultValue={g.name} onBlur={e=>{ const v=e.target.value.trim(); if(v && v!==g.name) updateGroup(g.id,{name:v}); }} /></div>
-              <div className="field" style={{margin:0,minWidth:180}}><label>Package</label><select className="select" value={g.packageId||''} onChange={e=>updateGroup(g.id,{packageId:e.target.value||null})}><option value="">(none)</option>{packageOptionGroups(groupPackages, lessonTypes)}</select></div>
+              <div className="field" style={{margin:0,minWidth:180}}><label>Package</label><select className="select" value={g.packageId||''} onChange={e=>updateGroup(g.id,{packageId:e.target.value||null})}><option value="">(none)</option>{packageOptionGroups(groupPackages.filter(p=>p.pax>1), lessonTypes)}</select></div>
             </div>
             <div className="hint" style={{marginTop:6}}>Group name saves when you click away.</div>
           </div> : null}
@@ -2349,14 +2349,14 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
         <input className="input" style={{maxWidth:260}} placeholder="Search swimmers…" value={q} onChange={e=>setQ(e.target.value)} />
       </div>
       <div className="table-wrap">
-        <table><thead><tr><th style={{width:'18%'}}>Name</th><th style={{width:50}}>Age</th><th style={{width:'17%'}}>Package</th><th style={{width:'18%'}}>Lesson Types</th><th>Schedule (day &amp; time)</th><th style={{width:128}}></th></tr></thead>
+        <table><thead><tr><th style={{width:'20%'}}>Name</th><th style={{width:50}}>Age</th><th style={{width:'20%'}}>Lesson Type</th><th style={{width:'20%'}}>Package</th><th>Schedule (day &amp; time)</th><th style={{width:128}}></th></tr></thead>
         <tbody>
           {list.length ? list.map(s => { const sched = scheduleLines(s.id); return <React.Fragment key={s.id}>
             <tr>
               <td style={{fontWeight:700}}>{s.name}</td>
               <td>{s.age != null ? s.age : '—'}</td>
-              <td>{packageLabel(s)}</td>
               <td><div style={{display:'flex',flexWrap:'wrap',gap:4}}>{(s.lessonTypeIds || []).length ? s.lessonTypeIds.map(id => { const c = colorsForId(id); return <span key={id} className="chip" style={{background:c.bg,borderColor:c.bd,color:c.tx,fontSize:11,padding:'2px 8px'}}>{c.name}</span>; }) : <span className="subtle">—</span>}</div></td>
+              <td>{packageLabel(s)}</td>
               <td>{sched ? sched.map((g, gi) => <div key={gi} style={{marginBottom:2}}><span style={{fontWeight:700}}>{g.type}:</span> <span className="subtle">{g.times.join(', ')}</span></div>) : <span className="subtle">Not scheduled</span>}</td>
               <td><div style={{display:'flex',gap:6,justifyContent:'flex-end'}}><button className="btn btn-ghost small" onClick={()=>setEditId(editId===s.id?null:s.id)}>{editId===s.id?'Close':'Edit'}</button><button className="btn btn-danger small" onClick={()=>deleteStudent(s)}>Delete</button></div></td>
             </tr>
