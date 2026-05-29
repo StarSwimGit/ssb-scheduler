@@ -1114,6 +1114,7 @@ function App(){
           packageById={packageById}
           groupById={groupById}
           scheduleByStudent={scheduleByStudent}
+          creditByKey={creditByKey}
           addStudent={addStudent}
           updateStudent={updateStudent}
           deleteStudent={deleteStudent}
@@ -2283,13 +2284,15 @@ function FamilyGroupsPanel({ groups, students, groupPackages, lessonTypes, packa
   </div>;
 }
 
-function StudentsView({ students, lessonTypes, lessonTypeById, packages, packageById, groupById, scheduleByStudent, addStudent, updateStudent, deleteStudent }){
+function StudentsView({ students, lessonTypes, lessonTypeById, packages, packageById, groupById, scheduleByStudent, creditByKey, addStudent, updateStudent, deleteStudent }){
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
   const [pkgId, setPkgId] = useState('');
-  const [typeId, setTypeId] = useState('');  // primary lesson type (also seeds the bucket)
+  const [typeId, setTypeId] = useState('');
   const [editId, setEditId] = useState(null);
   const [q, setQ] = useState('');
+  const [sortBy, setSortBy] = useState('name'); // 'name' | 'type' | 'package'
+
   function colorsForId(id){ const t = lessonTypeById(id); return t ? { bg:t.bg_color, bd:t.border_color, tx:t.text_color, name:t.name } : { bg:'#eee', bd:'#ccc', tx:'#333', name:'(removed)' }; }
   function packageLabel(s){
     const g = s.familyGroupId && groupById ? groupById[s.familyGroupId] : null;
@@ -2305,8 +2308,61 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
     slots.forEach(sl => { (byType[sl.type] = byType[sl.type] || []).push(sl); });
     return Object.keys(byType).map(type => ({ type, times: byType[type].map(sl => `${DAYS_S[sl.day]} ${minuteToTime(sl.startMinute)}`) }));
   }
+
+  // Credit display for a swimmer: computes balance minus sessions scheduled this week
+  // for the lesson type their (credit-based) package belongs to.
+  function creditInfo(s){
+    const pkg = s.packageId ? packageById(s.packageId) : null;
+    if(!pkg || pkg.billing_mode !== 'credit') return null;
+    const ltId = pkg.lesson_type_id;
+    if(!ltId || !creditByKey) return null;
+    const bal = creditByKey[`${s.id}:${ltId}`];
+    if(!bal) return null;
+    const scheduled = (scheduleByStudent[s.id] || []).filter(sl => sl.lessonTypeId === ltId).length;
+    return { remaining: bal.remaining_balance, initial: bal.initial_balance, scheduled };
+  }
+
   const ltPackages = typeId ? (packages || []).filter(p => p.lesson_type_id === typeId && p.is_active !== false) : [];
-  const list = students.filter(s => !q || (s.name || '').toLowerCase().includes(q.toLowerCase()));
+  const filtered = students.filter(s => !q || (s.name || '').toLowerCase().includes(q.toLowerCase()));
+
+  // Build a flat display list: group-header rows + swimmer rows.
+  // When sorting by name: family-group members cluster under their group header.
+  // Other sorts: flat list ordered by the chosen field.
+  const displayList = useMemo(() => {
+    if(sortBy === 'name'){
+      const byGroup = {};
+      const ungrouped = [];
+      filtered.forEach(s => {
+        if(s.familyGroupId){ (byGroup[s.familyGroupId] = byGroup[s.familyGroupId] || []).push(s); }
+        else ungrouped.push(s);
+      });
+      const rows = [];
+      Object.entries(byGroup)
+        .sort(([aId],[bId]) => (groupById?.[aId]?.name||'').localeCompare(groupById?.[bId]?.name||''))
+        .forEach(([gid, members]) => {
+          rows.push({ kind:'group', gid, label: groupById?.[gid]?.name || 'Group' });
+          members.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(s => rows.push({ kind:'swimmer', s }));
+        });
+      ungrouped.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(s => rows.push({ kind:'swimmer', s }));
+      return rows;
+    }
+    const sorted = filtered.slice().sort((a,b) => {
+      if(sortBy === 'type'){
+        const tA = (a.lessonTypeIds?.[0] ? lessonTypeById(a.lessonTypeIds[0])?.name : '') || '';
+        const tB = (b.lessonTypeIds?.[0] ? lessonTypeById(b.lessonTypeIds[0])?.name : '') || '';
+        return tA.localeCompare(tB) || a.name.localeCompare(b.name);
+      }
+      if(sortBy === 'package'){
+        const pA = (a.packageId ? packageById(a.packageId)?.name : '') || '';
+        const pB = (b.packageId ? packageById(b.packageId)?.name : '') || '';
+        return pA.localeCompare(pB) || a.name.localeCompare(b.name);
+      }
+      return 0;
+    });
+    return sorted.map(s => ({ kind:'swimmer', s }));
+  }, [filtered, sortBy, groupById]);
+
+  const COLS = 7; // Name, Age, Lesson Type, Package, Credits, Schedule, Actions
 
   return <>
     <div className="card" style={{marginBottom:16}}>
@@ -2345,23 +2401,56 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
 
     <div className="card">
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:12}}>
-        <div style={{fontSize:16,fontWeight:800}}>Registered Swimmers <span className="subtle" style={{fontWeight:600,fontSize:13}}>· {students.length}</span></div>
-        <input className="input" style={{maxWidth:260}} placeholder="Search swimmers…" value={q} onChange={e=>setQ(e.target.value)} />
+        <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+          <div style={{fontSize:16,fontWeight:800}}>Registered Swimmers <span className="subtle" style={{fontWeight:600,fontSize:13}}>· {students.length}</span></div>
+          <div className="sort-tabs">
+            {[['name','Name'],['type','Lesson Type'],['package','Package']].map(([k,lbl])=>
+              <button key={k} className={`sort-tab ${sortBy===k?'active':''}`} onClick={()=>setSortBy(k)}>{lbl}</button>)}
+          </div>
+        </div>
+        <input className="input" style={{maxWidth:220}} placeholder="Search swimmers…" value={q} onChange={e=>setQ(e.target.value)} />
       </div>
       <div className="table-wrap">
-        <table><thead><tr><th style={{width:'20%'}}>Name</th><th style={{width:50}}>Age</th><th style={{width:'20%'}}>Lesson Type</th><th style={{width:'20%'}}>Package</th><th>Schedule (day &amp; time)</th><th style={{width:128}}></th></tr></thead>
+        <table><thead><tr>
+          <th style={{width:'17%'}}>Name</th>
+          <th style={{width:44}}>Age</th>
+          <th style={{width:'17%'}}>Lesson Type</th>
+          <th style={{width:'16%'}}>Package</th>
+          <th style={{width:'10%'}}>Credits</th>
+          <th>Schedule</th>
+          <th style={{width:120}}></th>
+        </tr></thead>
         <tbody>
-          {list.length ? list.map(s => { const sched = scheduleLines(s.id); return <React.Fragment key={s.id}>
-            <tr>
-              <td style={{fontWeight:700}}>{s.name}</td>
-              <td>{s.age != null ? s.age : '—'}</td>
-              <td><div style={{display:'flex',flexWrap:'wrap',gap:4}}>{(s.lessonTypeIds || []).length ? s.lessonTypeIds.map(id => { const c = colorsForId(id); return <span key={id} className="chip" style={{background:c.bg,borderColor:c.bd,color:c.tx,fontSize:11,padding:'2px 8px'}}>{c.name}</span>; }) : <span className="subtle">—</span>}</div></td>
-              <td>{packageLabel(s)}</td>
-              <td>{sched ? sched.map((g, gi) => <div key={gi} style={{marginBottom:2}}><span style={{fontWeight:700}}>{g.type}:</span> <span className="subtle">{g.times.join(', ')}</span></div>) : <span className="subtle">Not scheduled</span>}</td>
-              <td><div style={{display:'flex',gap:6,justifyContent:'flex-end'}}><button className="btn btn-ghost small" onClick={()=>setEditId(editId===s.id?null:s.id)}>{editId===s.id?'Close':'Edit'}</button><button className="btn btn-danger small" onClick={()=>deleteStudent(s)}>Delete</button></div></td>
-            </tr>
-            {editId === s.id ? <tr><td colSpan="6" style={{padding:0}}><StudentEditor row={s} lessonTypes={lessonTypes} packages={packages} onSave={(patch)=>{ updateStudent(s.id, patch); setEditId(null); }} /></td></tr> : null}
-          </React.Fragment>; }) : <tr><td colSpan="6" className="empty">No swimmers registered yet.</td></tr>}
+          {displayList.length ? displayList.map((row, ri) => {
+            if(row.kind === 'group'){
+              return <tr key={`g-${row.gid}`} className="swimmer-group-header">
+                <td colSpan={COLS}><span className="group-header-label">👪 {row.label}</span></td>
+              </tr>;
+            }
+            const s = row.s;
+            const sched = scheduleLines(s.id);
+            const cr = creditInfo(s);
+            const afterWeek = cr ? Math.max(0, cr.remaining - cr.scheduled) : null;
+            return <React.Fragment key={s.id}>
+              <tr className={s.familyGroupId ? 'swimmer-in-group' : ''}>
+                <td style={{fontWeight:700}}>{s.name}</td>
+                <td>{s.age != null ? s.age : '—'}</td>
+                <td><div style={{display:'flex',flexWrap:'wrap',gap:3}}>{(s.lessonTypeIds||[]).length ? s.lessonTypeIds.map(id => { const c = colorsForId(id); return <span key={id} className="chip" style={{background:c.bg,borderColor:c.bd,color:c.tx,fontSize:10,padding:'2px 7px'}}>{c.name}</span>; }) : <span className="subtle">—</span>}</div></td>
+                <td style={{fontSize:12}}>{packageLabel(s)}</td>
+                <td>
+                  {cr
+                    ? <div className="credit-cell">
+                        <span className={`credit-cell-num ${afterWeek<=2?'credit-low':''}`}>{afterWeek}</span>
+                        <span className="credit-cell-sub">{cr.remaining}/{cr.initial}{cr.scheduled>0?<> · <span style={{color:'var(--amber-tx)'}}>−{cr.scheduled} wk</span></>:null}</span>
+                      </div>
+                    : <span className="subtle">—</span>}
+                </td>
+                <td style={{fontSize:11}}>{sched ? sched.map((g,gi)=><div key={gi} style={{marginBottom:2}}><span style={{fontWeight:700}}>{g.type}:</span> <span className="subtle">{g.times.join(', ')}</span></div>) : <span className="subtle">Not scheduled</span>}</td>
+                <td><div style={{display:'flex',gap:6,justifyContent:'flex-end'}}><button className="btn btn-ghost small" onClick={()=>setEditId(editId===s.id?null:s.id)}>{editId===s.id?'Close':'Edit'}</button><button className="btn btn-danger small" onClick={()=>deleteStudent(s)}>Delete</button></div></td>
+              </tr>
+              {editId === s.id ? <tr><td colSpan={COLS} style={{padding:0}}><StudentEditor row={s} lessonTypes={lessonTypes} packages={packages} onSave={(patch)=>{ updateStudent(s.id, patch); setEditId(null); }} /></td></tr> : null}
+            </React.Fragment>;
+          }) : <tr><td colSpan={COLS} className="empty">No swimmers registered yet.</td></tr>}
         </tbody></table>
       </div>
     </div>
