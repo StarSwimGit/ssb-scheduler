@@ -231,6 +231,7 @@ function App(){
   const [students,setStudents] = useState([]);
   const [familyGroups,setFamilyGroups] = useState([]);
   const [creditBalances,setCreditBalances] = useState([]);
+  const [tcAcceptances,setTcAcceptances] = useState([]);
   const [remarks,setRemarks] = useState({});
   const [options,setOptions] = useState({ instructors:[], durations:[], lessonTypes:[], pools:[], operatingHours:[], packages:[] });
   const [monthCursor,setMonthCursor] = useState(new Date());
@@ -252,7 +253,7 @@ function App(){
     try{
       setLoading(true); setError('');
       await loadOptions();
-      await Promise.all([loadSessions(), loadStudents(), loadGroups(), loadCreditBalances(), loadRemarks(monthCursor)]);
+      await Promise.all([loadSessions(), loadStudents(), loadGroups(), loadCreditBalances(), loadTcAcceptances(), loadRemarks(monthCursor)]);
       setStatus('Connected');
     } catch(err){ handleErr(err); }
     finally{ setLoading(false); }
@@ -328,11 +329,20 @@ function App(){
         id: r.id,
         name: r.name || '',
         age: (r.age === null || r.age === undefined ? null : Number(r.age)),
+        gender: r.gender || null,
         package: r.package || '',
         packageId: r.package_id || null,
         familyGroupId: r.family_group_id || null,
         lessonTypeIds: Array.isArray(r.lesson_type_ids) ? r.lesson_type_ids : [],
-        isActive: r.is_active !== false
+        isActive: r.is_active !== false,
+        guardianName: r.guardian_name || '',
+        guardianEmail: r.guardian_email || '',
+        guardianPhone: r.guardian_phone || '',
+        emergencyPhone: r.emergency_phone || '',
+        emergencyRelationship: r.emergency_relationship || '',
+        emergencySameAsGuardian: !!r.emergency_same_as_guardian,
+        tcAcceptedAt: r.tc_accepted_at || null,
+        tcAcceptanceId: r.tc_acceptance_id || null
       })));
     } catch(e){ console.warn('Swimmer registry not available yet (run the students migration):', e?.message || e); setStudents([]); }
   }
@@ -349,6 +359,26 @@ function App(){
       const rows = await selectRows('student_credit_balances', '*');
       setCreditBalances(rows || []);
     } catch(e){ console.warn('Credit balances not available (run the replacement+credits migration):', e?.message || e); setCreditBalances([]); }
+  }
+
+  async function loadTcAcceptances(){
+    try{
+      const rows = await selectRows('tc_acceptances', '*');
+      setTcAcceptances(rows || []);
+    } catch(e){ console.warn('T&C acceptances not available (run the student profile migration):', e?.message || e); setTcAcceptances([]); }
+  }
+
+  async function saveTcAcceptance({ studentId, guardianName, guardianEmail, lessonTypeName }){
+    try{
+      const acceptanceId = `TC-${Date.now().toString(36).toUpperCase().slice(-7)}`;
+      const now = new Date().toISOString();
+      // Upsert — one record per swimmer, updates on re-acceptance.
+      await rest('tc_acceptances?on_conflict=student_id', { method:'POST', headers:{ Prefer:'return=representation,resolution=merge-duplicates' }, body: JSON.stringify([{ student_id:studentId, acceptance_id:acceptanceId, accepted_at:now, guardian_name:guardianName, guardian_email:guardianEmail, lesson_type_name:lessonTypeName }]) });
+      // Mirror acceptance info onto the student row for quick list display.
+      await patchRows('students', { id: studentId }, { tc_accepted_at: now, tc_acceptance_id: acceptanceId });
+      await Promise.all([loadTcAcceptances(), loadStudents()]);
+      return acceptanceId;
+    } catch(err){ handleErr(err); throw err; }
   }
 
   // creditBalanceKey — quickly look up a balance by student + lesson type.
@@ -788,11 +818,21 @@ function App(){
   }
 
   // ───── Swimmer registry CRUD ──────────────────────────────────────────────
-  async function addStudent({ name, age, packageId, lessonTypeIds }){
+  async function addStudent({ name, age, gender, packageId, lessonTypeIds, guardianName, guardianEmail, guardianPhone, emergencyPhone, emergencyRelationship, emergencySameAsGuardian }){
     try{
       setError('');
       const pkg = packageId ? packageById(packageId) : null;
-      await insertRows('students', { name, age: (age === '' || age == null) ? null : Number(age), package_id: packageId || null, package: pkg ? pkg.name : null, lesson_type_ids: lessonTypeIds || [], is_active: true });
+      const sameAsG = !!emergencySameAsGuardian;
+      await insertRows('students', {
+        name, age: (age === '' || age == null) ? null : Number(age),
+        gender: gender || null,
+        package_id: packageId || null, package: pkg ? pkg.name : null,
+        lesson_type_ids: lessonTypeIds || [], is_active: true,
+        guardian_name: guardianName || null, guardian_email: guardianEmail || null, guardian_phone: guardianPhone || null,
+        emergency_phone: sameAsG ? (guardianPhone || null) : (emergencyPhone || null),
+        emergency_relationship: sameAsG ? 'Parent / Guardian' : (emergencyRelationship || null),
+        emergency_same_as_guardian: sameAsG
+      });
       await loadStudents();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to add swimmer'); }
   }
@@ -802,8 +842,15 @@ function App(){
       const body = {};
       if('name' in patch) body.name = patch.name;
       if('age' in patch) body.age = (patch.age === '' || patch.age == null) ? null : Number(patch.age);
+      if('gender' in patch) body.gender = patch.gender || null;
       if('packageId' in patch){ const pkg = patch.packageId ? packageById(patch.packageId) : null; body.package_id = patch.packageId || null; body.package = pkg ? pkg.name : null; }
       if('lessonTypeIds' in patch) body.lesson_type_ids = patch.lessonTypeIds || [];
+      if('guardianName' in patch) body.guardian_name = patch.guardianName || null;
+      if('guardianEmail' in patch) body.guardian_email = patch.guardianEmail || null;
+      if('guardianPhone' in patch) body.guardian_phone = patch.guardianPhone || null;
+      if('emergencySameAsGuardian' in patch) body.emergency_same_as_guardian = !!patch.emergencySameAsGuardian;
+      if('emergencyPhone' in patch) body.emergency_phone = patch.emergencyPhone || null;
+      if('emergencyRelationship' in patch) body.emergency_relationship = patch.emergencyRelationship || null;
       await patchRows('students', { id }, body);
       await loadStudents();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to update swimmer'); }
@@ -1036,7 +1083,7 @@ function App(){
       <div style={{display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
         <div className="small subtle"><span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalStudents}</span> students · <span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalSessions}</span> sessions · <span style={{color:'var(--primary)',fontWeight:800}}>{selectedWeekLabel}</span></div>
         <div className="tabs">
-          {['day','week','month','students','enroll','summary','settings'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='week'?'📅 Weekly':v==='day'?'📋 Daily':v==='month'?'🗓️ Monthly':v==='students'?'👥 Swimmers':v==='enroll'?'🎯 Enroll':v==='summary'?'📊 Summary':'⚙️ Settings'}</button>)}
+          {['day','week','month','students','enroll','summary','tc','settings'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='week'?'📅 Weekly':v==='day'?'📋 Daily':v==='month'?'🗓️ Monthly':v==='students'?'👥 Swimmers':v==='enroll'?'🎯 Enroll':v==='summary'?'📊 Summary':v==='tc'?'📄 T&C':'⚙️ Settings'}</button>)}
         </div>
       </div>
     </div></div>
@@ -1150,6 +1197,7 @@ function App(){
         onCreate={openCreateFor}
       />}
       {!loading && view==='summary' && <SummaryView summary={summary} pools={activePools()} />}
+      {!loading && view==='tc' && <TCView students={students} lessonTypes={activeLessonTypes()} lessonTypeById={lessonTypeById} onSaveAcceptance={saveTcAcceptance} />}
 
       {!loading && view==='settings' && <SettingsView
         options={options}
@@ -2194,17 +2242,64 @@ function StudentSelect({ valueId, fallbackLabel, studentById, candidates, onPick
 function StudentEditor({ row, lessonTypes, packages, onSave }){
   const [name, setName] = useState(row.name || '');
   const [age, setAge] = useState(row.age == null ? '' : String(row.age));
+  const [gender, setGender] = useState(row.gender || null);
   const [pkgId, setPkgId] = useState(row.packageId || '');
   const [types, setTypes] = useState((row.lessonTypeIds || []).slice());
+  const [guardianName, setGuardianName] = useState(row.guardianName || '');
+  const [guardianEmail, setGuardianEmail] = useState(row.guardianEmail || '');
+  const [guardianPhone, setGuardianPhone] = useState(row.guardianPhone || '');
+  const [sameAsGuardian, setSameAsGuardian] = useState(!!row.emergencySameAsGuardian);
+  const [emergencyPhone, setEmergencyPhone] = useState(row.emergencyPhone || '');
+  const [emergencyRel, setEmergencyRel] = useState(row.emergencyRelationship || '');
+  const [adultSelf, setAdultSelf] = useState(false);
   function toggle(id){ setTypes(t => t.includes(id) ? t.filter(x => x !== id) : [...t, id]); }
+  function handleSameAsGuardian(v){ setSameAsGuardian(v); if(v){ setEmergencyPhone(guardianPhone); setEmergencyRel('Parent / Guardian'); } }
+  function handleAdultSelf(v){ setAdultSelf(v); if(v) setGuardianName(name); }
+  const ltPackages = pkgId ? [] : [];
+  const selectedLtId = (packages||[]).find(p=>p.id===pkgId)?.lesson_type_id;
+  const ltPkgs = selectedLtId ? (packages||[]).filter(p=>p.lesson_type_id===selectedLtId&&p.is_active!==false) : packages||[];
+
   return <div className="lesson-edit">
-    <div className="form-grid" style={{gridTemplateColumns:'minmax(0,1.4fr) 80px minmax(0,1fr)'}}>
-      <div className="field"><label>Name</label><input className="input" value={name} onChange={e=>setName(e.target.value)} /></div>
-      <div className="field"><label>Age</label><input className="input" type="number" min="0" max="120" value={age} onChange={e=>setAge(e.target.value)} /></div>
-      <div className="field"><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">(none)</option>{packageOptionGroups(packages, lessonTypes)}</select></div>
+    <div className="student-form-section">
+      <div className="student-form-section-title">Basic Info</div>
+      <div className="form-grid" style={{gridTemplateColumns:'1fr 80px auto'}}>
+        <div className="field"><label>Name</label><input className="input" value={name} onChange={e=>setName(e.target.value)} /></div>
+        <div className="field"><label>Age (yrs)</label><input className="input" type="number" min="0" max="120" value={age} onChange={e=>setAge(e.target.value)} /></div>
+        <div className="field"><label>Gender</label>
+          <div className="gender-toggle"><button type="button" className={`gender-opt ${gender==='female'?'active':''}`} onClick={()=>setGender(gender==='female'?null:'female')}>♀ F</button><button type="button" className={`gender-opt ${gender==='male'?'active':''}`} onClick={()=>setGender(gender==='male'?null:'male')}>♂ M</button></div>
+        </div>
+      </div>
+      <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr'}}>
+        <div className="field"><label>Lesson Types</label><div className="type-picks">{lessonTypes.map(t => { const on = types.includes(t.id); return <button key={t.id} type="button" className={`chip chip-toggle ${on?'':'chip-off'}`} style={on?{background:t.bg_color,borderColor:t.border_color,color:t.text_color}:undefined} onClick={()=>toggle(t.id)}>{t.name}</button>; })}</div></div>
+        <div className="field"><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">(none)</option>{packageOptionGroups(packages, lessonTypes)}</select></div>
+      </div>
     </div>
-    <div className="field" style={{marginTop:10}}><label>Lesson types</label><div className="type-picks">{lessonTypes.map(t => { const on = types.includes(t.id); return <button key={t.id} type="button" className={`chip chip-toggle ${on ? '' : 'chip-off'}`} style={on ? {background:t.bg_color,borderColor:t.border_color,color:t.text_color} : undefined} onClick={()=>toggle(t.id)}>{t.name}</button>; })}</div></div>
-    <div style={{display:'flex',justifyContent:'flex-end',marginTop:10}}><button className="btn btn-primary" onClick={()=>{ const v = name.trim(); if(!v) return; onSave({ name:v, age, packageId:pkgId || null, lessonTypeIds:types }); }}>Save Swimmer</button></div>
+    <div className="student-form-section">
+      <div className="student-form-section-title">Parent / Guardian</div>
+      <label className="gb-check" style={{marginBottom:8}}><input type="checkbox" checked={adultSelf} onChange={e=>handleAdultSelf(e.target.checked)} /> Adult swimmer — I am my own guardian (pre-fill with my name)</label>
+      <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
+        <div className="field"><label>Guardian Name</label><input className="input" value={guardianName} onChange={e=>setGuardianName(e.target.value)} placeholder="Full name" /></div>
+        <div className="field"><label>Email</label><input className="input" type="email" value={guardianEmail} onChange={e=>setGuardianEmail(e.target.value)} placeholder="email@example.com" /></div>
+        <div className="field"><label>Phone</label><input className="input" type="tel" value={guardianPhone} onChange={e=>{ setGuardianPhone(e.target.value); if(sameAsGuardian) setEmergencyPhone(e.target.value); }} placeholder="+60 1X-XXXXXXX" /></div>
+      </div>
+    </div>
+    <div className="student-form-section">
+      <div className="student-form-section-title">Emergency Contact</div>
+      <label className="gb-check" style={{marginBottom:8}}><input type="checkbox" checked={sameAsGuardian} onChange={e=>handleSameAsGuardian(e.target.checked)} /> Same as Parent / Guardian</label>
+      <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr'}}>
+        <div className="field"><label>Phone</label><input className="input" type="tel" value={sameAsGuardian?guardianPhone:emergencyPhone} onChange={e=>setEmergencyPhone(e.target.value)} disabled={sameAsGuardian} placeholder="+60 1X-XXXXXXX" /></div>
+        <div className="field"><label>Relationship</label><input className="input" value={sameAsGuardian?'Parent / Guardian':emergencyRel} onChange={e=>setEmergencyRel(e.target.value)} disabled={sameAsGuardian} placeholder="e.g. Mother, Father, Spouse" /></div>
+      </div>
+    </div>
+    {row.tcAcceptedAt && <div className="tc-status-row tc-accepted">
+      <span>✅ T&amp;C Accepted</span>
+      <span className="small subtle">ID: {row.tcAcceptanceId} · {new Date(row.tcAcceptedAt).toLocaleDateString(undefined,{dateStyle:'medium'})}</span>
+    </div>}
+    {!row.tcAcceptedAt && <div className="tc-status-row tc-pending">⚠ Terms &amp; Conditions not yet accepted — go to the T&amp;C tab to send for signature.</div>}
+    <div style={{display:'flex',justifyContent:'flex-end',marginTop:10}}><button className="btn btn-primary" onClick={()=>{
+      const v = name.trim(); if(!v) return;
+      onSave({ name:v, age, gender, packageId:pkgId||null, lessonTypeIds:types, guardianName, guardianEmail, guardianPhone, emergencySameAsGuardian:sameAsGuardian, emergencyPhone: sameAsGuardian?guardianPhone:emergencyPhone, emergencyRelationship: sameAsGuardian?'Parent / Guardian':emergencyRel });
+    }}>Save Swimmer</button></div>
   </div>;
 }
 
@@ -2287,11 +2382,19 @@ function FamilyGroupsPanel({ groups, students, groupPackages, lessonTypes, packa
 function StudentsView({ students, lessonTypes, lessonTypeById, packages, packageById, groupById, scheduleByStudent, creditByKey, addStudent, updateStudent, deleteStudent }){
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
+  const [gender, setGender] = useState(null);
   const [pkgId, setPkgId] = useState('');
   const [typeId, setTypeId] = useState('');
+  const [guardianName, setGuardianName] = useState('');
+  const [guardianEmail, setGuardianEmail] = useState('');
+  const [guardianPhone, setGuardianPhone] = useState('');
+  const [sameAsGuardian, setSameAsGuardian] = useState(false);
+  const [emergencyPhone, setEmergencyPhone] = useState('');
+  const [emergencyRel, setEmergencyRel] = useState('');
+  const [adultSelf, setAdultSelf] = useState(false);
   const [editId, setEditId] = useState(null);
   const [q, setQ] = useState('');
-  const [sortBy, setSortBy] = useState('name'); // 'name' | 'type' | 'package'
+  const [sortBy, setSortBy] = useState('name');
 
   function colorsForId(id){ const t = lessonTypeById(id); return t ? { bg:t.bg_color, bd:t.border_color, tx:t.text_color, name:t.name } : { bg:'#eee', bd:'#ccc', tx:'#333', name:'(removed)' }; }
   function packageLabel(s){
@@ -2308,9 +2411,6 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
     slots.forEach(sl => { (byType[sl.type] = byType[sl.type] || []).push(sl); });
     return Object.keys(byType).map(type => ({ type, times: byType[type].map(sl => `${DAYS_S[sl.day]} ${minuteToTime(sl.startMinute)}`) }));
   }
-
-  // Credit display for a swimmer: computes balance minus sessions scheduled this week
-  // for the lesson type their (credit-based) package belongs to.
   function creditInfo(s){
     const pkg = s.packageId ? packageById(s.packageId) : null;
     if(!pkg || pkg.billing_mode !== 'credit') return null;
@@ -2321,81 +2421,80 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
     const scheduled = (scheduleByStudent[s.id] || []).filter(sl => sl.lessonTypeId === ltId).length;
     return { remaining: bal.remaining_balance, initial: bal.initial_balance, scheduled };
   }
+  function handleAdultSelf(v){ setAdultSelf(v); if(v) setGuardianName(name); }
+  function handleSameAsG(v){ setSameAsGuardian(v); if(v){ setEmergencyPhone(guardianPhone); setEmergencyRel('Parent / Guardian'); } }
 
   const ltPackages = typeId ? (packages || []).filter(p => p.lesson_type_id === typeId && p.is_active !== false) : [];
   const filtered = students.filter(s => !q || (s.name || '').toLowerCase().includes(q.toLowerCase()));
 
-  // Build a flat display list: group-header rows + swimmer rows.
-  // When sorting by name: family-group members cluster under their group header.
-  // Other sorts: flat list ordered by the chosen field.
   const displayList = useMemo(() => {
     if(sortBy === 'name'){
-      const byGroup = {};
-      const ungrouped = [];
-      filtered.forEach(s => {
-        if(s.familyGroupId){ (byGroup[s.familyGroupId] = byGroup[s.familyGroupId] || []).push(s); }
-        else ungrouped.push(s);
-      });
+      const byGroup = {}, ungrouped = [];
+      filtered.forEach(s => { if(s.familyGroupId){ (byGroup[s.familyGroupId]=byGroup[s.familyGroupId]||[]).push(s); } else ungrouped.push(s); });
       const rows = [];
-      Object.entries(byGroup)
-        .sort(([aId],[bId]) => (groupById?.[aId]?.name||'').localeCompare(groupById?.[bId]?.name||''))
-        .forEach(([gid, members]) => {
-          rows.push({ kind:'group', gid, label: groupById?.[gid]?.name || 'Group' });
-          members.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(s => rows.push({ kind:'swimmer', s }));
-        });
-      ungrouped.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(s => rows.push({ kind:'swimmer', s }));
+      Object.entries(byGroup).sort(([aId],[bId])=>(groupById?.[aId]?.name||'').localeCompare(groupById?.[bId]?.name||'')).forEach(([gid,members])=>{
+        rows.push({ kind:'group', gid, label:groupById?.[gid]?.name||'Group' });
+        members.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(s=>rows.push({kind:'swimmer',s}));
+      });
+      ungrouped.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(s=>rows.push({kind:'swimmer',s}));
       return rows;
     }
-    const sorted = filtered.slice().sort((a,b) => {
-      if(sortBy === 'type'){
-        const tA = (a.lessonTypeIds?.[0] ? lessonTypeById(a.lessonTypeIds[0])?.name : '') || '';
-        const tB = (b.lessonTypeIds?.[0] ? lessonTypeById(b.lessonTypeIds[0])?.name : '') || '';
-        return tA.localeCompare(tB) || a.name.localeCompare(b.name);
-      }
-      if(sortBy === 'package'){
-        const pA = (a.packageId ? packageById(a.packageId)?.name : '') || '';
-        const pB = (b.packageId ? packageById(b.packageId)?.name : '') || '';
-        return pA.localeCompare(pB) || a.name.localeCompare(b.name);
-      }
+    return filtered.slice().sort((a,b)=>{
+      if(sortBy==='type'){ const tA=(a.lessonTypeIds?.[0]?lessonTypeById(a.lessonTypeIds[0])?.name:'')||''; const tB=(b.lessonTypeIds?.[0]?lessonTypeById(b.lessonTypeIds[0])?.name:'')||''; return tA.localeCompare(tB)||a.name.localeCompare(b.name); }
+      if(sortBy==='package'){ const pA=(a.packageId?packageById(a.packageId)?.name:'')||''; const pB=(b.packageId?packageById(b.packageId)?.name:'')||''; return pA.localeCompare(pB)||a.name.localeCompare(b.name); }
       return 0;
-    });
-    return sorted.map(s => ({ kind:'swimmer', s }));
+    }).map(s=>({kind:'swimmer',s}));
   }, [filtered, sortBy, groupById]);
 
-  const COLS = 7; // Name, Age, Lesson Type, Package, Credits, Schedule, Actions
+  const COLS = 8;
+
+  function resetForm(){ setName(''); setAge(''); setGender(null); setPkgId(''); setTypeId(''); setGuardianName(''); setGuardianEmail(''); setGuardianPhone(''); setSameAsGuardian(false); setEmergencyPhone(''); setEmergencyRel(''); setAdultSelf(false); }
 
   return <>
     <div className="card" style={{marginBottom:16}}>
-      <div style={{fontSize:18,fontWeight:800,marginBottom:4}}>Swimmers</div>
-      <div className="small subtle" style={{marginBottom:14}}>Register each swimmer with their age, lesson type, and package. Tagged swimmers appear in the session enrollment dropdowns.</div>
-      <div className="swimmer-add-row">
-        <div className="field" style={{margin:0,flex:'2 1 160px'}}>
-          <label>Name</label>
-          <input className="input" value={name} onChange={e=>setName(e.target.value)} placeholder="Swimmer name" />
+      <div style={{fontSize:18,fontWeight:800,marginBottom:4}}>Register Swimmer</div>
+      <div className="small subtle" style={{marginBottom:16}}>Complete the swimmer's profile. All information is treated in strict confidence and used solely for class administration and emergency purposes.</div>
+
+      <div className="student-form-section">
+        <div className="student-form-section-title">Swimmer Details</div>
+        <div className="swimmer-add-row">
+          <div className="field" style={{margin:0,flex:'2 1 160px'}}><label>Full Name</label><input className="input" value={name} onChange={e=>{ setName(e.target.value); if(adultSelf) setGuardianName(e.target.value); }} placeholder="Swimmer's full name" /></div>
+          <div className="field" style={{margin:0,flex:'0 0 80px'}}><label>Age (yrs)</label><input className="input" type="number" min="0" max="120" value={age} onChange={e=>setAge(e.target.value)} placeholder="0" /></div>
+          <div className="field" style={{margin:0}}>
+            <label>Gender</label>
+            <div className="gender-toggle"><button type="button" className={`gender-opt ${gender==='female'?'active':''}`} onClick={()=>setGender(gender==='female'?null:'female')}>♀ F</button><button type="button" className={`gender-opt ${gender==='male'?'active':''}`} onClick={()=>setGender(gender==='male'?null:'male')}>♂ M</button></div>
+          </div>
+          <div className="field" style={{margin:0,flex:'1.5 1 130px'}}><label>Lesson Type</label><select className="select" value={typeId} onChange={e=>{ setTypeId(e.target.value); setPkgId(''); }}><option value="">(none)</option>{lessonTypes.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
+          <div className="field" style={{margin:0,flex:'1.5 1 130px'}}><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)} disabled={!typeId}><option value="">{typeId?'(none)':'← type first'}</option>{ltPackages.map(p=><option key={p.id} value={p.id}>{p.name}{p.amount!=null?` · RM${p.amount}`:''}{billingText(p.billing_mode,p.billing_count)?` · ${billingText(p.billing_mode,p.billing_count)}`:''}</option>)}</select></div>
         </div>
-        <div className="field" style={{margin:0,flex:'0 0 80px'}}>
-          <label>Age (yrs)</label>
-          <input className="input" type="number" min="0" max="120" value={age} onChange={e=>setAge(e.target.value)} placeholder="0" />
+      </div>
+
+      <div className="student-form-section">
+        <div className="student-form-section-title">Parent / Guardian</div>
+        <label className="gb-check" style={{marginBottom:10,display:'inline-flex',gap:8,alignItems:'center'}}><input type="checkbox" checked={adultSelf} onChange={e=>handleAdultSelf(e.target.checked)} /> Adult swimmer — I am my own guardian</label>
+        <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
+          <div className="field" style={{margin:0}}><label>Guardian Name</label><input className="input" value={guardianName} onChange={e=>setGuardianName(e.target.value)} placeholder="Full name" /></div>
+          <div className="field" style={{margin:0}}><label>Email</label><input className="input" type="email" value={guardianEmail} onChange={e=>setGuardianEmail(e.target.value)} placeholder="email@example.com" /></div>
+          <div className="field" style={{margin:0}}><label>Phone</label><input className="input" type="tel" value={guardianPhone} onChange={e=>{ setGuardianPhone(e.target.value); if(sameAsGuardian) setEmergencyPhone(e.target.value); }} placeholder="+60 1X-XXXXXXX" /></div>
         </div>
-        <div className="field" style={{margin:0,flex:'1.5 1 130px'}}>
-          <label>Lesson Type</label>
-          <select className="select" value={typeId} onChange={e=>{ setTypeId(e.target.value); setPkgId(''); }}>
-            <option value="">(none)</option>
-            {lessonTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
+      </div>
+
+      <div className="student-form-section">
+        <div className="student-form-section-title">Emergency Contact</div>
+        <label className="gb-check" style={{marginBottom:10,display:'inline-flex',gap:8,alignItems:'center'}}><input type="checkbox" checked={sameAsGuardian} onChange={e=>handleSameAsG(e.target.checked)} /> Same as Parent / Guardian</label>
+        <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr'}}>
+          <div className="field" style={{margin:0}}><label>Phone</label><input className="input" type="tel" value={sameAsGuardian?guardianPhone:emergencyPhone} onChange={e=>setEmergencyPhone(e.target.value)} disabled={sameAsGuardian} placeholder="+60 1X-XXXXXXX" /></div>
+          <div className="field" style={{margin:0}}><label>Relationship</label><input className="input" value={sameAsGuardian?'Parent / Guardian':emergencyRel} onChange={e=>setEmergencyRel(e.target.value)} disabled={sameAsGuardian} placeholder="e.g. Mother, Father, Spouse" /></div>
         </div>
-        <div className="field" style={{margin:0,flex:'1.5 1 130px'}}>
-          <label>Package</label>
-          <select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)} disabled={!typeId}>
-            <option value="">{typeId ? '(none)' : '← pick type first'}</option>
-            {ltPackages.map(p => <option key={p.id} value={p.id}>{p.name}{p.amount!=null?` · RM${p.amount}`:''}{billingText(p.billing_mode,p.billing_count)?` · ${billingText(p.billing_mode,p.billing_count)}`:''}</option>)}
-          </select>
-        </div>
-        <button className="btn btn-primary" style={{alignSelf:'flex-end',whiteSpace:'nowrap'}} onClick={()=>{
+      </div>
+
+      <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:8}}>
+        <button className="btn btn-ghost" onClick={resetForm}>Clear</button>
+        <button className="btn btn-primary" onClick={()=>{
           const v = name.trim(); if(!v) return;
-          addStudent({ name:v, age, packageId:pkgId||null, lessonTypeIds: typeId ? [typeId] : [] });
-          setName(''); setAge(''); setPkgId(''); setTypeId('');
-        }}>Add Swimmer</button>
+          addStudent({ name:v, age, gender, packageId:pkgId||null, lessonTypeIds:typeId?[typeId]:[], guardianName, guardianEmail, guardianPhone, emergencySameAsGuardian:sameAsGuardian, emergencyPhone:sameAsGuardian?guardianPhone:emergencyPhone, emergencyRelationship:sameAsGuardian?'Parent / Guardian':emergencyRel });
+          resetForm();
+        }}>Register Swimmer</button>
       </div>
     </div>
 
@@ -2403,58 +2502,169 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:12}}>
         <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
           <div style={{fontSize:16,fontWeight:800}}>Registered Swimmers <span className="subtle" style={{fontWeight:600,fontSize:13}}>· {students.length}</span></div>
-          <div className="sort-tabs">
-            {[['name','Name'],['type','Lesson Type'],['package','Package']].map(([k,lbl])=>
-              <button key={k} className={`sort-tab ${sortBy===k?'active':''}`} onClick={()=>setSortBy(k)}>{lbl}</button>)}
-          </div>
+          <div className="sort-tabs">{[['name','Name'],['type','Lesson Type'],['package','Package']].map(([k,lbl])=><button key={k} className={`sort-tab ${sortBy===k?'active':''}`} onClick={()=>setSortBy(k)}>{lbl}</button>)}</div>
         </div>
         <input className="input" style={{maxWidth:220}} placeholder="Search swimmers…" value={q} onChange={e=>setQ(e.target.value)} />
       </div>
       <div className="table-wrap">
         <table><thead><tr>
-          <th style={{width:'17%'}}>Name</th>
-          <th style={{width:44}}>Age</th>
-          <th style={{width:'17%'}}>Lesson Type</th>
-          <th style={{width:'16%'}}>Package</th>
-          <th style={{width:'10%'}}>Credits</th>
-          <th>Schedule</th>
-          <th style={{width:120}}></th>
+          <th style={{width:'17%'}}>Name</th><th style={{width:40}}>Age</th><th style={{width:'15%'}}>Lesson Type</th><th style={{width:'15%'}}>Package</th><th style={{width:'8%'}}>Credits</th><th style={{width:'8%'}}>T&amp;C</th><th>Schedule</th><th style={{width:112}}></th>
         </tr></thead>
-        <tbody>
-          {displayList.length ? displayList.map((row, ri) => {
-            if(row.kind === 'group'){
-              return <tr key={`g-${row.gid}`} className="swimmer-group-header">
-                <td colSpan={COLS}><span className="group-header-label">👪 {row.label}</span></td>
-              </tr>;
-            }
-            const s = row.s;
-            const sched = scheduleLines(s.id);
-            const cr = creditInfo(s);
-            const afterWeek = cr ? Math.max(0, cr.remaining - cr.scheduled) : null;
-            return <React.Fragment key={s.id}>
-              <tr className={s.familyGroupId ? 'swimmer-in-group' : ''}>
-                <td style={{fontWeight:700}}>{s.name}</td>
-                <td>{s.age != null ? s.age : '—'}</td>
-                <td><div style={{display:'flex',flexWrap:'wrap',gap:3}}>{(s.lessonTypeIds||[]).length ? s.lessonTypeIds.map(id => { const c = colorsForId(id); return <span key={id} className="chip" style={{background:c.bg,borderColor:c.bd,color:c.tx,fontSize:10,padding:'2px 7px'}}>{c.name}</span>; }) : <span className="subtle">—</span>}</div></td>
-                <td style={{fontSize:12}}>{packageLabel(s)}</td>
-                <td>
-                  {cr
-                    ? <div className="credit-cell">
-                        <span className={`credit-cell-num ${afterWeek<=2?'credit-low':''}`}>{afterWeek}</span>
-                        <span className="credit-cell-sub">{cr.remaining}/{cr.initial}{cr.scheduled>0?<> · <span style={{color:'var(--amber-tx)'}}>−{cr.scheduled} wk</span></>:null}</span>
-                      </div>
-                    : <span className="subtle">—</span>}
-                </td>
-                <td style={{fontSize:11}}>{sched ? sched.map((g,gi)=><div key={gi} style={{marginBottom:2}}><span style={{fontWeight:700}}>{g.type}:</span> <span className="subtle">{g.times.join(', ')}</span></div>) : <span className="subtle">Not scheduled</span>}</td>
-                <td><div style={{display:'flex',gap:6,justifyContent:'flex-end'}}><button className="btn btn-ghost small" onClick={()=>setEditId(editId===s.id?null:s.id)}>{editId===s.id?'Close':'Edit'}</button><button className="btn btn-danger small" onClick={()=>deleteStudent(s)}>Delete</button></div></td>
-              </tr>
-              {editId === s.id ? <tr><td colSpan={COLS} style={{padding:0}}><StudentEditor row={s} lessonTypes={lessonTypes} packages={packages} onSave={(patch)=>{ updateStudent(s.id, patch); setEditId(null); }} /></td></tr> : null}
-            </React.Fragment>;
-          }) : <tr><td colSpan={COLS} className="empty">No swimmers registered yet.</td></tr>}
+        <tbody>{displayList.length ? displayList.map((row,ri)=>{
+          if(row.kind==='group') return <tr key={`g-${row.gid}`} className="swimmer-group-header"><td colSpan={COLS}><span className="group-header-label">👪 {row.label}</span></td></tr>;
+          const s=row.s; const sched=scheduleLines(s.id); const cr=creditInfo(s); const afterWeek=cr?Math.max(0,cr.remaining-cr.scheduled):null;
+          const tcOk = !!s.tcAcceptedAt;
+          return <React.Fragment key={s.id}>
+            <tr className={s.familyGroupId?'swimmer-in-group':''}>
+              <td style={{fontWeight:700}}>{s.name}{s.gender?<span style={{marginLeft:4,fontSize:10,color:'var(--text-3)'}}>{s.gender==='female'?'♀':'♂'}</span>:null}</td>
+              <td>{s.age!=null?s.age:'—'}</td>
+              <td><div style={{display:'flex',flexWrap:'wrap',gap:3}}>{(s.lessonTypeIds||[]).length?s.lessonTypeIds.map(id=>{const c=colorsForId(id);return <span key={id} className="chip" style={{background:c.bg,borderColor:c.bd,color:c.tx,fontSize:10,padding:'2px 7px'}}>{c.name}</span>;}): <span className="subtle">—</span>}</div></td>
+              <td style={{fontSize:12}}>{packageLabel(s)}</td>
+              <td>{cr?<div className="credit-cell"><span className={`credit-cell-num ${afterWeek<=2?'credit-low':''}`}>{afterWeek}</span><span className="credit-cell-sub">{cr.remaining}/{cr.initial}{cr.scheduled>0?<> · <span style={{color:'var(--amber-tx)'}}>−{cr.scheduled} wk</span></>:null}</span></div>:<span className="subtle">—</span>}</td>
+              <td>{tcOk?<span className="tc-badge-ok" title={`Accepted ${new Date(s.tcAcceptedAt).toLocaleDateString()} · ID: ${s.tcAcceptanceId}`}>✅ Signed</span>:<span className="tc-badge-pending" title="Terms & Conditions not yet accepted">⚠ Pending</span>}</td>
+              <td style={{fontSize:11}}>{sched?sched.map((g,gi)=><div key={gi} style={{marginBottom:2}}><span style={{fontWeight:700}}>{g.type}:</span> <span className="subtle">{g.times.join(', ')}</span></div>):<span className="subtle">Not scheduled</span>}</td>
+              <td><div style={{display:'flex',gap:6,justifyContent:'flex-end'}}><button className="btn btn-ghost small" onClick={()=>setEditId(editId===s.id?null:s.id)}>{editId===s.id?'Close':'Edit'}</button><button className="btn btn-danger small" onClick={()=>deleteStudent(s)}>Delete</button></div></td>
+            </tr>
+            {editId===s.id?<tr><td colSpan={COLS} style={{padding:0}}><StudentEditor row={s} lessonTypes={lessonTypes} packages={packages} onSave={(patch)=>{updateStudent(s.id,patch);setEditId(null);}}/></td></tr>:null}
+          </React.Fragment>;
+        }):<tr><td colSpan={COLS} className="empty">No swimmers registered yet.</td></tr>}
         </tbody></table>
       </div>
     </div>
   </>;
+}
+
+// ============================================================================
+// TCView — Terms & Conditions page with swimmer selection & email acceptance
+// ============================================================================
+const TC_COMPANY = 'Star Swim Sdn Bhd';
+const TC_CONTENT = [
+  { h: '1. Introduction', body: `These Terms and Conditions ("Agreement") govern the enrolment and participation of swimmers in swimming lessons and aquatic programmes offered by ${TC_COMPANY} ("the School", "we", "our"). By accepting this Agreement, the parent, legal guardian, or adult swimmer ("you") acknowledges having read, understood, and agreed to be bound by these terms. This Agreement constitutes a legally binding contract.` },
+  { h: '2. Safeguarding & Child Protection', body: `${TC_COMPANY} is committed to providing a safe, inclusive, and supportive aquatic environment for all participants.\n\n2.1 The School adheres to the National Child Protection Principles and Malaysia's Child Act 2001. All instructors undergo background screening and hold current first aid and lifeguard certifications.\n\n2.2 Parents and guardians are required to remain within the facility premises during all sessions involving participants under 12 years of age, unless otherwise agreed in writing.\n\n2.3 Any concerns regarding the welfare of a child, safeguarding issues, or inappropriate conduct should be raised immediately with the School Administrator or reported to: Jabatan Kebajikan Masyarakat (Social Welfare Department) at 1-800-88-3900.\n\n2.4 Photography and video recording of any swimmer — including your own child — are prohibited within pool areas without prior written consent from ${TC_COMPANY} and the relevant guardian of every swimmer present.` },
+  { h: '3. Class Cancellation & Attendance Policy', body: `3.1 Advance Notice: Cancellations must be communicated to the School no less than twenty-four (24) hours before the scheduled class start time. Cancellations received within this 24-hour window will be treated as an Absence unless a valid emergency and accompanying proof are provided.\n\n3.2 Medical Cancellation: Absences due to illness or medical conditions will be considered valid cancellations provided the School receives a copy of a certified Medical Certificate (MC) issued by a registered medical practitioner within 48 hours of the missed class. On receipt of a valid MC, the swimmer is entitled to one (1) replacement class.\n\n3.3 Absence (No Replacement): Where a swimmer is absent without valid 24-hour prior notice or a valid MC, the class will be recorded as "provided," credits will be deducted where applicable, and no replacement lesson will be offered.\n\n3.4 Last-Minute Emergencies: Genuine emergencies (e.g. hospitalisation, accident, bereavement) occurring within the 24-hour window may be considered at the School's discretion upon submission of appropriate supporting documentation.` },
+  { h: '4. School-Initiated Cancellations', body: `4.1 Weather Conditions: Classes may be suspended or cancelled at the School's sole discretion during adverse weather — including lightning, heavy rainfall, or hazardous pool conditions. Participants will be notified as promptly as possible via WhatsApp or email. Any class cancelled due to weather entitles the swimmer to a full replacement lesson at no additional cost.\n\n4.2 Instructor Cancellation: Should a class be cancelled by ${TC_COMPANY} or by an assigned instructor for reasons within the School's control, all affected swimmers are entitled to a replacement lesson. The replacement will be scheduled within the same billing cycle where possible, or carried forward.` },
+  { h: '5. Replacement Class Policy', body: `5.1 Group Classes: Replacement sessions for group classes may be attended in any currently active class of the same lesson type, provided a slot is available. Replacements must be arranged through the School and are subject to availability. Replacement swimmers are marked as "drop-in replacement" and are not carried forward in subsequent weeks.\n\n5.2 Personal & Private Classes (Personal 1, Personal 2, Personal Toddler, Stroke Lab, Premium Personal, Personal Clara): Replacement sessions for personal classes are to be arranged directly between the assigned instructor and the parent or guardian, subject to mutual time availability and pool space. The School will facilitate communication. Replacement credits will be applied and the rescheduled session logged.\n\n5.3 Validity: Replacement lessons must be utilised within 14 calendar days of the missed class, unless otherwise agreed in writing. Unused replacement entitlements expire at the end of the month in which they were granted.` },
+  { h: '6. Credit System (Personal & Private Classes)', body: `6.1 Students enrolled in personal or private lesson programmes are allocated a credit balance corresponding to the number of sessions purchased in their package.\n\n6.2 One (1) credit is deducted for each scheduled and attended class. Credits are not deducted for classes cancelled by the School or for classes where a valid MC has been provided.\n\n6.3 Credits are non-refundable and non-transferable to another swimmer. Unused credits at the end of a package cycle are forfeited unless otherwise agreed in writing.\n\n6.4 The School reserves the right to apply a credit deduction when a replacement or rescheduled class is successfully attended.` },
+  { h: '7. Fees & Payment', body: `7.1 All fees are due in accordance with the payment schedule indicated in your enrolment confirmation. Late payment may result in suspension from classes.\n\n7.2 Fees are non-refundable once a billing cycle has commenced, except in extraordinary circumstances at the School's discretion.\n\n7.3 The School reserves the right to revise fee structures with a minimum of 30 days' written notice.` },
+  { h: '8. Health, Safety & Medical Disclosure', body: `8.1 You confirm that the swimmer is in good health and is medically fit to participate in aquatic activities. Any pre-existing medical condition, allergy, or physical limitation must be disclosed to the School prior to the commencement of classes.\n\n8.2 The School is not liable for injuries or health events arising from undisclosed medical conditions.\n\n8.3 In the event of a medical emergency, the School is authorised to administer basic first aid and to contact emergency services. All reasonable effort will be made to contact the designated emergency contact immediately.` },
+  { h: '9. Liability Waiver', body: `9.1 Participation in aquatic activities carries inherent risks. By accepting this Agreement, you acknowledge these risks and agree that ${TC_COMPANY}, its directors, instructors, and staff shall not be liable for any injury, loss, damage, or claim arising from participation in the School's programmes, except where caused by the School's gross negligence or wilful misconduct.\n\n9.2 The School maintains appropriate public liability insurance.` },
+  { h: '10. Acceptance & Governing Law', body: `This Agreement is governed by the laws of Malaysia. Any dispute shall be subject to the jurisdiction of the courts of Malaysia. By electronically accepting, you confirm you have read and agree to all clauses above on behalf of yourself and/or the enrolled swimmer.` }
+];
+
+function TCView({ students, lessonTypes, lessonTypeById, onSaveAcceptance }){
+  const [studentId, setStudentId] = useState('');
+  const [agreed, setAgreed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(null); // { acceptanceId, studentName, email }
+  const [scrolled, setScrolled] = useState(false);
+
+  const student = students.find(s => s.id === studentId) || null;
+  const lt = student?.lessonTypeIds?.[0] ? lessonTypeById(student.lessonTypeIds[0]) : null;
+  const alreadySigned = !!student?.tcAcceptedAt;
+
+  function handleScroll(e){ if(e.target.scrollTop + e.target.clientHeight >= e.target.scrollHeight - 40) setScrolled(true); }
+
+  async function handleAccept(){
+    if(!student || !agreed || busy) return;
+    if(!student.guardianEmail){ alert('No guardian email on file — please add an email address to this swimmer\'s profile before signing the T&C.'); return; }
+    try{
+      setBusy(true);
+      const acceptanceId = await onSaveAcceptance({ studentId: student.id, guardianName: student.guardianName || student.name, guardianEmail: student.guardianEmail, lessonTypeName: lt?.name || '—' });
+      const subj = encodeURIComponent(`Swimming Lesson Terms & Conditions — ${student.name} — ${TC_COMPANY}`);
+      const dateStr = new Date().toLocaleString('en-MY', { dateStyle:'long', timeStyle:'short' });
+      const emailBody = encodeURIComponent(
+`Dear ${student.guardianName || student.name},
+
+This email confirms that the Terms and Conditions for ${TC_COMPANY} have been accepted for the following swimmer:
+
+  Swimmer Name : ${student.name}
+  Lesson Type  : ${lt?.name || 'Not specified'}
+  Accepted By  : ${student.guardianName || student.name}
+  Acceptance ID: ${acceptanceId}
+  Date & Time  : ${dateStr}
+
+This Acceptance ID is your unique reference. Please retain this email for your records.
+
+─────────────────────────────────────────────────────
+If you did NOT authorise this acceptance, or if you do not agree to the terms, please reply to this email immediately and we will resolve this with you. Failure to respond within 3 business days will be taken as confirmation of acceptance.
+─────────────────────────────────────────────────────
+
+Key Policy Highlights:
+• Cancellations must be made ≥24 hrs in advance or a Medical Certificate must be provided.
+• Absent without notice = class counted as provided; no replacement entitlement.
+• School-cancelled classes (weather, instructor) entitle you to a replacement lesson.
+• Group replacement: any active class of the same type with an available slot.
+• Personal class replacement: by mutual arrangement with your instructor.
+
+For the full Terms and Conditions, please contact us or request a copy from ${TC_COMPANY}.
+
+Thank you for choosing ${TC_COMPANY}. We look forward to seeing ${student.name} in the pool!
+
+Warm regards,
+${TC_COMPANY} Administration`);
+      window.open(`mailto:${encodeURIComponent(student.guardianEmail)}?subject=${subj}&body=${emailBody}`);
+      setDone({ acceptanceId, studentName: student.name, email: student.guardianEmail });
+      setAgreed(false); setScrolled(false);
+    } catch(e){ alert(e?.message || 'Failed to record acceptance'); }
+    finally{ setBusy(false); }
+  }
+
+  return <div style={{maxWidth:900,margin:'0 auto'}}>
+    <div className="card" style={{marginBottom:16}}>
+      <div style={{fontSize:22,fontWeight:800,marginBottom:4}}>Terms &amp; Conditions</div>
+      <div className="small subtle">{TC_COMPANY} · Swimming Lesson Enrolment Agreement</div>
+      <div style={{marginTop:14,display:'flex',gap:10,alignItems:'flex-end',flexWrap:'wrap'}}>
+        <div className="field" style={{margin:0,flex:'1 1 240px'}}>
+          <label>Select Swimmer</label>
+          <select className="select" value={studentId} onChange={e=>{ setStudentId(e.target.value); setAgreed(false); setScrolled(false); setDone(null); }}>
+            <option value="">— Choose a swimmer —</option>
+            {students.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(s=><option key={s.id} value={s.id}>{s.name}{s.tcAcceptedAt?' ✅':''}</option>)}
+          </select>
+        </div>
+        {student && <div className="tc-student-summary">
+          <div><span className="small subtle">Guardian:</span> <strong>{student.guardianName||'—'}</strong></div>
+          <div><span className="small subtle">Email:</span> <strong>{student.guardianEmail||<span className="tc-warn">⚠ No email — add in Swimmers tab</span>}</strong></div>
+          <div><span className="small subtle">Lesson Type:</span> <strong>{lt?.name||'—'}</strong></div>
+        </div>}
+      </div>
+      {alreadySigned && <div className="tc-status-row tc-accepted" style={{marginTop:12}}>
+        ✅ T&amp;C already accepted for {student.name} · ID: {student.tcAcceptanceId} · {new Date(student.tcAcceptedAt).toLocaleDateString(undefined,{dateStyle:'long'})}
+      </div>}
+    </div>
+
+    <div className="card" style={{marginBottom:16}}>
+      <div className="tc-doc-scroll" onScroll={handleScroll}>
+        <h1 className="tc-h1">{TC_COMPANY}</h1>
+        <h2 className="tc-h2">Swimming Lesson Enrolment — Terms &amp; Conditions</h2>
+        {TC_CONTENT.map((sec,i)=><div key={i} className="tc-section">
+          <h3 className="tc-h3">{sec.h}</h3>
+          {sec.body.split('\n\n').map((p,j)=><p key={j} className="tc-para">{p}</p>)}
+        </div>)}
+        {!scrolled && <div className="tc-scroll-hint">↓ Scroll to the bottom to enable acceptance</div>}
+      </div>
+    </div>
+
+    {done
+      ? <div className="card tc-success">
+          <div style={{fontSize:20,fontWeight:800,marginBottom:6}}>✅ Accepted — {done.studentName}</div>
+          <div className="small">Acceptance ID: <strong>{done.acceptanceId}</strong></div>
+          <div className="small subtle" style={{marginTop:4}}>Your email client has been opened with a confirmation email pre-addressed to <strong>{done.email}</strong>. Please review and click Send. The email instructs them to reply if they do not agree.</div>
+          <button className="btn btn-ghost small" style={{marginTop:10}} onClick={()=>setDone(null)}>Sign another swimmer</button>
+        </div>
+      : <div className="card">
+          <label className="gb-check" style={{fontSize:14,display:'flex',gap:10,alignItems:'flex-start',opacity:scrolled?1:0.4,transition:'opacity .2s',cursor:scrolled?'pointer':'default'}}>
+            <input type="checkbox" disabled={!scrolled||!student} checked={agreed} onChange={e=>setAgreed(e.target.checked)} style={{marginTop:3,flexShrink:0}} />
+            <span>I have read and fully understood the Terms &amp; Conditions of {TC_COMPANY}. I agree to be bound by this Agreement on behalf of myself and/or the enrolled swimmer named above, and confirm all information provided is accurate.</span>
+          </label>
+          {!scrolled && <div className="small subtle" style={{marginTop:6,marginLeft:28}}>Please scroll through the full document above before accepting.</div>}
+          <div style={{display:'flex',justifyContent:'flex-end',marginTop:14}}>
+            <button className="btn btn-primary" disabled={!agreed||!student||busy||!student.guardianEmail} onClick={handleAccept} style={{padding:'10px 24px',fontSize:15}}>
+              {busy ? 'Processing…' : '✍️ I Accept These Terms'}
+            </button>
+          </div>
+          {student && !student.guardianEmail && <div className="hint" style={{color:'var(--red-tx)',marginTop:6,textAlign:'right'}}>⚠ A guardian email address is required before accepting.</div>}
+        </div>}
+  </div>;
 }
 
 function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById, students, studentById, weekEnrollments, familyGroups, membersByGroup, trialStudentIds, creditByKey, adjustCredit, initCredit }){
