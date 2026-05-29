@@ -231,6 +231,7 @@ function App(){
   const [students,setStudents] = useState([]);
   const [familyGroups,setFamilyGroups] = useState([]);
   const [creditBalances,setCreditBalances] = useState([]);
+  const [replacementPending,setReplacementPending] = useState([]);
   const [tcAcceptances,setTcAcceptances] = useState([]);
   const [remarks,setRemarks] = useState({});
   const [options,setOptions] = useState({ instructors:[], durations:[], lessonTypes:[], pools:[], operatingHours:[], packages:[] });
@@ -253,7 +254,7 @@ function App(){
     try{
       setLoading(true); setError('');
       await loadOptions();
-      await Promise.all([loadSessions(), loadStudents(), loadGroups(), loadCreditBalances(), loadTcAcceptances(), loadRemarks(monthCursor)]);
+      await Promise.all([loadSessions(), loadStudents(), loadGroups(), loadCreditBalances(), loadReplacementPending(), loadTcAcceptances(), loadRemarks(monthCursor)]);
       setStatus('Connected');
     } catch(err){ handleErr(err); }
     finally{ setLoading(false); }
@@ -359,6 +360,48 @@ function App(){
       const rows = await selectRows('student_credit_balances', '*');
       setCreditBalances(rows || []);
     } catch(e){ console.warn('Credit balances not available (run the replacement+credits migration):', e?.message || e); setCreditBalances([]); }
+  }
+
+  // Pending-replacement state — swimmers who were removed from their booked
+  // class for the week and are awaiting placement into another same-LT class.
+  async function loadReplacementPending(){
+    try{
+      const rows = await selectRows('replacement_pending', '*');
+      setReplacementPending(rows || []);
+    } catch(e){ console.warn('Replacement pending not available (run the replacement pending migration):', e?.message || e); setReplacementPending([]); }
+  }
+
+  // Key by student+LT+week so the modal can quickly check if a candidate has
+  // a pending state for the active week. Resolved entries are deleted, not
+  // flagged, so anything in this map is currently awaiting placement.
+  const pendingByKey = useMemo(() => {
+    const m = {};
+    replacementPending.forEach(p => { m[`${p.student_id}:${p.lesson_type_id}:${p.week_start_date}`] = p; });
+    return m;
+  }, [replacementPending]);
+
+  // ── markForReplacement: remove a swimmer from their booked class for the
+  // week and queue them as a replacement candidate. The row in
+  // weekly_session_students is deleted and a replacement_pending entry is
+  // created (so they appear with an "R-pending" flag in same-LT dropdowns).
+  async function markForReplacement({ studentId, sessionId, weekStartDate, lessonTypeId, lessonTypeName, day, startMinute }){
+    if(!studentId || !sessionId || !lessonTypeId){ alert('Cannot mark for replacement: missing session information.'); return false; }
+    const label = `${DAYS_S[day]} ${minuteToTime(startMinute)}`;
+    if(!confirm(`Move this swimmer out of ${lessonTypeName} ${label} for replacement?\n\nThey will become a replacement candidate in any other ${lessonTypeName} class this week. The original slot will be released.`)) return false;
+    try{
+      await deleteRows('weekly_session_students', { session_id: sessionId, student_id: studentId });
+      // Upsert pending entry — re-marking the same swimmer simply refreshes it.
+      await rest('replacement_pending?on_conflict=student_id,week_start_date,lesson_type_id', { method:'POST', headers:{ Prefer:'return=representation,resolution=merge-duplicates' }, body: JSON.stringify([{ student_id: studentId, week_start_date: weekStartDate, lesson_type_id: lessonTypeId, original_session_label: label, original_session_id: sessionId }]) });
+      await Promise.all([loadSessions(), loadReplacementPending()]);
+      return true;
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to mark for replacement'); return false; }
+  }
+
+  async function clearPendingReplacement({ studentId, weekStartDate, lessonTypeId }){
+    try{
+      await deleteRows('replacement_pending', { student_id: studentId, week_start_date: weekStartDate, lesson_type_id: lessonTypeId });
+      await loadReplacementPending();
+    } catch(_){}
   }
 
   async function loadTcAcceptances(){
@@ -623,6 +666,14 @@ function App(){
       const replRows = (modal.form.replacementRows || []).filter(r => r.name || r.studentId);
       if(sessionId && replRows.length){
         await insertRows('weekly_session_students', replRows.map(r => ({ session_id: sessionId, student_id: r.studentId || null, student_name: (r.name || '').trim(), student_age: r.age != null ? Number(r.age) : null, remark: r.remark || null, is_replacement: true, replacement_from: (r.replacementFrom || '').trim() || null })));
+        // Clear pending-replacement entries for swimmers who were placed by this save.
+        const wk = modal.weekStartDate || selectedWeekStart;
+        for(const r of replRows){
+          if(r.studentId && lt?.id && pendingByKey[`${r.studentId}:${lt.id}:${wk}`]){
+            try{ await deleteRows('replacement_pending', { student_id: r.studentId, week_start_date: wk, lesson_type_id: lt.id }); } catch(_){}
+          }
+        }
+        await loadReplacementPending();
       }
       if(sessionId && inst){
         await insertRows('session_instructors', [{ session_id: sessionId, instructor_id: inst.id }]);
@@ -1233,6 +1284,9 @@ function App(){
       creditByKey={creditByKey}
       adjustCredit={adjustCredit}
       initCredit={initCredit}
+      pendingByKey={pendingByKey}
+      replacementPending={replacementPending}
+      markForReplacement={markForReplacement}
     /> : null}
   </div>;
 }
@@ -2205,12 +2259,24 @@ function EnrollView({ sessions, students, studentById, lessonTypes, lessonTypeBy
 }
 
 // Searchable swimmer combobox used in each enrollment slot.
-function StudentSelect({ valueId, fallbackLabel, studentById, candidates, onPick, conflict }){
+function StudentSelect({ valueId, fallbackLabel, studentById, candidates, onPick, conflict, trialStudentIds, pendingByKey, weekStartDate, lessonTypeId }){
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const sel = valueId ? studentById[valueId] : null;
   const label = sel ? `${sel.name}${sel.age != null ? ` (${sel.age})` : ''}` : (fallbackLabel || '');
   const filtered = (candidates || []).filter(s => !q || (s.name || '').toLowerCase().includes(q.toLowerCase()));
+  // Sort: pending-replacement first, then trial, then the rest alphabetical —
+  // so flagged candidates surface at the top of the dropdown when scheduler
+  // is looking for one.
+  const sortedFiltered = filtered.slice().sort((a, b) => {
+    const aP = !!(pendingByKey && lessonTypeId && weekStartDate && pendingByKey[`${a.id}:${lessonTypeId}:${weekStartDate}`]);
+    const bP = !!(pendingByKey && lessonTypeId && weekStartDate && pendingByKey[`${b.id}:${lessonTypeId}:${weekStartDate}`]);
+    if(aP !== bP) return aP ? -1 : 1;
+    const aT = !!(trialStudentIds && trialStudentIds.has(a.id));
+    const bT = !!(trialStudentIds && trialStudentIds.has(b.id));
+    if(aT !== bT) return aT ? -1 : 1;
+    return (a.name || '').localeCompare(b.name || '');
+  });
   function choose(s){ onPick(s); setOpen(false); setQ(''); }
   return <div className="ssel">
     <div className={`ssel-control ${label ? 'has' : ''}`}>
@@ -2230,9 +2296,19 @@ function StudentSelect({ valueId, fallbackLabel, studentById, candidates, onPick
       <div className="ssel-backdrop" onClick={()=>{ setOpen(false); setQ(''); }} />
       <div className="ssel-pop">
         <div className="ssel-list">
-          {filtered.length ? filtered.map(s => <button key={s.id} type="button" className="ssel-item" onClick={()=>choose(s)}>
-            <span>{s.name}</span><span className="ssel-item-meta">{s.age != null ? `${s.age}y` : ''}{s.package ? ` · ${s.package}` : ''}</span>
-          </button>) : <div className="ssel-empty">No swimmers found</div>}
+          {sortedFiltered.length ? sortedFiltered.map(s => {
+            const isPending = !!(pendingByKey && lessonTypeId && weekStartDate && pendingByKey[`${s.id}:${lessonTypeId}:${weekStartDate}`]);
+            const isTrial = !!(trialStudentIds && trialStudentIds.has(s.id));
+            const pendingInfo = isPending ? pendingByKey[`${s.id}:${lessonTypeId}:${weekStartDate}`] : null;
+            return <button key={s.id} type="button" className={`ssel-item ${isPending ? 'ssel-item-pending' : ''} ${isTrial ? 'ssel-item-trial' : ''}`} onClick={()=>choose(s)}>
+              <span className="ssel-item-main">
+                {isPending ? <span className="ssel-flag ssel-flag-r" title={`Pending replacement from ${pendingInfo.original_session_label}`}>R-pending</span> : null}
+                {isTrial ? <span className="ssel-flag ssel-flag-trial" title="Trial swimmer — one-off booking">trial</span> : null}
+                <span className="ssel-item-name">{s.name}</span>
+              </span>
+              <span className="ssel-item-meta">{s.age != null ? `${s.age}y` : ''}{isPending ? ` · from ${pendingInfo.original_session_label}` : (s.package ? ` · ${s.package}` : '')}</span>
+            </button>;
+          }) : <div className="ssel-empty">No swimmers found</div>}
         </div>
       </div>
     </> : null}
@@ -2667,7 +2743,7 @@ ${TC_COMPANY} Administration`);
   </div>;
 }
 
-function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById, students, studentById, weekEnrollments, familyGroups, membersByGroup, trialStudentIds, creditByKey, adjustCredit, initCredit }){
+function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById, students, studentById, weekEnrollments, familyGroups, membersByGroup, trialStudentIds, creditByKey, adjustCredit, initCredit, pendingByKey, replacementPending, markForReplacement }){
   const [rescheduleOpen, setRescheduleOpen] = useState(false);
   const [reschedDay, setReschedDay] = useState(0);
   const [reschedMinute, setReschedMinute] = useState(480);
@@ -2780,14 +2856,25 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
         <div className="field" style={{gridColumn:'1 / -1'}}>
           <label>Swimmers {previewMax > 0 ? `· ${previewMax} slots (max for this type)` : ''}</label>
           <div className="stu-list">
-            {(modal.form.studentRows || []).map((r, i) => { const isTrial = !!(r.studentId && trialStudentIds && trialStudentIds.has(r.studentId)); return <div className="stu-row" key={i}>
-              <span className="stu-num">{i+1}</span>
-              <div className="stu-fields">
-                <StudentSelect valueId={r.studentId} fallbackLabel={r.studentId ? null : (r.name ? `${r.name}${r.age ? ` (${r.age})` : ''}` : '')} studentById={studentById} candidates={candidates} onPick={(stu)=>pickStudent(i, stu)} conflict={rowConflict(r, i)} />
-                {isTrial ? <span className="trial-pill" title="This swimmer is on a Trial package — one-off booking that won't carry over when duplicating weeks.">trial</span> : null}
-                <input className="input stu-remark" placeholder="Remark (optional)" value={r.remark || ''} onChange={(e)=>setRemark(i, e.target.value)} />
-              </div>
-            </div>; })}
+            {(modal.form.studentRows || []).map((r, i) => {
+              const isTrial = !!(r.studentId && trialStudentIds && trialStudentIds.has(r.studentId));
+              const wk = modal.weekStartDate;
+              const ltId = currentLt?.id;
+              const isPending = !!(r.studentId && ltId && pendingByKey && pendingByKey[`${r.studentId}:${ltId}:${wk}`]);
+              const canMarkReplacement = !isPersonal && r.studentId && modal.id && currentLt && !isPending;
+              return <div className="stu-row" key={i}>
+                <span className="stu-num">{i+1}</span>
+                <div className="stu-fields">
+                  <StudentSelect valueId={r.studentId} fallbackLabel={r.studentId ? null : (r.name ? `${r.name}${r.age ? ` (${r.age})` : ''}` : '')} studentById={studentById} candidates={candidates} onPick={(stu)=>pickStudent(i, stu)} conflict={rowConflict(r, i)} trialStudentIds={trialStudentIds} pendingByKey={pendingByKey} weekStartDate={wk} lessonTypeId={ltId} />
+                  {isTrial ? <span className="trial-pill" title="This swimmer is on a Trial package — one-off booking that won't carry over when duplicating weeks.">trial</span> : null}
+                  {canMarkReplacement ? <button type="button" className="repl-mark-btn" title="Move this swimmer out for replacement — they will become a candidate in other same-type classes this week" onClick={async ()=>{
+                    const ok = await markForReplacement({ studentId:r.studentId, sessionId:modal.id, weekStartDate:wk, lessonTypeId:ltId, lessonTypeName:currentLt.name, day:modal.day, startMinute:modal.startMinute });
+                    if(ok){ /* row is gone from DB after loadSessions; close modal so user sees fresh data */ setModal(null); }
+                  }}>→ R</button> : null}
+                  <input className="input stu-remark" placeholder="Remark (optional)" value={r.remark || ''} onChange={(e)=>setRemark(i, e.target.value)} />
+                </div>
+              </div>;
+            })}
           </div>
           <div className="hint" style={{marginTop:8}}>{bucketFallback ? 'No swimmers tagged for this lesson type yet — showing all. Tag them in the Swimmers tab.' : 'Slots are fixed to the lesson type’s maximum. Leave a slot empty to skip it, or clear a slot with its ×.'}</div>
         </div>
@@ -2803,13 +2890,48 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
           </div>
           <button className="btn btn-ghost small" onClick={()=>setModal({...modal,form:{...modal.form,replacementRows:[...(modal.form.replacementRows||[]),{studentId:null,name:'',age:null,replacementFrom:''}]}})}>+ Add replacement</button>
         </div>
+        {(() => {
+          // Pending-replacement candidates for THIS lesson type + week, surfaced
+          // as a quick-pick row above the manual selector so the scheduler can
+          // place them with one click. Trial candidates (any student on a trial
+          // package eligible by lesson-type bucket) are also surfaced.
+          const wk = modal.weekStartDate;
+          const ltId = currentLt?.id;
+          if(!ltId) return null;
+          const pendingCandidates = (replacementPending || []).filter(p => p.lesson_type_id === ltId && p.week_start_date === wk && !modal.form.replacementRows.some(r => r.studentId === p.student_id));
+          const trialCandidates = students.filter(s => trialStudentIds && trialStudentIds.has(s.id) && (s.lessonTypeIds||[]).includes(ltId) && !modal.form.studentRows.some(r => r.studentId === s.id) && !modal.form.replacementRows.some(r => r.studentId === s.id));
+          if(!pendingCandidates.length && !trialCandidates.length) return null;
+          function addAsReplacement(studentId, fromLabel){
+            const stu = studentById[studentId];
+            if(!stu) return;
+            const rows = [...(modal.form.replacementRows||[]), { studentId, name:stu.name, age:stu.age, replacementFrom: fromLabel || '' }];
+            setModal({ ...modal, form:{ ...modal.form, replacementRows: rows } });
+          }
+          return <div className="repl-quickpick">
+            <div className="small subtle" style={{marginBottom:6,fontWeight:700}}>Quick-pick candidates ({pendingCandidates.length + trialCandidates.length})</div>
+            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+              {pendingCandidates.map(p => { const stu = studentById[p.student_id]; if(!stu) return null; return <button key={`p-${p.id}`} type="button" className="quickpick-chip quickpick-rpending" onClick={()=>addAsReplacement(p.student_id, p.original_session_label)} title={`Pending replacement from ${p.original_session_label}`}><span className="qp-tag qp-tag-r">R-pending</span> {stu.name}{stu.age!=null?` (${stu.age})`:''} <span className="qp-meta">· from {p.original_session_label}</span></button>; })}
+              {trialCandidates.map(s => <button key={`t-${s.id}`} type="button" className="quickpick-chip quickpick-trial" onClick={()=>addAsReplacement(s.id, '(trial)')} title="Trial swimmer — one-off booking"><span className="qp-tag qp-tag-trial">trial</span> {s.name}{s.age!=null?` (${s.age})`:''}</button>)}
+            </div>
+          </div>;
+        })()}
         {!(modal.form.replacementRows||[]).length && <div className="small subtle" style={{padding:'8px 0'}}>No replacement students this week.</div>}
         {(modal.form.replacementRows||[]).map((r,i) => {
+          const wk = modal.weekStartDate;
+          const ltId = currentLt?.id;
+          const isPending = !!(r.studentId && ltId && pendingByKey && pendingByKey[`${r.studentId}:${ltId}:${wk}`]);
+          const isTrialRow = !!(r.studentId && trialStudentIds && trialStudentIds.has(r.studentId));
           const replCandidates = students.filter(s => !modal.form.studentRows.some(sr => sr.studentId === s.id) && !modal.form.replacementRows.some((rr,ri) => ri !== i && rr.studentId === s.id));
           return <div key={i} className="repl-row">
             <span className="repl-badge-sm">R</span>
-            <div style={{flex:'1.5',minWidth:0}}>
-              <StudentSelect valueId={r.studentId} fallbackLabel={r.name||''} studentById={studentById} candidates={replCandidates} onPick={(stu)=>{ const rows=[...(modal.form.replacementRows||[])]; rows[i]={...rows[i],studentId:stu?.id||null,name:stu?.name||'',age:stu?.age??null}; setModal({...modal,form:{...modal.form,replacementRows:rows}}); }} conflict={null} />
+            <div style={{flex:'1.5',minWidth:0,position:'relative'}}>
+              <StudentSelect valueId={r.studentId} fallbackLabel={r.name||''} studentById={studentById} candidates={replCandidates} onPick={(stu)=>{
+                const rows=[...(modal.form.replacementRows||[])];
+                const pendingHit = stu && ltId && pendingByKey && pendingByKey[`${stu.id}:${ltId}:${wk}`];
+                rows[i]={ ...rows[i], studentId:stu?.id||null, name:stu?.name||'', age:stu?.age??null, replacementFrom: pendingHit ? pendingHit.original_session_label : (trialStudentIds && stu && trialStudentIds.has(stu.id) ? '(trial)' : rows[i].replacementFrom) };
+                setModal({...modal,form:{...modal.form,replacementRows:rows}});
+              }} conflict={null} trialStudentIds={trialStudentIds} pendingByKey={pendingByKey} weekStartDate={wk} lessonTypeId={ltId} />
+              {isPending ? <span className="qp-tag qp-tag-r" style={{position:'absolute',top:-8,right:6,zIndex:1}}>R-pending</span> : (isTrialRow ? <span className="qp-tag qp-tag-trial" style={{position:'absolute',top:-8,right:6,zIndex:1}}>trial</span> : null)}
             </div>
             <input className="input" style={{flex:1}} placeholder="From class (e.g. Mon 11AM)" value={r.replacementFrom||''} onChange={(e)=>{ const rows=[...(modal.form.replacementRows||[])]; rows[i]={...rows[i],replacementFrom:e.target.value}; setModal({...modal,form:{...modal.form,replacementRows:rows}}); }} />
             <button className="btn btn-ghost small" style={{flexShrink:0}} onClick={()=>{ const rows=(modal.form.replacementRows||[]).filter((_,ri)=>ri!==i); setModal({...modal,form:{...modal.form,replacementRows:rows}}); }}>×</button>
