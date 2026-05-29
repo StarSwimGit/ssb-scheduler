@@ -325,7 +325,15 @@ function App(){
 
   async function loadStudents(){
     try{
-      const rows = await selectRows('students', '*', '&order=name.asc');
+      const [rows, enrollmentRows] = await Promise.all([
+        selectRows('students', '*', '&order=name.asc'),
+        selectRows('student_enrollments', '*').catch(()=>[]) // table may not exist yet
+      ]);
+      const byStudent = {};
+      (enrollmentRows || []).forEach(e => {
+        if(!byStudent[e.student_id]) byStudent[e.student_id] = [];
+        byStudent[e.student_id].push({ id: e.id, lessonTypeId: e.lesson_type_id, packageId: e.package_id });
+      });
       setStudents((rows || []).map(r => ({
         id: r.id,
         name: r.name || '',
@@ -335,6 +343,7 @@ function App(){
         packageId: r.package_id || null,
         familyGroupId: r.family_group_id || null,
         lessonTypeIds: Array.isArray(r.lesson_type_ids) ? r.lesson_type_ids : [],
+        enrollments: byStudent[r.id] || [],
         isActive: r.is_active !== false,
         guardianName: r.guardian_name || '',
         guardianEmail: r.guardian_email || '',
@@ -869,21 +878,29 @@ function App(){
   }
 
   // ───── Swimmer registry CRUD ──────────────────────────────────────────────
-  async function addStudent({ name, age, gender, packageId, lessonTypeIds, guardianName, guardianEmail, guardianPhone, emergencyPhone, emergencyRelationship, emergencySameAsGuardian }){
+  async function addStudent({ name, age, gender, enrollments, guardianName, guardianEmail, guardianPhone, emergencyPhone, emergencyRelationship, emergencySameAsGuardian }){
     try{
       setError('');
-      const pkg = packageId ? packageById(packageId) : null;
+      const validEnrollments = (enrollments || []).filter(e => e.lessonTypeId);
+      const lessonTypeIds = [...new Set(validEnrollments.map(e => e.lessonTypeId))];
+      const primaryPackageId = validEnrollments[0]?.packageId || null;
+      const primaryPkg = primaryPackageId ? packageById(primaryPackageId) : null;
       const sameAsG = !!emergencySameAsGuardian;
-      await insertRows('students', {
+      const inserted = await insertRows('students', {
         name, age: (age === '' || age == null) ? null : Number(age),
         gender: gender || null,
-        package_id: packageId || null, package: pkg ? pkg.name : null,
-        lesson_type_ids: lessonTypeIds || [], is_active: true,
+        package_id: primaryPackageId, package: primaryPkg ? primaryPkg.name : null,
+        lesson_type_ids: lessonTypeIds, is_active: true,
         guardian_name: guardianName || null, guardian_email: guardianEmail || null, guardian_phone: guardianPhone || null,
         emergency_phone: sameAsG ? (guardianPhone || null) : (emergencyPhone || null),
         emergency_relationship: sameAsG ? 'Parent / Guardian' : (emergencyRelationship || null),
         emergency_same_as_guardian: sameAsG
       });
+      const studentId = inserted?.[0]?.id;
+      if(studentId && validEnrollments.length){
+        try{ await insertRows('student_enrollments', validEnrollments.map(e => ({ student_id: studentId, lesson_type_id: e.lessonTypeId, package_id: e.packageId || null }))); }
+        catch(err){ console.warn('Could not insert enrollments (table may not exist yet):', err?.message || err); }
+      }
       await loadStudents();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to add swimmer'); }
   }
@@ -894,15 +911,33 @@ function App(){
       if('name' in patch) body.name = patch.name;
       if('age' in patch) body.age = (patch.age === '' || patch.age == null) ? null : Number(patch.age);
       if('gender' in patch) body.gender = patch.gender || null;
-      if('packageId' in patch){ const pkg = patch.packageId ? packageById(patch.packageId) : null; body.package_id = patch.packageId || null; body.package = pkg ? pkg.name : null; }
-      if('lessonTypeIds' in patch) body.lesson_type_ids = patch.lessonTypeIds || [];
       if('guardianName' in patch) body.guardian_name = patch.guardianName || null;
       if('guardianEmail' in patch) body.guardian_email = patch.guardianEmail || null;
       if('guardianPhone' in patch) body.guardian_phone = patch.guardianPhone || null;
       if('emergencySameAsGuardian' in patch) body.emergency_same_as_guardian = !!patch.emergencySameAsGuardian;
       if('emergencyPhone' in patch) body.emergency_phone = patch.emergencyPhone || null;
       if('emergencyRelationship' in patch) body.emergency_relationship = patch.emergencyRelationship || null;
+      // Enrollments: mirror onto legacy columns for backward compat, then
+      // sync the student_enrollments table (delete-all then insert).
+      if('enrollments' in patch){
+        const validEnrollments = (patch.enrollments || []).filter(e => e.lessonTypeId);
+        const lessonTypeIds = [...new Set(validEnrollments.map(e => e.lessonTypeId))];
+        const primaryPackageId = validEnrollments[0]?.packageId || null;
+        const primaryPkg = primaryPackageId ? packageById(primaryPackageId) : null;
+        body.lesson_type_ids = lessonTypeIds;
+        body.package_id = primaryPackageId;
+        body.package = primaryPkg ? primaryPkg.name : null;
+      }
       await patchRows('students', { id }, body);
+      if('enrollments' in patch){
+        const validEnrollments = (patch.enrollments || []).filter(e => e.lessonTypeId);
+        try{
+          await deleteRows('student_enrollments', { student_id: id });
+          if(validEnrollments.length){
+            await insertRows('student_enrollments', validEnrollments.map(e => ({ student_id: id, lesson_type_id: e.lessonTypeId, package_id: e.packageId || null })));
+          }
+        } catch(err){ console.warn('Could not sync enrollments (table may not exist yet):', err?.message || err); }
+      }
       await loadStudents();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to update swimmer'); }
   }
@@ -2315,12 +2350,52 @@ function StudentSelect({ valueId, fallbackLabel, studentById, candidates, onPick
   </div>;
 }
 
+// Shared component used by both the register form and the editor — renders
+// a list of (Lesson Type, Package) rows with a "+ Add Lessons" button.
+// Already-selected lesson types are filtered out of the dropdown for the
+// other rows so the unique(student_id, lesson_type_id) constraint is never
+// violated by the UI.
+function LessonsEditor({ enrollments, setEnrollments, lessonTypes, packages }){
+  function update(idx, field, value){
+    const next = enrollments.map((e, i) => i === idx ? { ...e, [field]: value, ...(field === 'lessonTypeId' ? { packageId: '' } : {}) } : e);
+    setEnrollments(next);
+  }
+  function add(){ setEnrollments([...enrollments, { lessonTypeId: '', packageId: '' }]); }
+  function remove(idx){ setEnrollments(enrollments.filter((_, i) => i !== idx)); }
+  return <>
+    <div className="lessons-rows">
+      {enrollments.map((e, i) => {
+        const ltPkgs = e.lessonTypeId ? (packages || []).filter(p => p.lesson_type_id === e.lessonTypeId && p.is_active !== false) : [];
+        const usedLtIds = enrollments.map((en, j) => j !== i ? en.lessonTypeId : null).filter(Boolean);
+        const availableLts = (lessonTypes || []).filter(lt => !usedLtIds.includes(lt.id));
+        return <div key={i} className="lesson-row">
+          <select className="select" value={e.lessonTypeId} onChange={ev => update(i, 'lessonTypeId', ev.target.value)}>
+            <option value="">— Lesson Type —</option>
+            {availableLts.map(lt => <option key={lt.id} value={lt.id}>{lt.name}</option>)}
+          </select>
+          <select className="select" value={e.packageId || ''} onChange={ev => update(i, 'packageId', ev.target.value)} disabled={!e.lessonTypeId}>
+            <option value="">{e.lessonTypeId ? '— Package —' : '← pick type first'}</option>
+            {ltPkgs.map(p => <option key={p.id} value={p.id}>{p.name}{p.amount != null ? ` · RM${p.amount}` : ''}{billingText(p.billing_mode, p.billing_count) ? ` · ${billingText(p.billing_mode, p.billing_count)}` : ''}</option>)}
+          </select>
+          {enrollments.length > 1 ? <button type="button" className="lesson-row-x" onClick={() => remove(i)} title="Remove this lesson">×</button> : <span className="lesson-row-x-spacer" />}
+        </div>;
+      })}
+    </div>
+    <button type="button" className="btn btn-ghost lesson-add-btn" onClick={add}>+ Add Lessons</button>
+  </>;
+}
+
 function StudentEditor({ row, lessonTypes, packages, onSave }){
   const [name, setName] = useState(row.name || '');
   const [age, setAge] = useState(row.age == null ? '' : String(row.age));
   const [gender, setGender] = useState(row.gender || null);
-  const [pkgId, setPkgId] = useState(row.packageId || '');
-  const [types, setTypes] = useState((row.lessonTypeIds || []).slice());
+  const [enrollments, setEnrollments] = useState(
+    (row.enrollments && row.enrollments.length)
+      ? row.enrollments.map(e => ({ lessonTypeId: e.lessonTypeId || '', packageId: e.packageId || '' }))
+      : (row.lessonTypeIds && row.lessonTypeIds.length
+          ? row.lessonTypeIds.map((ltId, i) => ({ lessonTypeId: ltId, packageId: i === 0 ? (row.packageId || '') : '' }))
+          : [{ lessonTypeId: '', packageId: '' }])
+  );
   const [guardianName, setGuardianName] = useState(row.guardianName || '');
   const [guardianEmail, setGuardianEmail] = useState(row.guardianEmail || '');
   const [guardianPhone, setGuardianPhone] = useState(row.guardianPhone || '');
@@ -2328,27 +2403,23 @@ function StudentEditor({ row, lessonTypes, packages, onSave }){
   const [emergencyPhone, setEmergencyPhone] = useState(row.emergencyPhone || '');
   const [emergencyRel, setEmergencyRel] = useState(row.emergencyRelationship || '');
   const [adultSelf, setAdultSelf] = useState(false);
-  function toggle(id){ setTypes(t => t.includes(id) ? t.filter(x => x !== id) : [...t, id]); }
   function handleSameAsGuardian(v){ setSameAsGuardian(v); if(v){ setEmergencyPhone(guardianPhone); setEmergencyRel('Parent / Guardian'); } }
   function handleAdultSelf(v){ setAdultSelf(v); if(v) setGuardianName(name); }
-  const ltPackages = pkgId ? [] : [];
-  const selectedLtId = (packages||[]).find(p=>p.id===pkgId)?.lesson_type_id;
-  const ltPkgs = selectedLtId ? (packages||[]).filter(p=>p.lesson_type_id===selectedLtId&&p.is_active!==false) : packages||[];
 
   return <div className="lesson-edit">
     <div className="student-form-section">
-      <div className="student-form-section-title">Basic Info</div>
+      <div className="student-form-section-title">Swimmer Details</div>
       <div className="form-grid" style={{gridTemplateColumns:'1fr 80px auto'}}>
-        <div className="field"><label>Name</label><input className="input" value={name} onChange={e=>setName(e.target.value)} /></div>
-        <div className="field"><label>Age (yrs)</label><input className="input" type="number" min="0" max="120" value={age} onChange={e=>setAge(e.target.value)} /></div>
+        <div className="field"><label>Name</label><input className="input" value={name} onChange={e=>{ setName(e.target.value); if(adultSelf) setGuardianName(e.target.value); }} /></div>
+        <div className="field"><label>Age (yrs)</label><input className="input" type="number" min="0" max="120" step="0.5" value={age} onChange={e=>setAge(e.target.value)} /></div>
         <div className="field"><label>Gender</label>
           <div className="gender-toggle"><button type="button" className={`gender-opt ${gender==='female'?'active':''}`} onClick={()=>setGender(gender==='female'?null:'female')}>♀ F</button><button type="button" className={`gender-opt ${gender==='male'?'active':''}`} onClick={()=>setGender(gender==='male'?null:'male')}>♂ M</button></div>
         </div>
       </div>
-      <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr'}}>
-        <div className="field"><label>Lesson Types</label><div className="type-picks">{lessonTypes.map(t => { const on = types.includes(t.id); return <button key={t.id} type="button" className={`chip chip-toggle ${on?'':'chip-off'}`} style={on?{background:t.bg_color,borderColor:t.border_color,color:t.text_color}:undefined} onClick={()=>toggle(t.id)}>{t.name}</button>; })}</div></div>
-        <div className="field"><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">(none)</option>{packageOptionGroups(packages, lessonTypes)}</select></div>
-      </div>
+    </div>
+    <div className="student-form-section">
+      <div className="student-form-section-title">Lessons</div>
+      <LessonsEditor enrollments={enrollments} setEnrollments={setEnrollments} lessonTypes={lessonTypes} packages={packages} />
     </div>
     <div className="student-form-section">
       <div className="student-form-section-title">Parent / Guardian</div>
@@ -2374,7 +2445,7 @@ function StudentEditor({ row, lessonTypes, packages, onSave }){
     {!row.tcAcceptedAt && <div className="tc-status-row tc-pending">⚠ Terms &amp; Conditions not yet accepted — go to the T&amp;C tab to send for signature.</div>}
     <div style={{display:'flex',justifyContent:'flex-end',marginTop:10}}><button className="btn btn-primary" onClick={()=>{
       const v = name.trim(); if(!v) return;
-      onSave({ name:v, age, gender, packageId:pkgId||null, lessonTypeIds:types, guardianName, guardianEmail, guardianPhone, emergencySameAsGuardian:sameAsGuardian, emergencyPhone: sameAsGuardian?guardianPhone:emergencyPhone, emergencyRelationship: sameAsGuardian?'Parent / Guardian':emergencyRel });
+      onSave({ name:v, age, gender, enrollments, guardianName, guardianEmail, guardianPhone, emergencySameAsGuardian:sameAsGuardian, emergencyPhone: sameAsGuardian?guardianPhone:emergencyPhone, emergencyRelationship: sameAsGuardian?'Parent / Guardian':emergencyRel });
     }}>Save Swimmer</button></div>
   </div>;
 }
@@ -2459,8 +2530,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
   const [gender, setGender] = useState(null);
-  const [pkgId, setPkgId] = useState('');
-  const [typeId, setTypeId] = useState('');
+  const [enrollments, setEnrollments] = useState([{ lessonTypeId: '', packageId: '' }]);
   const [guardianName, setGuardianName] = useState('');
   const [guardianEmail, setGuardianEmail] = useState('');
   const [guardianPhone, setGuardianPhone] = useState('');
@@ -2500,7 +2570,6 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
   function handleAdultSelf(v){ setAdultSelf(v); if(v) setGuardianName(name); }
   function handleSameAsG(v){ setSameAsGuardian(v); if(v){ setEmergencyPhone(guardianPhone); setEmergencyRel('Parent / Guardian'); } }
 
-  const ltPackages = typeId ? (packages || []).filter(p => p.lesson_type_id === typeId && p.is_active !== false) : [];
   const filtered = students.filter(s => !q || (s.name || '').toLowerCase().includes(q.toLowerCase()));
 
   const displayList = useMemo(() => {
@@ -2524,7 +2593,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
 
   const COLS = 8;
 
-  function resetForm(){ setName(''); setAge(''); setGender(null); setPkgId(''); setTypeId(''); setGuardianName(''); setGuardianEmail(''); setGuardianPhone(''); setSameAsGuardian(false); setEmergencyPhone(''); setEmergencyRel(''); setAdultSelf(false); }
+  function resetForm(){ setName(''); setAge(''); setGender(null); setEnrollments([{ lessonTypeId: '', packageId: '' }]); setGuardianName(''); setGuardianEmail(''); setGuardianPhone(''); setSameAsGuardian(false); setEmergencyPhone(''); setEmergencyRel(''); setAdultSelf(false); }
 
   return <>
     <div className="card" style={{marginBottom:16}}>
@@ -2533,16 +2602,19 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
 
       <div className="student-form-section">
         <div className="student-form-section-title">Swimmer Details</div>
-        <div className="swimmer-add-row">
-          <div className="field" style={{margin:0,flex:'2 1 160px'}}><label>Full Name</label><input className="input" value={name} onChange={e=>{ setName(e.target.value); if(adultSelf) setGuardianName(e.target.value); }} placeholder="Swimmer's full name" /></div>
-          <div className="field" style={{margin:0,flex:'0 0 80px'}}><label>Age (yrs)</label><input className="input" type="number" min="0" max="120" value={age} onChange={e=>setAge(e.target.value)} placeholder="0" /></div>
+        <div className="form-grid" style={{gridTemplateColumns:'1fr 80px auto'}}>
+          <div className="field" style={{margin:0}}><label>Full Name</label><input className="input" value={name} onChange={e=>{ setName(e.target.value); if(adultSelf) setGuardianName(e.target.value); }} placeholder="Swimmer's full name" /></div>
+          <div className="field" style={{margin:0}}><label>Age (yrs)</label><input className="input" type="number" min="0" max="120" step="0.5" value={age} onChange={e=>setAge(e.target.value)} placeholder="0" /></div>
           <div className="field" style={{margin:0}}>
             <label>Gender</label>
             <div className="gender-toggle"><button type="button" className={`gender-opt ${gender==='female'?'active':''}`} onClick={()=>setGender(gender==='female'?null:'female')}>♀ F</button><button type="button" className={`gender-opt ${gender==='male'?'active':''}`} onClick={()=>setGender(gender==='male'?null:'male')}>♂ M</button></div>
           </div>
-          <div className="field" style={{margin:0,flex:'1.5 1 130px'}}><label>Lesson Type</label><select className="select" value={typeId} onChange={e=>{ setTypeId(e.target.value); setPkgId(''); }}><option value="">(none)</option>{lessonTypes.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
-          <div className="field" style={{margin:0,flex:'1.5 1 130px'}}><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)} disabled={!typeId}><option value="">{typeId?'(none)':'← type first'}</option>{ltPackages.map(p=><option key={p.id} value={p.id}>{p.name}{p.amount!=null?` · RM${p.amount}`:''}{billingText(p.billing_mode,p.billing_count)?` · ${billingText(p.billing_mode,p.billing_count)}`:''}</option>)}</select></div>
         </div>
+      </div>
+
+      <div className="student-form-section">
+        <div className="student-form-section-title">Lessons</div>
+        <LessonsEditor enrollments={enrollments} setEnrollments={setEnrollments} lessonTypes={lessonTypes} packages={packages} />
       </div>
 
       <div className="student-form-section">
@@ -2568,7 +2640,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
         <button className="btn btn-ghost" onClick={resetForm}>Clear</button>
         <button className="btn btn-primary" onClick={()=>{
           const v = name.trim(); if(!v) return;
-          addStudent({ name:v, age, gender, packageId:pkgId||null, lessonTypeIds:typeId?[typeId]:[], guardianName, guardianEmail, guardianPhone, emergencySameAsGuardian:sameAsGuardian, emergencyPhone:sameAsGuardian?guardianPhone:emergencyPhone, emergencyRelationship:sameAsGuardian?'Parent / Guardian':emergencyRel });
+          addStudent({ name:v, age, gender, enrollments, guardianName, guardianEmail, guardianPhone, emergencySameAsGuardian:sameAsGuardian, emergencyPhone:sameAsGuardian?guardianPhone:emergencyPhone, emergencyRelationship:sameAsGuardian?'Parent / Guardian':emergencyRel });
           resetForm();
         }}>Register Swimmer</button>
       </div>
