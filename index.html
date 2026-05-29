@@ -334,6 +334,16 @@
     .tc-scroll-hint{position:sticky;bottom:0;text-align:center;font-size:11px;color:var(--text-3);background:linear-gradient(transparent,var(--surface-2) 60%);padding:12px 0 4px;font-weight:700;pointer-events:none}
     .tc-success{background:var(--green-bg);border-color:var(--green-bd)}
     .tc-success .small{color:var(--green-tx)}
+
+    /* ── Lessons rows (register + edit) ──────────────────────────────────── */
+    .lessons-rows{display:flex;flex-direction:column;gap:8px}
+    .lesson-row{display:grid;grid-template-columns:1.4fr 1.6fr 36px;gap:8px;align-items:center}
+    .lesson-row-x{width:36px;height:36px;padding:0;font-size:18px;line-height:1;background:transparent;border:1px solid var(--border-2);border-radius:8px;color:var(--text-3);cursor:pointer;transition:.15s ease}
+    .lesson-row-x:hover{background:var(--red-bg);border-color:var(--red-bd);color:var(--red-tx)}
+    .lesson-row-x-spacer{width:36px;height:36px}
+    .lesson-add-btn{align-self:flex-start;margin-top:4px;font-weight:700}
+    .lesson-add-btn:hover{background:var(--primary-soft);color:var(--primary-on-soft);border-color:var(--primary)}
+    @media (max-width:768px){.lesson-row{grid-template-columns:1fr 1fr 36px}}
     .reschedule-tag{font-size:11px;font-weight:800;color:var(--primary-on-soft);background:var(--primary-soft);border:1px solid #D9D4F0;padding:1px 5px;border-radius:5px;margin-left:5px;cursor:default}
 
     /* ── Credit balance UI ──────────────────────────────────────────────── */
