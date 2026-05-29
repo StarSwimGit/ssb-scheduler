@@ -230,6 +230,7 @@ function App(){
   const [sessions,setSessions] = useState([]);
   const [students,setStudents] = useState([]);
   const [familyGroups,setFamilyGroups] = useState([]);
+  const [creditBalances,setCreditBalances] = useState([]);
   const [remarks,setRemarks] = useState({});
   const [options,setOptions] = useState({ instructors:[], durations:[], lessonTypes:[], pools:[], operatingHours:[], packages:[] });
   const [monthCursor,setMonthCursor] = useState(new Date());
@@ -251,7 +252,7 @@ function App(){
     try{
       setLoading(true); setError('');
       await loadOptions();
-      await Promise.all([loadSessions(), loadStudents(), loadGroups(), loadRemarks(monthCursor)]);
+      await Promise.all([loadSessions(), loadStudents(), loadGroups(), loadCreditBalances(), loadRemarks(monthCursor)]);
       setStatus('Connected');
     } catch(err){ handleErr(err); }
     finally{ setLoading(false); }
@@ -292,7 +293,7 @@ function App(){
     (studentRows || []).forEach(r => {
       const key = String(r.session_id);
       if(!studentsBySession[key]) studentsBySession[key] = [];
-      studentsBySession[key].push({ id:r.id, studentId:r.student_id || null, name:r.student_name || '', age:(r.student_age === null || r.student_age === undefined ? null : Number(r.student_age)), remark:r.remark || '' });
+      studentsBySession[key].push({ id:r.id, studentId:r.student_id || null, name:r.student_name || '', age:(r.student_age === null || r.student_age === undefined ? null : Number(r.student_age)), remark:r.remark || '', isReplacement: !!r.is_replacement, replacementFrom: r.replacement_from || '' });
     });
     const instructorsBySession = {};
     (instructorJoinRows || []).forEach(r => {
@@ -312,6 +313,8 @@ function App(){
       poolId: r.pool_id || null,
       familyGroupId: r.family_group_id || null,
       legacyInstructor: r.instructor || '',
+      rescheduledFromDay: r.rescheduled_from_day != null ? Number(r.rescheduled_from_day) - 1 : null,
+      rescheduledFromStartMinute: r.rescheduled_from_start_minute != null ? Number(r.rescheduled_from_start_minute) : null,
       students: studentsBySession[String(r.id)] || [],
       instructors: instructorsBySession[String(r.id)] || []
     }));
@@ -340,6 +343,21 @@ function App(){
       setFamilyGroups((rows || []).map(r => ({ id:r.id, name:r.name || '', packageId:r.package_id || null })));
     } catch(e){ console.warn('Family groups not available yet (run the family groups migration):', e?.message || e); setFamilyGroups([]); }
   }
+
+  async function loadCreditBalances(){
+    try{
+      const rows = await selectRows('student_credit_balances', '*');
+      setCreditBalances(rows || []);
+    } catch(e){ console.warn('Credit balances not available (run the replacement+credits migration):', e?.message || e); setCreditBalances([]); }
+  }
+
+  // creditBalanceKey — quickly look up a balance by student + lesson type.
+  function creditKey(studentId, lessonTypeId){ return `${studentId}:${lessonTypeId}`; }
+  const creditByKey = useMemo(() => {
+    const m = {};
+    creditBalances.forEach(b => { m[creditKey(b.student_id, b.lesson_type_id)] = b; });
+    return m;
+  }, [creditBalances]);
 
   async function loadRemarks(cursor){
     const start = new Date(cursor.getFullYear(), cursor.getMonth()-1, 1);
@@ -468,8 +486,12 @@ function App(){
 
   function openEdit(item){
     const firstInst = item.instructors[0] || null;
+    const regularStudents = (item.students || []).filter(s => !s.isReplacement);
+    const replacementStudents = (item.students || []).filter(s => s.isReplacement);
     setModal({
       mode:'edit', id:item.id, weekStartDate:item.weekStartDate, day:item.day, startMinute:item.startMinute,
+      rescheduledFromDay: item.rescheduledFromDay ?? null,
+      rescheduledFromStartMinute: item.rescheduledFromStartMinute ?? null,
       form:{
         type:item.type,
         lessonTypeId:item.lessonTypeId,
@@ -478,7 +500,8 @@ function App(){
         poolId: item.poolId,
         familyGroupId: item.familyGroupId || null,
         durationMinutes:item.durationMinutes,
-        studentRows: buildStudentRows(item.students, lessonTypeByName(item.type)?.students_per_instructor)
+        studentRows: buildStudentRows(regularStudents, lessonTypeByName(item.type)?.students_per_instructor),
+        replacementRows: replacementStudents.map(s => ({ studentId:s.studentId, name:s.name, age:s.age, replacementFrom:s.replacementFrom || '' }))
       }
     });
   }
@@ -545,7 +568,11 @@ function App(){
         lesson_type_id: lt ? lt.id : null,
         pool_id: modal.form.poolId || null,
         family_group_id: modal.form.familyGroupId || null,
-        instructor: inst ? inst.name : ''
+        instructor: inst ? inst.name : '',
+        // Reschedule tracking (personal classes): store original position so
+        // duplicate week can restore it. Null = not rescheduled.
+        rescheduled_from_day: modal.rescheduledFromDay != null ? modal.rescheduledFromDay + 1 : null,
+        rescheduled_from_start_minute: modal.rescheduledFromStartMinute ?? null
       };
       let sessionId = modal.id;
       if(modal.id){
@@ -557,17 +584,55 @@ function App(){
         const inserted = await insertRows('weekly_sessions', payload);
         sessionId = inserted?.[0]?.id;
       }
+      // Regular enrolled students
       const rows = (modal.form.studentRows || []).map(r => ({ studentId:r.studentId || null, name:(r.name || '').trim(), age:r.age, remark:(r.remark || '').trim() })).filter(r => r.name || r.studentId);
       if(sessionId && rows.length){
-        await insertRows('weekly_session_students', rows.map(r => ({ session_id: sessionId, student_id: r.studentId, student_name: r.name, student_age: (r.age === '' || r.age === null || r.age === undefined) ? null : Number(r.age), remark: r.remark || null })));
+        await insertRows('weekly_session_students', rows.map(r => ({ session_id: sessionId, student_id: r.studentId, student_name: r.name, student_age: (r.age === '' || r.age === null || r.age === undefined) ? null : Number(r.age), remark: r.remark || null, is_replacement: false })));
+      }
+      // Replacement students (group classes) — one-off, tagged separately
+      const replRows = (modal.form.replacementRows || []).filter(r => r.name || r.studentId);
+      if(sessionId && replRows.length){
+        await insertRows('weekly_session_students', replRows.map(r => ({ session_id: sessionId, student_id: r.studentId || null, student_name: (r.name || '').trim(), student_age: r.age != null ? Number(r.age) : null, remark: r.remark || null, is_replacement: true, replacement_from: (r.replacementFrom || '').trim() || null })));
       }
       if(sessionId && inst){
         await insertRows('session_instructors', [{ session_id: sessionId, instructor_id: inst.id }]);
+      }
+      // Auto-seed credit balance for personal-class students with no existing balance
+      if(lt && lt.class_type === 'personal' && lt.id && sessionId){
+        const pkg = (options.packages || []).find(p => p.lesson_type_id === lt.id && (p.name || '').toLowerCase() === 'normal' && p.is_active !== false);
+        const initCredits = pkg?.billing_count ? Number(pkg.billing_count) : 0;
+        for(const r of rows){
+          if(!r.studentId) continue;
+          const key = creditKey(r.studentId, lt.id);
+          if(!creditByKey[key] && initCredits > 0){
+            try{ await insertRows('student_credit_balances', [{ student_id: r.studentId, lesson_type_id: lt.id, initial_balance: initCredits, remaining_balance: initCredits }]); }
+            catch(_){} // ignore duplicate-key on parallel saves
+          }
+        }
+        await loadCreditBalances();
       }
       await loadSessions();
       setModal(null);
     } catch(err){ handleErr(err); alert(err.message || 'Failed to save session'); }
     finally{ setSaveBusy(false); }
+  }
+
+  async function adjustCredit(studentId, lessonTypeId, delta){
+    const key = creditKey(studentId, lessonTypeId);
+    const bal = creditByKey[key];
+    if(!bal) return;
+    const next = Math.max(0, (bal.remaining_balance || 0) + delta);
+    try{ await patchRows('student_credit_balances', { student_id: studentId, lesson_type_id: lessonTypeId }, { remaining_balance: next, updated_at: new Date().toISOString() }); await loadCreditBalances(); }
+    catch(err){ alert(err.message || 'Failed to adjust credit'); }
+  }
+
+  async function initCredit(studentId, lessonTypeId, initial){
+    const n = Number(initial);
+    if(!n || n < 0) return;
+    try{
+      await rest(`student_credit_balances?select=*`, { method:'POST', headers:{ Prefer:'return=representation,resolution=merge-duplicates' }, body: JSON.stringify([{ student_id:studentId, lesson_type_id:lessonTypeId, initial_balance:n, remaining_balance:n }]) });
+      await loadCreditBalances();
+    } catch(err){ alert(err.message || 'Failed to set credits'); }
   }
 
   async function deleteSession(){
@@ -811,24 +876,30 @@ function App(){
         ? `\n\nNote: ${trialInSource} trial swimmer${trialInSource===1?'':'s'} on these classes won’t be carried over — trial bookings are one-offs by design. Re-add them next week if they convert to a regular package.`
         : '';
       if(!confirm(`Duplicate all classes from ${prevWeekStart} into ${selectedWeekStart}? Existing classes in the selected week will remain.${trialNote}`)) return;
+      // Rescheduled personal sessions: restore original day/time for the new week.
+      // Replacement students: one-off only — skip on duplicate.
       const payload = sourceSessions.map(s => ({
         week_start_date: selectedWeekStart,
-        weekday: s.day + 1,
-        start_minute: s.startMinute,
+        // If session was rescheduled for last week, restore its canonical position.
+        weekday:      s.rescheduledFromDay          != null ? s.rescheduledFromDay + 1          : s.day + 1,
+        start_minute: s.rescheduledFromStartMinute  != null ? s.rescheduledFromStartMinute  : s.startMinute,
         duration_minutes: s.durationMinutes,
         lesson_type: s.type,
         lesson_type_id: s.lessonTypeId,
         pool_id: s.poolId,
         family_group_id: s.familyGroupId || null,
-        instructor: s.legacyInstructor
+        instructor: s.legacyInstructor,
+        rescheduled_from_day: null,           // clear reschedule flag in the new week
+        rescheduled_from_start_minute: null
       }));
       const inserted = await insertRows('weekly_sessions', payload);
       const studentPayload = [];
       const instructorPayload = [];
-      let skippedTrials = 0;
+      let skippedTrials = 0, skippedReplacements = 0;
       (inserted || []).forEach((row, idx) => {
         const src = sourceSessions[idx];
         (src.students || []).forEach(st => {
+          if(st.isReplacement){ skippedReplacements++; return; } // one-off — do not carry forward
           if(st.studentId && trialStudentIds.has(st.studentId)){ skippedTrials++; return; }
           studentPayload.push({ session_id: row.id, student_id: st.studentId || null, student_name: st.name, student_age: (st.age === null || st.age === undefined) ? null : Number(st.age) });
         });
@@ -837,7 +908,8 @@ function App(){
       if(studentPayload.length) await insertRows('weekly_session_students', studentPayload);
       if(instructorPayload.length) await insertRows('session_instructors', instructorPayload);
       await loadSessions();
-      setStatus(`Duplicated ${sourceSessions.length} class${sourceSessions.length===1?'':'es'} from previous week${skippedTrials ? ` · skipped ${skippedTrials} trial swimmer${skippedTrials===1?'':'s'}` : ''}.`);
+      const skips = [skippedTrials ? `${skippedTrials} trial` : null, skippedReplacements ? `${skippedReplacements} replacement` : null].filter(Boolean);
+      setStatus(`Duplicated ${sourceSessions.length} class${sourceSessions.length===1?'':'es'} from previous week${skips.length ? ` · skipped ${skips.join(' and ')} swimmer${(skippedTrials+skippedReplacements)===1?'':'s'}` : ''}.`);
     } catch(err){ handleErr(err); alert(err.message || 'Failed to duplicate previous week'); }
   }
 
@@ -1007,6 +1079,7 @@ function App(){
         allTypesShown={allTypesShown}
         onExportExcel={exportWeekExcel}
         trialStudentIds={trialStudentIds}
+        creditByKey={creditByKey}
       />}
 
       {!loading && view==='day' && <DailyView
@@ -1021,6 +1094,7 @@ function App(){
         onThisWeek={()=>setSelectedDate(todayStr())}
         onExportExcel={exportWeekExcel}
         trialStudentIds={trialStudentIds}
+        creditByKey={creditByKey}
       />}
 
       {!loading && view==='month' && <MonthView
@@ -1107,6 +1181,9 @@ function App(){
       familyGroups={familyGroups}
       membersByGroup={membersByGroup}
       trialStudentIds={trialStudentIds}
+      creditByKey={creditByKey}
+      adjustCredit={adjustCredit}
+      initCredit={initCredit}
     /> : null}
   </div>;
 }
@@ -1122,7 +1199,7 @@ function WeekView(props){
           selectedDate, sessionsForDate, selectedWeekStart, currentWeekStart, isFutureSelectedWeek,
           onPrevWeek, onNextWeek, onThisWeek, onDuplicateWeek, onClearDay, onJumpToDay,
           isTypeEnabled, onToggleType, onToggleAllTypes, allTypesShown, onExportExcel,
-          trialStudentIds } = props;
+          trialStudentIds, creditByKey } = props;
 
   const [printMenu, setPrintMenu] = useState(false);
 
@@ -1162,7 +1239,7 @@ function WeekView(props){
         {DAYS_S.map((_,di) => {
           const cell = weekBlocks[di].packed.filter(b => b.startMinute >= h && b.startMinute < h + 60);
           return <div key={di+'-'+h} className="wa-cell" onClick={() => onAdd(di, minuteToSlot(h), selectedPoolId || undefined)}>
-            {cell.map(block => <AgendaCard key={block.id} block={block} colorsFor={colorsFor} lessonTypeByName={lessonTypeByName} poolById={poolById} showPoolBadge={showPoolBadge} onEdit={onEdit} trialStudentIds={trialStudentIds} />)}
+            {cell.map(block => <AgendaCard key={block.id} block={block} colorsFor={colorsFor} lessonTypeByName={lessonTypeByName} poolById={poolById} showPoolBadge={showPoolBadge} onEdit={onEdit} trialStudentIds={trialStudentIds} creditByKey={creditByKey} />)}
           </div>;
         })}
       </React.Fragment>)}
@@ -1223,7 +1300,7 @@ function WeekView(props){
 
 // M2.2: agenda card — a static, full-width card inside a day-hour cell. Details
 // stack on separate lines; the student list wraps to use vertical space.
-function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadge, onEdit, trialStudentIds }){
+function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadge, onEdit, trialStudentIds, creditByKey }){
   const c = colorsFor(block.type);
   const lt = lessonTypeByName(block.type);
   const cap = sessionCapacity(block, lt);
@@ -1232,6 +1309,8 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
   const isOver = cap.status === 'over';
   const missingInst = block.instructors.length === 0;
   const instName = (block.instructors[0]?.name) || block.legacyInstructor || '';
+  const isPersonal = lessonTypeByName(block.type)?.class_type === 'personal';
+  const isRescheduled = block.rescheduledFromDay != null;
   return <div className={`wa-card ${isOver?'event-over':''} ${missingInst?'wa-card-warn':''}`}
     onClick={(e)=>{e.stopPropagation(); onEdit(block);}}
     style={{ background:c.bg, borderLeft:`3px solid ${c.bd}`, color:c.tx }}>
@@ -1240,10 +1319,15 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
       <span className="wa-card-title">{block.type}</span>
       {cap.max > 0 ? <span className="cap-chip" style={{background:chip.bg, color:chip.tx, borderColor:chip.bd}}>{cap.current}/{cap.max}</span> : <span className="cap-chip cap-chip-unknown">{cap.current}</span>}
     </div>
-    <div className="wa-card-line">{showPoolBadge && pool ? <span className="event-pool-pill">{pool.name}</span> : null}{compactRange(block.startMinute, block.durationMinutes)}</div>
+    <div className="wa-card-line">{showPoolBadge && pool ? <span className="event-pool-pill">{pool.name}</span> : null}{compactRange(block.startMinute, block.durationMinutes)}{isRescheduled ? <span className="reschedule-tag" title={`Rescheduled — was ${DAYS_S[block.rescheduledFromDay]} ${minuteToTime(block.rescheduledFromStartMinute)}`}>⇄</span> : null}</div>
     <div className={`wa-card-line wa-card-inst ${missingInst?'inst-missing':''}`}>{missingInst ? <span className="warn-tri" title="Instructor was removed — pick a new one in the modal">⚠</span> : null}<span className={missingInst?'inst-orphan':''}>{instName || 'Unassigned'}</span>{missingInst ? <span className="inst-warn-chip">Needs instructor</span> : null}</div>
     {block.students.length
-      ? <div className="wa-card-students">{block.students.map((s,i) => { const isTrial = !!(s.studentId && trialStudentIds && trialStudentIds.has(s.studentId)); return <span key={s.id || i} className="wa-stu" title={studentLabel(s) + (isTrial ? ' (trial)' : '')}>{shortName(s.name) + ageSuffix(s)}{isTrial ? <span className="trial-mark"> (trial)</span> : null}{s.remark ? ` — ${s.remark}` : ''}</span>; })}</div>
+      ? <div className="wa-card-students">{block.students.map((s,i) => {
+          const isTrial = !!(s.studentId && trialStudentIds && trialStudentIds.has(s.studentId));
+          const isRepl = s.isReplacement;
+          const bal = isPersonal && s.studentId && creditByKey ? creditByKey[`${s.studentId}:${block.lessonTypeId}`] : null;
+          return <span key={s.id || i} className={`wa-stu ${isRepl?'wa-stu-repl':''}`} title={studentLabel(s) + (isTrial?' (trial)':'') + (isRepl?` replacing from ${s.replacementFrom||'?'}`:'')}>{isRepl?<span className="repl-mark">R</span>:null}{shortName(s.name) + ageSuffix(s)}{isTrial ? <span className="trial-mark"> (trial)</span> : null}{bal ? <span className={`credit-mark ${bal.remaining_balance<=2?'credit-low':''}`}> · {bal.remaining_balance}cr</span> : null}{s.remark ? ` — ${s.remark}` : ''}</span>;
+        })}</div>
       : <div className="wa-card-line wa-card-students-empty">—</div>}
   </div>;
 }
@@ -1252,7 +1336,7 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
 // DailyView (M2: pool labels on each session)
 // ============================================================================
 
-function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, lessonTypeByName, poolById, onAddAtTime, onEdit, selectedWeekStart, currentWeekStart, onPrevWeek, onNextWeek, onThisWeek, onExportExcel, trialStudentIds }){
+function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, lessonTypeByName, poolById, onAddAtTime, onEdit, selectedWeekStart, currentWeekStart, onPrevWeek, onNextWeek, onThisWeek, onExportExcel, trialStudentIds, creditByKey }){
   const wb = weekBounds(selectedDate);
   const weekDays = Array.from({length:7}, (_,i) => { const d = new Date(wb.start); d.setDate(wb.start.getDate()+i); return { date:d, ds:toDateStr(d), idx:i }; });
   const items = sessionsForDate(selectedDate);
@@ -1288,14 +1372,21 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
                   const pool = poolById(it.poolId);
                   const missingInst = it.instructors.length === 0;
                   const instName = (it.instructors[0]?.name) || it.legacyInstructor || '';
+                  const isPersonalIt = lessonTypeByName(it.type)?.class_type === 'personal';
+                  const isRescheduledIt = it.rescheduledFromDay != null;
                   return <div key={it.id} className={`daily-event ${missingInst?'daily-event-warn':''}`} onClick={() => onEdit(it)} style={{background:c.bg, borderLeftColor:c.bd, color:c.tx}}>
                     {missingInst ? <span className="card-warn-corner" title="No instructor assigned — needs reassignment">⚠</span> : null}
                     <div className="daily-event-top">
                       <div style={{minWidth:0,flex:1}}>
-                        <div className="daily-event-title" style={{color:c.tx}}>{it.type} {pool ? <span className="pool-badge">{pool.name}</span> : null}{it.familyGroupId ? <span title="Family group booking" style={{marginLeft:4}}>👪</span> : null}</div>
+                        <div className="daily-event-title" style={{color:c.tx}}>{it.type} {pool ? <span className="pool-badge">{pool.name}</span> : null}{it.familyGroupId ? <span title="Family group booking" style={{marginLeft:4}}>👪</span> : null}{isRescheduledIt ? <span className="reschedule-tag" title={`Rescheduled — was ${DAYS_S[it.rescheduledFromDay]} ${minuteToTime(it.rescheduledFromStartMinute)}`}> ⇄</span> : null}</div>
                         <div className={`daily-event-sub ${missingInst?'inst-missing':''}`}>{compactRange(it.startMinute, it.durationMinutes)} · {missingInst ? <><span className="warn-tri">⚠</span><span className="inst-orphan">{instName || 'Unassigned'}</span><span className="inst-warn-chip">Needs instructor</span></> : instName || '—'}</div>
                         {it.students.length
-                          ? <div className="daily-event-students">{it.students.map((s, si) => { const isTrial = !!(s.studentId && trialStudentIds && trialStudentIds.has(s.studentId)); return <span key={s.id || si} className="daily-event-stu" title={isTrial ? 'Trial — one-off booking' : undefined}>{s.name + ageSuffix(s)}{isTrial ? <span className="trial-mark"> (trial)</span> : null}</span>; })}</div>
+                          ? <div className="daily-event-students">{it.students.map((s, si) => {
+                              const isTrial = !!(s.studentId && trialStudentIds && trialStudentIds.has(s.studentId));
+                              const isRepl = s.isReplacement;
+                              const bal = isPersonalIt && s.studentId && creditByKey ? creditByKey[`${s.studentId}:${it.lessonTypeId}`] : null;
+                              return <span key={s.id || si} className={`daily-event-stu ${isRepl?'daily-stu-repl':''}`} title={isRepl?`Replacement from ${s.replacementFrom||'?'}`:undefined}>{isRepl?<span className="repl-mark-sm">R</span>:null}{s.name + ageSuffix(s)}{isTrial ? <span className="trial-mark"> (trial)</span> : null}{bal ? <span className={`credit-mark ${bal.remaining_balance<=2?'credit-low':''}`}> · {bal.remaining_balance}cr</span> : null}</span>;
+                            })}</div>
                           : <div className="daily-event-sub">No students listed</div>}
                         {it.students.filter(s=>s.remark).map((s,ri)=><div key={ri} className="daily-event-note">📝 {shortName(s.name)}: {s.remark}</div>)}
                       </div>
@@ -1704,6 +1795,7 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
               <div className="lt-row-lead">
                 {reorderCluster('lt', 'scheduler_lesson_types', options.lessonTypes, idx)}
                 <span className="lt-name-chip" style={{background:r.bg_color,borderColor:r.border_color,color:r.text_color}}>{r.name}</span>
+                <span className={`lt-type-badge lt-type-${r.class_type||'group'}`}>{r.class_type==='personal'?'🧑 Personal':'👥 Group'}</span>
                 <span className="lt-classes-pill" title="Classes on the schedule using this type">{n} {n===1?'class':'classes'}</span>
               </div>
               <div className="lt-row-actions">
@@ -1871,6 +1963,7 @@ function LessonTypeEditor({ row, pools, onSave }){
     students_per_instructor: row.students_per_instructor ?? '',
     default_duration_minutes: row.default_duration_minutes ?? '',
     billing_model: row.billing_model || 'monthly',
+    class_type: row.class_type || 'group',
     monthly_fee: row.monthly_fee ?? '',
     lessons_per_month: row.lessons_per_month ?? '',
     credit_count: row.credit_count ?? '',
@@ -1892,6 +1985,13 @@ function LessonTypeEditor({ row, pools, onSave }){
       <div className="field"><label>Default duration (min)</label><input className="input" type="number" value={draft.default_duration_minutes} onChange={(e)=>setF('default_duration_minutes', e.target.value)} placeholder="50" /></div>
       <div className="field"><label>Default pool</label><select className="select" value={draft.default_pool_id} onChange={(e)=>setF('default_pool_id', e.target.value)}><option value="">(none)</option>{pools.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
       <div className="field"><label>Billing model</label><select className="select" value={draft.billing_model} onChange={(e)=>setF('billing_model', e.target.value)}><option value="monthly">Monthly</option><option value="credit">Credit</option></select></div>
+      <div className="field"><label>Class type</label>
+        <div className="gender-toggle" style={{marginTop:2}}>
+          <button type="button" className={`gender-opt ${draft.class_type==='group'?'active':''}`} onClick={()=>setF('class_type','group')}>👥 Group</button>
+          <button type="button" className={`gender-opt ${draft.class_type==='personal'?'active':''}`} onClick={()=>setF('class_type','personal')}>🧑 Personal</button>
+        </div>
+        <div className="hint" style={{marginTop:4}}>{draft.class_type==='personal'?'Private lesson — enables credit tracking and per-week reschedule':'Group lesson — enables drop-in replacement for absent swimmers'}</div>
+      </div>
       <div className="field"><label>Coach in pool</label><div style={{display:'flex',alignItems:'center',gap:8,padding:'10px 0'}}><input type="checkbox" checked={draft.coach_in_pool} onChange={(e)=>setF('coach_in_pool', e.target.checked)} /><span className="small subtle">Uncheck for on-deck coaching (Strokelab Elite)</span></div></div>
       {draft.billing_model === 'monthly' ? <>
         <div className="field"><label>Monthly fee</label><input className="input" type="number" step="0.01" value={draft.monthly_fee} onChange={(e)=>setF('monthly_fee', e.target.value)} /></div>
@@ -1913,6 +2013,7 @@ function LessonTypeEditor({ row, pools, onSave }){
           students_per_instructor: clean(draft.students_per_instructor),
           default_duration_minutes: clean(draft.default_duration_minutes),
           billing_model: draft.billing_model,
+          class_type: draft.class_type || 'group',
           monthly_fee: clean(draft.monthly_fee),
           lessons_per_month: clean(draft.lessons_per_month),
           credit_count: clean(draft.credit_count),
@@ -2247,7 +2348,15 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
   </>;
 }
 
-function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById, students, studentById, weekEnrollments, familyGroups, membersByGroup, trialStudentIds }){
+function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById, students, studentById, weekEnrollments, familyGroups, membersByGroup, trialStudentIds, creditByKey, adjustCredit, initCredit }){
+  const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  const [reschedDay, setReschedDay] = useState(0);
+  const [reschedMinute, setReschedMinute] = useState(480);
+  const [initCreditInput, setInitCreditInput] = useState({});
+
+  const currentLt = lessonTypes.find(t => t.name === modal.form.type);
+  const isPersonal = currentLt?.class_type === 'personal';
+  const isRescheduled = modal.rescheduledFromDay != null;
 
   // M2: union of durations — common standards plus every lesson type's default
   // and the currently-selected duration so the dropdown always contains the
@@ -2364,7 +2473,87 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
           <div className="hint" style={{marginTop:8}}>{bucketFallback ? 'No swimmers tagged for this lesson type yet — showing all. Tag them in the Swimmers tab.' : 'Slots are fixed to the lesson type’s maximum. Leave a slot empty to skip it, or clear a slot with its ×.'}</div>
         </div>
       </div>
-      <div className="student-box"><div className="small subtle" style={{marginBottom:6}}>Parallel sessions and splits</div><div className="small">Multiple sessions can run at the same day and time. Each is one row in <b>weekly_sessions</b>; pools are independent. In Module 3, this modal will gain a "+ instructor" button to convert a single session into a split (two instructors, doubled capacity) without creating a parallel row.</div></div>
+      <div className="student-box"><div className="small subtle" style={{marginBottom:6}}>Parallel sessions and splits</div><div className="small">Multiple sessions can run at the same day and time. Each is one row in <b>weekly_sessions</b>; pools are independent.</div></div>
+
+      {/* ── GROUP: drop-in replacement section ── */}
+      {!isPersonal && <div className="repl-section">
+        <div className="repl-section-head">
+          <div>
+            <span className="repl-section-title">Replacement Students</span>
+            <span className="small subtle" style={{marginLeft:8}}>One-off this week — not carried forward on duplicate</span>
+          </div>
+          <button className="btn btn-ghost small" onClick={()=>setModal({...modal,form:{...modal.form,replacementRows:[...(modal.form.replacementRows||[]),{studentId:null,name:'',age:null,replacementFrom:''}]}})}>+ Add replacement</button>
+        </div>
+        {!(modal.form.replacementRows||[]).length && <div className="small subtle" style={{padding:'8px 0'}}>No replacement students this week.</div>}
+        {(modal.form.replacementRows||[]).map((r,i) => {
+          const replCandidates = students.filter(s => !modal.form.studentRows.some(sr => sr.studentId === s.id) && !modal.form.replacementRows.some((rr,ri) => ri !== i && rr.studentId === s.id));
+          return <div key={i} className="repl-row">
+            <span className="repl-badge-sm">R</span>
+            <div style={{flex:'1.5',minWidth:0}}>
+              <StudentSelect valueId={r.studentId} fallbackLabel={r.name||''} studentById={studentById} candidates={replCandidates} onPick={(stu)=>{ const rows=[...(modal.form.replacementRows||[])]; rows[i]={...rows[i],studentId:stu?.id||null,name:stu?.name||'',age:stu?.age??null}; setModal({...modal,form:{...modal.form,replacementRows:rows}}); }} conflict={null} />
+            </div>
+            <input className="input" style={{flex:1}} placeholder="From class (e.g. Mon 11AM)" value={r.replacementFrom||''} onChange={(e)=>{ const rows=[...(modal.form.replacementRows||[])]; rows[i]={...rows[i],replacementFrom:e.target.value}; setModal({...modal,form:{...modal.form,replacementRows:rows}}); }} />
+            <button className="btn btn-ghost small" style={{flexShrink:0}} onClick={()=>{ const rows=(modal.form.replacementRows||[]).filter((_,ri)=>ri!==i); setModal({...modal,form:{...modal.form,replacementRows:rows}}); }}>×</button>
+          </div>;
+        })}
+      </div>}
+
+      {/* ── PERSONAL: reschedule + credit balances ── */}
+      {isPersonal && <div className="repl-section">
+        {isRescheduled && <div className="reschedule-notice">
+          <span className="reschedule-from-badge">⇄ Rescheduled this week — was originally {DAYS_F[modal.rescheduledFromDay]} at {minuteToTime(modal.rescheduledFromStartMinute)}</span>
+          <button className="btn btn-ghost small" onClick={()=>setModal({...modal,day:modal.rescheduledFromDay,startMinute:modal.rescheduledFromStartMinute,rescheduledFromDay:null,rescheduledFromStartMinute:null})}>Restore original slot</button>
+        </div>}
+        <div className="reschedule-head">
+          <span className="repl-section-title">⇄ Reschedule this week only</span>
+          <button className="btn btn-ghost small" onClick={()=>{ setReschedDay(modal.day); setReschedMinute(modal.startMinute); setRescheduleOpen(o=>!o); }}>{rescheduleOpen?'Cancel':'Change slot'}</button>
+        </div>
+        {rescheduleOpen && <div className="reschedule-form">
+          <div className="field" style={{margin:0}}><label>New day</label>
+            <select className="select" value={reschedDay} onChange={(e)=>setReschedDay(Number(e.target.value))}>
+              {DAYS_F.map((d,i)=><option key={i} value={i}>{d}</option>)}
+            </select>
+          </div>
+          <div className="field" style={{margin:0}}><label>New start time</label>
+            <select className="select" value={reschedMinute} onChange={(e)=>setReschedMinute(Number(e.target.value))}>
+              {Array.from({length:25},(_,i)=>480+i*30).map(m=><option key={m} value={m}>{minuteToTime(m)}</option>)}
+            </select>
+          </div>
+          <button className="btn btn-primary small" style={{alignSelf:'flex-end'}} onClick={()=>{
+            setModal(prev=>({ ...prev,
+              rescheduledFromDay: prev.rescheduledFromDay ?? prev.day,
+              rescheduledFromStartMinute: prev.rescheduledFromStartMinute ?? prev.startMinute,
+              day: reschedDay,
+              startMinute: reschedMinute
+            }));
+            setRescheduleOpen(false);
+          }}>Apply reschedule</button>
+          <div className="hint" style={{gridColumn:'1/-1',marginTop:0}}>The class returns to its original slot from next week onwards. Any duplicate of this week will restore the canonical schedule.</div>
+        </div>}
+
+        {/* Credit balances per student */}
+        {(modal.form.studentRows||[]).some(r=>r.studentId) && <div style={{marginTop:12}}>
+          <div className="repl-section-title" style={{marginBottom:6}}>Credit Balances</div>
+          {(modal.form.studentRows||[]).filter(r=>r.studentId).map((r,i)=>{
+            const bal = creditByKey && creditByKey[`${r.studentId}:${currentLt?.id}`];
+            return <div key={r.studentId||i} className="credit-row">
+              <span className="credit-row-name">{r.name || 'Student'}</span>
+              {bal
+                ? <div className="credit-controls">
+                    <span className={`credit-count ${bal.remaining_balance<=2?'credit-low':''}`}>{bal.remaining_balance} / {bal.initial_balance} credits</span>
+                    <button className="credit-btn" title="Deduct 1 credit (class attended)" onClick={()=>adjustCredit(r.studentId,currentLt.id,-1)}>−</button>
+                    <button className="credit-btn" title="Add 1 credit (credit returned)" onClick={()=>adjustCredit(r.studentId,currentLt.id,+1)}>+</button>
+                  </div>
+                : <div className="credit-init">
+                    <input className="input" style={{width:80,fontSize:12}} type="number" min="1" placeholder="Credits" value={initCreditInput[r.studentId]||''} onChange={(e)=>setInitCreditInput(prev=>({...prev,[r.studentId]:e.target.value}))} />
+                    <button className="btn btn-ghost small" onClick={()=>{ const n=initCreditInput[r.studentId]; if(n) initCredit(r.studentId,currentLt?.id,n); }}>Set initial</button>
+                  </div>
+              }
+            </div>;
+          })}
+        </div>}
+      </div>}
+
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:16,gap:12,flexWrap:'wrap'}}>
         <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
           {modal.id ? <button className="btn btn-danger" onClick={deleteSession}>Delete Session</button> : null}
