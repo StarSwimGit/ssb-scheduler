@@ -590,14 +590,18 @@ function App(){
 
   // M4: open an existing session from the Enroll matcher, pre-dropping the
   // chosen swimmer into the first empty slot so the user just confirms + saves.
-  function openEnroll(item, student){
+  function openEnroll(item, swimmers){
+    // swimmers may be: a single student object (legacy callers) or an array.
+    const list = Array.isArray(swimmers) ? swimmers : (swimmers ? [swimmers] : []);
     const firstInst = item.instructors[0] || null;
     const rows = buildStudentRows(item.students, lessonTypeByName(item.type)?.students_per_instructor);
-    if(student && !rows.some(r => r.studentId === student.id)){
+    list.forEach(student => {
+      if(!student) return;
+      if(rows.some(r => r.studentId === student.id)) return;
       const slot = { studentId: student.id, name: student.name, age: (student.age == null ? '' : String(student.age)) };
       const idx = rows.findIndex(r => !r.studentId && !(r.name || '').trim());
       if(idx >= 0) rows[idx] = slot; else rows.push(slot);
-    }
+    });
     setModal({
       mode:'edit', id:item.id, weekStartDate:item.weekStartDate, day:item.day, startMinute:item.startMinute,
       form:{
@@ -612,9 +616,10 @@ function App(){
   // M4: open a fresh session prefilled with the matcher's type/day/time and the
   // swimmer already in slot 1. weekStartDate is explicit so it lands in the week
   // the matcher was searching, regardless of the app's current selected week.
-  function openCreateFor(weekStart, day, startMinute, lessonType, student){
+  function openCreateFor(weekStart, day, startMinute, lessonType, swimmers){
+    const list = Array.isArray(swimmers) ? swimmers.filter(Boolean) : (swimmers ? [swimmers] : []);
     const firstInst = activeInstructors()[0] || null;
-    const existing = student ? [{ studentId:student.id, name:student.name, age:student.age }] : [];
+    const existing = list.map(s => ({ studentId:s.id, name:s.name, age:s.age }));
     setSelectedDate(addDays(weekStart, day));
     setModal({
       mode:'add', id:null, weekStartDate: weekStart, day, startMinute,
@@ -2176,119 +2181,195 @@ function LessonTypeEditor({ row, pools, onSave }){
 // lesson types, ranks them by open capacity, and offers one-tap enroll/create.
 function EnrollView({ sessions, students, studentById, lessonTypes, lessonTypeById, lessonTypeByName, poolById, colorsFor, gridBounds, packages, initialWeekStart, onEnroll, onCreate }){
   const [weekStart, setWeekStart] = useState(initialWeekStart);
-  const [swimmerId, setSwimmerId] = useState(null);
-  const [age, setAge] = useState('');
-  const [typeIds, setTypeIds] = useState([]);   // empty = auto (all age-eligible)
-  const [days, setDays] = useState([0,1,2,3,4,5,6]);
-  const [fromT, setFromT] = useState('');        // "HH:MM"
-  const [toT, setToT] = useState('');
+  const [slotIds, setSlotIds] = useState([null]); // up to 3 swimmer ids
 
-  function hhmmToMin(v){ if(!v) return null; const p = v.split(':'); return Number(p[0])*60 + Number(p[1] || 0); }
-  function pickSwimmer(stu){
-    setSwimmerId(stu ? stu.id : null);
-    if(stu){ if(stu.age != null) setAge(String(stu.age)); setTypeIds((stu.lessonTypeIds || []).slice()); }
-  }
-  function toggleType(id){ setTypeIds(t => t.includes(id) ? t.filter(x => x !== id) : [...t, id]); }
-  function toggleDay(d){ setDays(ds => ds.includes(d) ? ds.filter(x => x !== d) : [...ds, d].sort((a,b)=>a-b)); }
+  function setSlotAt(idx, id){ setSlotIds(s => s.map((x,i)=>i===idx?id:x)); }
+  function addSlot(){ setSlotIds(s => s.length < 3 ? [...s, null] : s); }
+  function removeSlotAt(idx){ setSlotIds(s => s.length > 1 ? s.filter((_,i)=>i!==idx) : [null]); }
 
-  const ageMonths = age !== '' ? Number(age)*12 : null;
-  function ageOK(t){ if(ageMonths == null) return true; const lo = t.age_min_months, hi = t.age_max_months; return (lo == null || ageMonths >= Number(lo)) && (hi == null || ageMonths <= Number(hi)); }
-  const eligibleTypes = lessonTypes.filter(ageOK).filter(t => typeIds.length ? typeIds.includes(t.id) : true);
-  const eligibleIds = new Set(eligibleTypes.map(t => t.id));
-  const fromMin = hhmmToMin(fromT), toMin = hhmmToMin(toT);
-  function timeOK(s){ if(fromMin == null && toMin == null) return true; if(fromMin != null && s.startMinute < fromMin) return false; if(toMin != null && s.startMinute >= toMin) return false; return true; }
+  const selectedSwimmers = slotIds.map(id => id ? studentById[id] : null).filter(Boolean);
+  const selectedCount = selectedSwimmers.length;
+  const selectedIdSet = new Set(slotIds.filter(Boolean));
 
-  const result = useMemo(() => {
+  // Union of lesson types — used to show classes that ANY of the selected
+  // swimmers could attend (broader visibility, no blank screen if their types
+  // diverge). Intersection ("sharedLtIds") marks the prime targets where ALL
+  // selected swimmers could join the same class.
+  const unionLtIds = useMemo(() => {
+    const s = new Set();
+    selectedSwimmers.forEach(sw => (sw.lessonTypeIds || []).forEach(id => s.add(id)));
+    return s;
+  }, [selectedSwimmers]);
+
+  const sharedLtIds = useMemo(() => {
+    if(selectedCount === 0) return new Set();
+    const sets = selectedSwimmers.map(s => new Set(s.lessonTypeIds || []));
+    const out = new Set();
+    sets[0].forEach(id => { if(sets.every(s => s.has(id))) out.add(id); });
+    return out;
+  }, [selectedSwimmers, selectedCount]);
+
+  // Analyze each session in the visible week. The downstream renderer uses
+  // these flags to paint the grid: fitsAll → prime target, hasRoom →
+  // enrollable, splittable → opportunity to reorganize.
+  const analyzed = useMemo(() => {
     const ws = sessions.filter(s => s.weekStartDate === weekStart);
-    const matches = ws.map(s => {
+    return ws.map(s => {
       const lt = (s.lessonTypeId && lessonTypeById(s.lessonTypeId)) || lessonTypeByName(s.type);
-      return { s, lt, tid: (lt && lt.id) || s.lessonTypeId || null };
-    }).filter(m => m.tid && eligibleIds.has(m.tid) && days.includes(m.s.day) && timeOK(m.s))
-      .map(m => { const cap = sessionCapacity(m.s, m.lt); const remaining = cap.max > 0 ? cap.max - cap.current : null; const hasRoom = cap.max === 0 || cap.current < cap.max; return { ...m, cap, remaining, hasRoom }; })
-      .sort((a,b) => a.s.day - b.s.day || a.s.startMinute - b.s.startMinute);
-    const open = matches.filter(m => m.hasRoom);
-    const full = matches.filter(m => !m.hasRoom);
-    const openTids = new Set(open.map(m => m.tid));
-    const noOpenTypes = eligibleTypes.filter(t => !openTids.has(t.id));
-    return { open, full, noOpenTypes };
-  }, [sessions, weekStart, age, JSON.stringify(typeIds), JSON.stringify(days), fromT, toT, lessonTypes]);
+      const cap = sessionCapacity(s, lt);
+      const hasRoom = cap.max === 0 || cap.current < cap.max;
+      const ltId = lt?.id;
+      const compatible = ltId ? selectedSwimmers.filter(sw => (sw.lessonTypeIds || []).includes(ltId)) : [];
+      const alreadyIn = new Set((s.students || []).map(st => st.studentId).filter(Boolean));
+      const enrollable = compatible.filter(sw => !alreadyIn.has(sw.id));
+      const allCompatible = selectedCount > 0 && enrollable.length === selectedCount;
+      const fitsAll = allCompatible && hasRoom && (cap.max === 0 || cap.current + enrollable.length <= cap.max);
+      const wouldOverflow = !hasRoom && enrollable.length > 0;
+      // Splittable: full + adding the new swimmers would yield ≥6 total (so
+      // a 4/4 or 5/3 split into two sustainable groups is possible).
+      const splittable = wouldOverflow && (cap.current + enrollable.length) >= 6;
+      return { s, lt, ltId, cap, hasRoom, compatible, enrollable, allCompatible, fitsAll, wouldOverflow, splittable };
+    });
+  }, [sessions, weekStart, selectedSwimmers, selectedCount, lessonTypeById, lessonTypeByName]);
 
-  const swimmer = swimmerId ? studentById[swimmerId] : null;
-  const createDay = days.length ? days[0] : 0;
-  const createStart = fromMin != null ? fromMin : ((gridBounds && gridBounds.startMin) || 600);
-  const showCreate = result.noOpenTypes.length && (typeIds.length > 0 || result.open.length === 0);
-  function alreadyIn(m){ return swimmer && (m.s.students || []).some(st => st.studentId === swimmer.id); }
-  function capChip(status, text){ const c = capacityChipColors(status); return <span className="cap-chip" style={{background:c.bg,color:c.tx,borderColor:c.bd}}>{text}</span>; }
+  // Filter logic: when no swimmer selected, show all (calendar-week parity).
+  // When swimmers selected, narrow to classes serving at least one of them.
+  const visible = selectedCount === 0 ? analyzed : analyzed.filter(a => a.compatible.length > 0);
+
+  const stats = useMemo(() => {
+    const total = visible.length;
+    const fitsAll = visible.filter(v => v.fitsAll).length;
+    const partial = visible.filter(v => v.hasRoom && v.enrollable.length > 0 && !v.fitsAll).length;
+    const full = visible.filter(v => !v.hasRoom).length;
+    const splittable = visible.filter(v => v.splittable).length;
+    return { total, fitsAll, partial, full, splittable };
+  }, [visible]);
+
+  const byDay = useMemo(() => Array.from({length:7}, (_,di) => visible.filter(v => v.s.day === di).sort((a,b)=>a.s.startMinute - b.s.startMinute)), [visible]);
+
+  const startHour = Math.floor(gridBounds.startMin / 60) * 60;
+  const hours = []; for(let h = startHour; h < gridBounds.endMin; h += 60) hours.push(h);
+  const wb = weekBounds(weekStart);
+
+  function handleEnroll(info){
+    if(!info.s) return;
+    onEnroll(info.s, info.enrollable);
+  }
+  function handleOpenNew(day, startMinute){
+    let lt = null;
+    if(sharedLtIds.size > 0) lt = lessonTypeById([...sharedLtIds][0]);
+    else if(unionLtIds.size > 0) lt = lessonTypeById([...unionLtIds][0]);
+    onCreate(weekStart, day, startMinute, lt, selectedSwimmers);
+  }
 
   return <>
     <div className="card" style={{marginBottom:16}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap'}}>
+      <div className="view-head">
         <div>
-          <div style={{fontSize:18,fontWeight:800}}>Enroll a swimmer</div>
-          <div className="small subtle" style={{marginTop:4}}>Pick a swimmer (or just enter an age), set availability, and the matcher finds open classes that fit — within the week below.</div>
+          <div className="view-title">Enroll Swimmers</div>
+          <div className="small subtle">Pick up to 3 swimmers — the weekly grid below narrows to classes any of them can join. Green-outlined classes can take all selected swimmers. Empty slots show opportunities to open a new class.</div>
         </div>
-        <div className="period-stepper">
-          <button className="step-btn" onClick={()=>setWeekStart(addDays(weekStart,-7))} aria-label="Previous week">‹</button>
-          <div className="period-label">{weekRangeLabel(weekStart)}</div>
-          <button className="step-btn" onClick={()=>setWeekStart(addDays(weekStart,7))} aria-label="Next week">›</button>
-        </div>
+      </div>
+      <PeriodNav rangeLabel={weekRangeLabel(weekStart)} onPrev={()=>setWeekStart(addDays(weekStart,-7))} onNext={()=>setWeekStart(addDays(weekStart,7))} onToday={()=>setWeekStart(initialWeekStart)} isCurrent={weekStart===initialWeekStart} />
+
+      <div className="enroll-slots">
+        {slotIds.map((id, i) => {
+          const candidates = students.filter(s => !selectedIdSet.has(s.id) || s.id === id);
+          const sw = id ? studentById[id] : null;
+          return <div key={i} className="enroll-slot">
+            <span className="enroll-slot-num">{i+1}</span>
+            <div className="enroll-slot-pick">
+              <StudentSelect valueId={id} fallbackLabel={null} studentById={studentById} candidates={candidates} onPick={(stu)=>setSlotAt(i, stu?stu.id:null)} conflict={null} />
+            </div>
+            <div className="enroll-slot-tags">
+              {sw ? (sw.lessonTypeIds || []).map(ltId => {
+                const t = lessonTypeById(ltId);
+                if(!t) return null;
+                const isShared = sharedLtIds.has(ltId);
+                return <span key={ltId} className="chip" style={{background:t.bg_color,borderColor:t.border_color,color:t.text_color,fontSize:10,padding:'2px 7px',outline:isShared&&selectedCount>1?'2px solid var(--primary)':'none',outlineOffset:isShared&&selectedCount>1?'1px':'0'}}>{t.name}{isShared&&selectedCount>1?' ✓':''}</span>;
+              }) : null}
+            </div>
+            <button type="button" className="enroll-slot-x" onClick={()=>removeSlotAt(i)} title="Clear slot">×</button>
+          </div>;
+        })}
+        {slotIds.length < 3 ? <button type="button" className="enroll-slot-add" onClick={addSlot}>+ Add another swimmer ({slotIds.length}/3)</button> : <div className="small subtle" style={{padding:'6px 2px'}}>Maximum 3 swimmers — clear a slot to swap.</div>}
       </div>
 
-      <div style={{display:'grid',gridTemplateColumns:'minmax(0,1.6fr) 90px',gap:10,marginTop:14}}>
-        <div className="field" style={{margin:0}}><label>Swimmer (optional)</label><StudentSelect valueId={swimmerId} fallbackLabel={null} studentById={studentById} candidates={students} onPick={pickSwimmer} conflict={null} /></div>
-        <div className="field" style={{margin:0}}><label>Age</label><input className="input" type="number" min="0" max="120" placeholder="Yrs" value={age} onChange={e=>setAge(e.target.value)} /></div>
-      </div>
+      {selectedCount > 0 && <div className="enroll-summary">
+        <strong>{selectedCount}</strong> swimmer{selectedCount===1?'':'s'} selected
+        {selectedCount > 1 && sharedLtIds.size > 0 && <span className="enroll-summary-shared"> · Shared lesson types: {[...sharedLtIds].map(id => lessonTypeById(id)?.name).filter(Boolean).join(', ')}</span>}
+        {selectedCount > 1 && sharedLtIds.size === 0 && <span className="enroll-summary-warn"> · ⚠ No shared lesson types — these swimmers can only enroll into separate classes</span>}
+      </div>}
 
-      <div className="field" style={{marginTop:10}}><label>Lesson types {typeIds.length ? '' : '· auto (all age-eligible)'}</label>
-        <div className="type-picks">{lessonTypes.map(t => { const on = typeIds.includes(t.id); const elig = ageOK(t); return <button key={t.id} type="button" className={`chip chip-toggle ${on ? '' : 'chip-off'}`} disabled={!elig} title={elig ? '' : 'Outside this age range'} style={on ? {background:t.bg_color,borderColor:t.border_color,color:t.text_color} : (elig ? undefined : {opacity:.38})} onClick={()=>elig && toggleType(t.id)}>{t.name}</button>; })}</div>
-      </div>
-
-      <div style={{display:'grid',gridTemplateColumns:'1fr auto',gap:16,marginTop:10,alignItems:'end'}}>
-        <div className="field" style={{margin:0}}><label>Preferred days</label>
-          <div className="type-picks">{DAYS_S.map((d,i) => { const on = days.includes(i); return <button key={i} type="button" className={`chip chip-toggle ${on ? '' : 'chip-off'}`} style={on ? {background:'var(--primary-soft)',borderColor:'var(--primary)',color:'var(--primary-on-soft)'} : undefined} onClick={()=>toggleDay(i)}>{d}</button>; })}</div>
-        </div>
-        <div className="field" style={{margin:0}}><label>Time window (optional)</label>
-          <div style={{display:'flex',alignItems:'center',gap:6}}><input className="input" type="time" style={{width:128}} value={fromT} onChange={e=>setFromT(e.target.value)} /><span className="subtle small">to</span><input className="input" type="time" style={{width:128}} value={toT} onChange={e=>setToT(e.target.value)} /></div>
-        </div>
-      </div>
+      {selectedCount > 0 && <div className="enroll-stats">
+        <span className="enroll-stat fits">{stats.fitsAll} fits all</span>
+        <span className="enroll-stat partial">{stats.partial} partial</span>
+        <span className="enroll-stat full">{stats.full} full{stats.splittable ? ` · ${stats.splittable} splittable` : ''}</span>
+      </div>}
     </div>
 
     <div className="card">
-      <div style={{display:'flex',alignItems:'baseline',gap:10,flexWrap:'wrap',marginBottom:12}}>
-        <div style={{fontSize:16,fontWeight:800}}>Open matches</div>
-        <span className="subtle small">{result.open.length} with room{result.full.length ? ` · ${result.full.length} full` : ''}{eligibleTypes.length ? '' : ' · no eligible lesson types for this age'}</span>
+      <div className="enroll-grid">
+        <div className="enroll-grid-corner" />
+        {DAYS_S.map((d,di) => {
+          const dt = new Date(wb.start); dt.setDate(wb.start.getDate()+di);
+          return <div key={'h'+di} className="enroll-grid-dayhead">
+            <div className="enroll-grid-dayname">{d}</div>
+            <div className="enroll-grid-daydate">{dt.toLocaleDateString(undefined,{month:'short',day:'numeric'})}</div>
+          </div>;
+        })}
+        {hours.map(h => <React.Fragment key={h}>
+          <div className="enroll-grid-time">{hourLabel(h)}</div>
+          {DAYS_S.map((_,di) => {
+            const cellInfos = byDay[di].filter(v => v.s.startMinute >= h && v.s.startMinute < h + 60);
+            const isEmpty = cellInfos.length === 0;
+            // Opportunity: an empty slot where the selected swimmers could
+            // anchor a new class. Gold = all selected share a lesson type AND
+            // we have ≥3 swimmers (sustainable new group threshold).
+            const isOpportunity = isEmpty && selectedCount >= 1 && (sharedLtIds.size > 0 || unionLtIds.size > 0);
+            const isGold = isOpportunity && selectedCount >= 3 && sharedLtIds.size > 0;
+            return <div
+              key={'c'+di+'-'+h}
+              className={`enroll-grid-cell ${isOpportunity?'is-opportunity':''} ${isGold?'is-gold':''}`}
+              onClick={isEmpty ? () => handleOpenNew(di, h) : undefined}
+              title={isOpportunity ? `Open a new class at ${DAYS_F[di]} ${hourLabel(h)}` : ''}
+            >
+              {cellInfos.map(info => {
+                const c = colorsFor(info.s.type);
+                const inst = (info.s.instructors[0] && info.s.instructors[0].name) || info.s.legacyInstructor || '';
+                let cls = 'enroll-mini';
+                if(selectedCount > 0){
+                  if(info.fitsAll) cls += ' mini-fits';
+                  else if(info.hasRoom && info.enrollable.length > 0) cls += ' mini-partial';
+                  else if(info.splittable) cls += ' mini-split';
+                  else if(!info.hasRoom) cls += ' mini-full';
+                }
+                const capLabel = info.cap.max > 0 ? `${info.cap.current}/${info.cap.max}` : `${info.cap.current}`;
+                return <div key={info.s.id} className={cls} style={{borderLeftColor:c.bd,background:c.bg}} onClick={(e)=>{ e.stopPropagation(); handleEnroll(info); }}>
+                  <div className="enroll-mini-top">
+                    <span className="enroll-mini-type" style={{color:c.tx}}>{info.s.type}</span>
+                    <span className="enroll-mini-cap">{capLabel}</span>
+                  </div>
+                  <div className="enroll-mini-meta">{minuteToTime(info.s.startMinute)}{inst?` · ${inst}`:''}</div>
+                  {selectedCount > 0 && info.fitsAll && <div className="enroll-mini-cta cta-fits">Enroll {info.enrollable.length} ✓</div>}
+                  {selectedCount > 0 && info.hasRoom && !info.fitsAll && info.enrollable.length > 0 && <div className="enroll-mini-cta cta-partial">Enroll {info.enrollable.length} of {selectedCount}</div>}
+                  {selectedCount > 0 && !info.hasRoom && info.splittable && <div className="enroll-mini-cta cta-split">Splittable</div>}
+                  {selectedCount > 0 && !info.hasRoom && !info.splittable && <div className="enroll-mini-cta cta-full">FULL</div>}
+                </div>;
+              })}
+              {isOpportunity && <div className="enroll-cell-hint">{isGold ? '+ Open new class' : '+'}</div>}
+            </div>;
+          })}
+        </React.Fragment>)}
       </div>
-
-      {result.open.length ? <div className="enroll-list">
-        {result.open.map(m => { const c = colorsFor(m.s.type); const pool = poolById(m.s.poolId); const inst = (m.s.instructors[0] && m.s.instructors[0].name) || m.s.legacyInstructor || 'Unassigned'; const trial = trialAmountFor(m.lt, packages); const mine = alreadyIn(m); return (
-          <div className="enroll-card" key={m.s.id} style={{borderLeftColor:c.bd}}>
-            <div className="enroll-main">
-              <div className="enroll-type" style={{color:c.tx}}>{m.s.type}</div>
-              <div className="enroll-when">{DAYS_F[m.s.day]} · {formatRange(m.s.startMinute, m.s.durationMinutes)}</div>
-              <div className="small subtle">{pool ? pool.name : 'No pool'} · {inst}{trial != null ? ` · Trial RM${trial}` : ''}</div>
-            </div>
-            <div className="enroll-side">
-              {capChip(m.cap.status, `${m.cap.max > 0 ? `${m.cap.current}/${m.cap.max}` : m.cap.current}${m.remaining != null ? ` · ${m.remaining} left` : ''}`)}
-              {mine ? <span className="small subtle">Already enrolled</span> : <button className="btn btn-primary small" onClick={()=>onEnroll(m.s, swimmer)}>Enroll →</button>}
-            </div>
-          </div>
-        ); })}
-      </div> : <div className="empty">No open classes match these filters. Widen the days/time, or create a session below.</div>}
-
-      {result.full.length ? <div style={{marginTop:16}}>
-        <div className="small" style={{fontWeight:700,marginBottom:6}}>Full — would need a split or waitlist</div>
-        <div className="enroll-list">{result.full.map(m => { const c = colorsFor(m.s.type); const pool = poolById(m.s.poolId); const inst = (m.s.instructors[0] && m.s.instructors[0].name) || m.s.legacyInstructor || 'Unassigned'; return (
-          <div className="enroll-card dim" key={m.s.id} style={{borderLeftColor:c.bd}}>
-            <div className="enroll-main"><div className="enroll-type" style={{color:c.tx}}>{m.s.type}</div><div className="enroll-when">{DAYS_F[m.s.day]} · {formatRange(m.s.startMinute, m.s.durationMinutes)}</div><div className="small subtle">{pool ? pool.name : 'No pool'} · {inst}</div></div>
-            <div className="enroll-side">{capChip(m.cap.status, `${m.cap.current}/${m.cap.max} full`)}<button className="btn btn-ghost small" onClick={()=>onEnroll(m.s, swimmer)}>Open</button></div>
-          </div>
-        ); })}</div>
-      </div> : null}
-
-      {showCreate ? <div style={{marginTop:16}}>
-        <div className="small" style={{fontWeight:700,marginBottom:6}}>No open slot this week — create one</div>
-        <div className="enroll-create">{result.noOpenTypes.slice(0,8).map(t => <button key={t.id} className="btn btn-ghost small" onClick={()=>onCreate(weekStart, createDay, createStart, t, swimmer)}>+ {t.name} · {DAYS_S[createDay]} {minuteToTime(createStart)}</button>)}</div>
-      </div> : null}
+      <div className="enroll-legend">
+        <span><i className="enroll-swatch swatch-fits" />Fits all selected</span>
+        <span><i className="enroll-swatch swatch-partial" />Some swimmers can join</span>
+        <span><i className="enroll-swatch swatch-split" />Full · splittable opportunity</span>
+        <span><i className="enroll-swatch swatch-full" />Full</span>
+        <span><i className="enroll-swatch swatch-gold" />Gold slot · open a new class</span>
+        <span className="small subtle" style={{marginLeft:'auto'}}>Click a class to enroll · click an empty cell to open a new one · splits = parallel sessions, not replacements</span>
+      </div>
     </div>
   </>;
 }
@@ -2541,6 +2622,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
   const [editId, setEditId] = useState(null);
   const [q, setQ] = useState('');
   const [sortBy, setSortBy] = useState('name');
+  const [formExpanded, setFormExpanded] = useState(false);
 
   function colorsForId(id){ const t = lessonTypeById(id); return t ? { bg:t.bg_color, bd:t.border_color, tx:t.text_color, name:t.name } : { bg:'#eee', bd:'#ccc', tx:'#333', name:'(removed)' }; }
   function packageLabel(s){
@@ -2596,54 +2678,64 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
   function resetForm(){ setName(''); setAge(''); setGender(null); setEnrollments([{ lessonTypeId: '', packageId: '' }]); setGuardianName(''); setGuardianEmail(''); setGuardianPhone(''); setSameAsGuardian(false); setEmergencyPhone(''); setEmergencyRel(''); setAdultSelf(false); }
 
   return <>
-    <div className="card" style={{marginBottom:16}}>
-      <div style={{fontSize:18,fontWeight:800,marginBottom:4}}>Register Swimmer</div>
-      <div className="small subtle" style={{marginBottom:16}}>Complete the swimmer's profile. All information is treated in strict confidence and used solely for class administration and emergency purposes.</div>
+    <div className={`card register-card ${formExpanded ? 'is-open' : 'is-closed'}`} style={{marginBottom:16}}>
+      <button type="button" className="register-header" onClick={()=>setFormExpanded(v=>!v)} aria-expanded={formExpanded}>
+        <div className="register-header-left">
+          <span className="register-header-icon" aria-hidden="true">{formExpanded ? '✕' : '+'}</span>
+          <span className="register-header-title">Register Swimmer</span>
+          {!formExpanded && <span className="small subtle register-header-hint">Click to expand the registration form</span>}
+        </div>
+        <span className="register-header-chev" aria-hidden="true">{formExpanded ? '▴' : '▾'}</span>
+      </button>
+      {formExpanded && <div className="register-body">
+        <div className="small subtle" style={{marginBottom:16}}>Complete the swimmer's profile. All information is treated in strict confidence and used solely for class administration and emergency purposes.</div>
 
-      <div className="student-form-section">
-        <div className="student-form-section-title">Swimmer Details</div>
-        <div className="form-grid" style={{gridTemplateColumns:'1fr 80px auto'}}>
-          <div className="field" style={{margin:0}}><label>Full Name</label><input className="input" value={name} onChange={e=>{ setName(e.target.value); if(adultSelf) setGuardianName(e.target.value); }} placeholder="Swimmer's full name" /></div>
-          <div className="field" style={{margin:0}}><label>Age (yrs)</label><input className="input" type="number" min="0" max="120" step="0.5" value={age} onChange={e=>setAge(e.target.value)} placeholder="0" /></div>
-          <div className="field" style={{margin:0}}>
-            <label>Gender</label>
-            <div className="gender-toggle"><button type="button" className={`gender-opt ${gender==='female'?'active':''}`} onClick={()=>setGender(gender==='female'?null:'female')}>♀ F</button><button type="button" className={`gender-opt ${gender==='male'?'active':''}`} onClick={()=>setGender(gender==='male'?null:'male')}>♂ M</button></div>
+        <div className="student-form-section">
+          <div className="student-form-section-title">Swimmer Details</div>
+          <div className="form-grid" style={{gridTemplateColumns:'1fr 80px auto'}}>
+            <div className="field" style={{margin:0}}><label>Full Name</label><input className="input" value={name} onChange={e=>{ setName(e.target.value); if(adultSelf) setGuardianName(e.target.value); }} placeholder="Swimmer's full name" /></div>
+            <div className="field" style={{margin:0}}><label>Age (yrs)</label><input className="input" type="number" min="0" max="120" step="0.5" value={age} onChange={e=>setAge(e.target.value)} placeholder="0" /></div>
+            <div className="field" style={{margin:0}}>
+              <label>Gender</label>
+              <div className="gender-toggle"><button type="button" className={`gender-opt ${gender==='female'?'active':''}`} onClick={()=>setGender(gender==='female'?null:'female')}>♀ F</button><button type="button" className={`gender-opt ${gender==='male'?'active':''}`} onClick={()=>setGender(gender==='male'?null:'male')}>♂ M</button></div>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="student-form-section">
-        <div className="student-form-section-title">Lessons</div>
-        <LessonsEditor enrollments={enrollments} setEnrollments={setEnrollments} lessonTypes={lessonTypes} packages={packages} />
-      </div>
-
-      <div className="student-form-section">
-        <div className="student-form-section-title">Parent / Guardian</div>
-        <label className="gb-check" style={{marginBottom:10,display:'inline-flex',gap:8,alignItems:'center'}}><input type="checkbox" checked={adultSelf} onChange={e=>handleAdultSelf(e.target.checked)} /> Adult swimmer — I am my own guardian</label>
-        <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
-          <div className="field" style={{margin:0}}><label>Guardian Name</label><input className="input" value={guardianName} onChange={e=>setGuardianName(e.target.value)} placeholder="Full name" /></div>
-          <div className="field" style={{margin:0}}><label>Email</label><input className="input" type="email" value={guardianEmail} onChange={e=>setGuardianEmail(e.target.value)} placeholder="email@example.com" /></div>
-          <div className="field" style={{margin:0}}><label>Phone</label><input className="input" type="tel" value={guardianPhone} onChange={e=>{ setGuardianPhone(e.target.value); if(sameAsGuardian) setEmergencyPhone(e.target.value); }} placeholder="+60 1X-XXXXXXX" /></div>
+        <div className="student-form-section">
+          <div className="student-form-section-title">Lessons</div>
+          <LessonsEditor enrollments={enrollments} setEnrollments={setEnrollments} lessonTypes={lessonTypes} packages={packages} />
         </div>
-      </div>
 
-      <div className="student-form-section">
-        <div className="student-form-section-title">Emergency Contact</div>
-        <label className="gb-check" style={{marginBottom:10,display:'inline-flex',gap:8,alignItems:'center'}}><input type="checkbox" checked={sameAsGuardian} onChange={e=>handleSameAsG(e.target.checked)} /> Same as Parent / Guardian</label>
-        <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr'}}>
-          <div className="field" style={{margin:0}}><label>Phone</label><input className="input" type="tel" value={sameAsGuardian?guardianPhone:emergencyPhone} onChange={e=>setEmergencyPhone(e.target.value)} disabled={sameAsGuardian} placeholder="+60 1X-XXXXXXX" /></div>
-          <div className="field" style={{margin:0}}><label>Relationship</label><input className="input" value={sameAsGuardian?'Parent / Guardian':emergencyRel} onChange={e=>setEmergencyRel(e.target.value)} disabled={sameAsGuardian} placeholder="e.g. Mother, Father, Spouse" /></div>
+        <div className="student-form-section">
+          <div className="student-form-section-title">Parent / Guardian</div>
+          <label className="gb-check" style={{marginBottom:10,display:'inline-flex',gap:8,alignItems:'center'}}><input type="checkbox" checked={adultSelf} onChange={e=>handleAdultSelf(e.target.checked)} /> Adult swimmer — I am my own guardian</label>
+          <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
+            <div className="field" style={{margin:0}}><label>Guardian Name</label><input className="input" value={guardianName} onChange={e=>setGuardianName(e.target.value)} placeholder="Full name" /></div>
+            <div className="field" style={{margin:0}}><label>Email</label><input className="input" type="email" value={guardianEmail} onChange={e=>setGuardianEmail(e.target.value)} placeholder="email@example.com" /></div>
+            <div className="field" style={{margin:0}}><label>Phone</label><input className="input" type="tel" value={guardianPhone} onChange={e=>{ setGuardianPhone(e.target.value); if(sameAsGuardian) setEmergencyPhone(e.target.value); }} placeholder="+60 1X-XXXXXXX" /></div>
+          </div>
         </div>
-      </div>
 
-      <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:8}}>
-        <button className="btn btn-ghost" onClick={resetForm}>Clear</button>
-        <button className="btn btn-primary" onClick={()=>{
-          const v = name.trim(); if(!v) return;
-          addStudent({ name:v, age, gender, enrollments, guardianName, guardianEmail, guardianPhone, emergencySameAsGuardian:sameAsGuardian, emergencyPhone:sameAsGuardian?guardianPhone:emergencyPhone, emergencyRelationship:sameAsGuardian?'Parent / Guardian':emergencyRel });
-          resetForm();
-        }}>Register Swimmer</button>
-      </div>
+        <div className="student-form-section">
+          <div className="student-form-section-title">Emergency Contact</div>
+          <label className="gb-check" style={{marginBottom:10,display:'inline-flex',gap:8,alignItems:'center'}}><input type="checkbox" checked={sameAsGuardian} onChange={e=>handleSameAsG(e.target.checked)} /> Same as Parent / Guardian</label>
+          <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr'}}>
+            <div className="field" style={{margin:0}}><label>Phone</label><input className="input" type="tel" value={sameAsGuardian?guardianPhone:emergencyPhone} onChange={e=>setEmergencyPhone(e.target.value)} disabled={sameAsGuardian} placeholder="+60 1X-XXXXXXX" /></div>
+            <div className="field" style={{margin:0}}><label>Relationship</label><input className="input" value={sameAsGuardian?'Parent / Guardian':emergencyRel} onChange={e=>setEmergencyRel(e.target.value)} disabled={sameAsGuardian} placeholder="e.g. Mother, Father, Spouse" /></div>
+          </div>
+        </div>
+
+        <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:8}}>
+          <button className="btn btn-ghost" onClick={resetForm}>Clear</button>
+          <button className="btn btn-primary" onClick={()=>{
+            const v = name.trim(); if(!v) return;
+            addStudent({ name:v, age, gender, enrollments, guardianName, guardianEmail, guardianPhone, emergencySameAsGuardian:sameAsGuardian, emergencyPhone:sameAsGuardian?guardianPhone:emergencyPhone, emergencyRelationship:sameAsGuardian?'Parent / Guardian':emergencyRel });
+            resetForm();
+            setFormExpanded(false);
+          }}>Register Swimmer</button>
+        </div>
+      </div>}
     </div>
 
     <div className="card">
@@ -2764,10 +2856,15 @@ ${TC_COMPANY} Administration`);
       <div style={{marginTop:14,display:'flex',gap:10,alignItems:'flex-end',flexWrap:'wrap'}}>
         <div className="field" style={{margin:0,flex:'1 1 240px'}}>
           <label>Select Swimmer</label>
-          <select className="select" value={studentId} onChange={e=>{ setStudentId(e.target.value); setAgreed(false); setScrolled(false); setDone(null); }}>
-            <option value="">— Choose a swimmer —</option>
-            {students.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(s=><option key={s.id} value={s.id}>{s.name}{s.tcAcceptedAt?' ✅':''}</option>)}
-          </select>
+          <StudentSelect
+            valueId={studentId || null}
+            fallbackLabel={null}
+            studentById={Object.fromEntries(students.map(s=>[s.id,s]))}
+            candidates={students.filter(s=>!s.tcAcceptedAt).slice().sort((a,b)=>a.name.localeCompare(b.name))}
+            onPick={(stu)=>{ setStudentId(stu?stu.id:''); setAgreed(false); setScrolled(false); setDone(null); }}
+            conflict={null}
+          />
+          <div className="hint" style={{marginTop:4}}>Only swimmers without a signed T&amp;C are shown. Already-signed swimmers are filtered out.</div>
         </div>
         {student && <div className="tc-student-summary">
           <div><span className="small subtle">Guardian:</span> <strong>{student.guardianName||'—'}</strong></div>
