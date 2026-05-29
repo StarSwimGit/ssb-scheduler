@@ -1757,11 +1757,11 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
                 <InstructorEditor row={r} onCancel={()=>setEditingInstructorId(null)} onSave={(patch)=>{ patchOption('scheduler_instructors', r.id, patch); setEditingInstructorId(null); }} />
               </div>
             : <div key={r.id} className={`row-item ${dragClass('inst', idx)}`} {...dragProps('inst', 'scheduler_instructors', options.instructors, idx)}>
-                <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'nowrap',minWidth:0,overflow:'hidden'}}>
                   {reorderCluster('inst', 'scheduler_instructors', options.instructors, idx)}
-                  <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
-                  <div style={{fontWeight:700,fontSize:14}}>{r.name}</div>
-                  {r.gender ? <span className={`gender-chip gender-chip-${r.gender}`} title={r.gender === 'female' ? 'Female' : 'Male'}>{r.gender === 'female' ? '♀ Female' : '♂ Male'}</span> : <span className="gender-chip gender-chip-unset" title="No gender set">— gender</span>}
+                  <span className="pill" style={{fontSize:10,padding:'2px 7px',background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD',flexShrink:0}}>{r.is_active?'Active':'Hidden'}</span>
+                  <div style={{fontWeight:700,fontSize:12,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',minWidth:0}}>{r.name}</div>
+                  {r.gender ? <span className={`gender-chip gender-chip-${r.gender}`} style={{fontSize:10,padding:'2px 6px',flexShrink:0}} title={r.gender==='female'?'Female':'Male'}>{r.gender==='female'?'♀':'♂'}</span> : null}
                 </div>
                 <div style={{display:'flex',gap:6}}>
                   <button className="btn btn-ghost small" onClick={()=>setEditingInstructorId(r.id)}>Edit</button>
