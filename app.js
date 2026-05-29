@@ -2287,10 +2287,9 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
   const [pkgId, setPkgId] = useState('');
-  const [types, setTypes] = useState([]);
+  const [typeId, setTypeId] = useState('');  // primary lesson type (also seeds the bucket)
   const [editId, setEditId] = useState(null);
   const [q, setQ] = useState('');
-  function toggleType(id){ setTypes(t => t.includes(id) ? t.filter(x => x !== id) : [...t, id]); }
   function colorsForId(id){ const t = lessonTypeById(id); return t ? { bg:t.bg_color, bd:t.border_color, tx:t.text_color, name:t.name } : { bg:'#eee', bd:'#ccc', tx:'#333', name:'(removed)' }; }
   function packageLabel(s){
     const g = s.familyGroupId && groupById ? groupById[s.familyGroupId] : null;
@@ -2306,21 +2305,42 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
     slots.forEach(sl => { (byType[sl.type] = byType[sl.type] || []).push(sl); });
     return Object.keys(byType).map(type => ({ type, times: byType[type].map(sl => `${DAYS_S[sl.day]} ${minuteToTime(sl.startMinute)}`) }));
   }
+  const ltPackages = typeId ? (packages || []).filter(p => p.lesson_type_id === typeId && p.is_active !== false) : [];
   const list = students.filter(s => !q || (s.name || '').toLowerCase().includes(q.toLowerCase()));
 
   return <>
     <div className="card" style={{marginBottom:16}}>
-      <div style={{fontSize:18,fontWeight:800}}>Swimmers</div>
-      <div className="small subtle" style={{marginTop:4}}>Register each swimmer once with age, package, and lesson-type buckets. Tagged swimmers appear in the matching dropdowns when you enroll them into a class.</div>
-      <div style={{display:'grid',gridTemplateColumns:'minmax(0,1.4fr) 80px minmax(0,1fr)',gap:10,marginTop:14}}>
-        <div className="field" style={{margin:0}}><label>Name</label><input className="input" value={name} onChange={e=>setName(e.target.value)} placeholder="Swimmer name" /></div>
-        <div className="field" style={{margin:0}}><label>Age</label><input className="input" type="number" min="0" max="120" value={age} onChange={e=>setAge(e.target.value)} placeholder="Yrs" /></div>
-        <div className="field" style={{margin:0}}><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">(none)</option>{packageOptionGroups(packages, lessonTypes)}</select></div>
+      <div style={{fontSize:18,fontWeight:800,marginBottom:4}}>Swimmers</div>
+      <div className="small subtle" style={{marginBottom:14}}>Register each swimmer with their age, lesson type, and package. Tagged swimmers appear in the session enrollment dropdowns.</div>
+      <div className="swimmer-add-row">
+        <div className="field" style={{margin:0,flex:'2 1 160px'}}>
+          <label>Name</label>
+          <input className="input" value={name} onChange={e=>setName(e.target.value)} placeholder="Swimmer name" />
+        </div>
+        <div className="field" style={{margin:0,flex:'0 0 80px'}}>
+          <label>Age (yrs)</label>
+          <input className="input" type="number" min="0" max="120" value={age} onChange={e=>setAge(e.target.value)} placeholder="0" />
+        </div>
+        <div className="field" style={{margin:0,flex:'1.5 1 130px'}}>
+          <label>Lesson Type</label>
+          <select className="select" value={typeId} onChange={e=>{ setTypeId(e.target.value); setPkgId(''); }}>
+            <option value="">(none)</option>
+            {lessonTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+        </div>
+        <div className="field" style={{margin:0,flex:'1.5 1 130px'}}>
+          <label>Package</label>
+          <select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)} disabled={!typeId}>
+            <option value="">{typeId ? '(none)' : '← pick type first'}</option>
+            {ltPackages.map(p => <option key={p.id} value={p.id}>{p.name}{p.amount!=null?` · RM${p.amount}`:''}{billingText(p.billing_mode,p.billing_count)?` · ${billingText(p.billing_mode,p.billing_count)}`:''}</option>)}
+          </select>
+        </div>
+        <button className="btn btn-primary" style={{alignSelf:'flex-end',whiteSpace:'nowrap'}} onClick={()=>{
+          const v = name.trim(); if(!v) return;
+          addStudent({ name:v, age, packageId:pkgId||null, lessonTypeIds: typeId ? [typeId] : [] });
+          setName(''); setAge(''); setPkgId(''); setTypeId('');
+        }}>Add Swimmer</button>
       </div>
-      <div className="field" style={{marginTop:10}}><label>Lesson types (bucket — pick one or more)</label>
-        <div className="type-picks">{lessonTypes.map(t => { const on = types.includes(t.id); return <button key={t.id} type="button" className={`chip chip-toggle ${on ? '' : 'chip-off'}`} style={on ? {background:t.bg_color,borderColor:t.border_color,color:t.text_color} : undefined} onClick={()=>toggleType(t.id)}>{t.name}</button>; })}{lessonTypes.length ? null : <span className="subtle small">Add lesson types in Settings first.</span>}</div>
-      </div>
-      <div style={{display:'flex',justifyContent:'flex-end',marginTop:12}}><button className="btn btn-primary" onClick={()=>{ const v = name.trim(); if(!v) return; addStudent({ name:v, age, packageId:pkgId || null, lessonTypeIds:types }); setName(''); setAge(''); setPkgId(''); setTypes([]); }}>Add Swimmer</button></div>
     </div>
 
     <div className="card">
