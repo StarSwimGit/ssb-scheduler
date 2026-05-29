@@ -123,8 +123,21 @@
     .legend-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)}
     .legend-allbtn{background:var(--surface);border:1px solid var(--border-2);color:var(--text);border-radius:999px;padding:6px 13px;font-weight:600;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:7px}
     .legend-allbtn:hover{border-color:#CFCFDE}
+    .legend-allbtn:disabled{opacity:.45;cursor:not-allowed}
     .legend-allbtn .dot{width:8px;height:8px;border-radius:999px;background:var(--teal)}
     .legend-allbtn.is-off .dot{background:var(--text-3)}
+    /* Two-row legend variant — types on top, instructors below */
+    .legend-bar-v{flex-direction:column;align-items:stretch;gap:8px}
+    .legend-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .legend-row .legend{flex:1;display:flex;flex-wrap:wrap;gap:6px;min-width:0;margin:0}
+    .legend-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.7px;color:var(--text-3);min-width:74px;flex-shrink:0}
+    .legend-row-instructors{padding-top:8px;border-top:1px dashed var(--border-2)}
+    /* Instructor chips — neutral when off, primary tint when on, with gender glyph */
+    .chip-instructor{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text-3);border-radius:999px;font-weight:600;font-size:12px;cursor:pointer;transition:.12s ease;user-select:none}
+    .chip-instructor:hover{border-color:var(--primary);color:var(--primary-on-soft)}
+    .chip-instructor.is-on{background:var(--primary-soft);border-color:var(--primary);color:var(--primary-on-soft);box-shadow:0 1px 4px rgba(109,91,208,.18)}
+    .chip-instructor .inst-chip-g{font-size:11px;opacity:.7;line-height:1}
+    .chip-instructor.is-on .inst-chip-g{opacity:1;color:var(--primary)}
     .grid{display:grid;gap:16px}.grid-2{grid-template-columns:1.25fr .75fr}.grid-3{grid-template-columns:repeat(3,1fr)}
     .month-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:8px}.month-dow{font-size:11px;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-2);font-weight:700;padding:0 4px 2px}
     .day-box{min-height:122px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:12px;cursor:pointer;display:flex;flex-direction:column;gap:8px;transition:.15s ease}
