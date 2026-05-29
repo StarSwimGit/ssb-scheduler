@@ -205,7 +205,7 @@
     .lt-row-hidden{opacity:.55}
     .lt-row-top{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap}
     .lt-row-lead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0;flex:1}
-    .lt-name-chip{font-size:15px;font-weight:800;padding:7px 14px;border-radius:999px;border-width:2px;border-style:solid;letter-spacing:-.1px;white-space:nowrap;line-height:1.15}
+    .lt-name-chip{font-size:15px;font-weight:800;padding:7px 14px;border-radius:10px;border-width:2px;border-style:solid;letter-spacing:-.1px;white-space:nowrap;line-height:1.15}
     .lt-classes-pill{font-size:11px;font-weight:700;padding:5px 10px;border-radius:999px;background:var(--surface-2);color:var(--text-2);border:1px solid var(--border-2);white-space:nowrap}
     .lt-row-actions{display:flex;gap:6px;align-items:center;flex-shrink:0;flex-wrap:wrap}
     .lt-row-meta{display:flex;gap:8px;flex-wrap:wrap;padding-left:4px}
@@ -248,6 +248,44 @@
     .gender-chip-male{background:#DBEAFE;color:#1E40AF;border:1px solid #93C5FD}
     .gender-chip-unset{background:var(--surface-2);color:var(--text-3);border:1px solid var(--border-2);font-weight:500}
     .inst-editor{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;background:var(--surface-2);border:1px solid var(--border-2);border-radius:10px;padding:10px}
+
+    /* ── Class type badge on lesson type rows ────────────────────────────── */
+    .lt-type-badge{display:inline-flex;align-items:center;font-size:11px;font-weight:700;padding:3px 9px;border-radius:8px;white-space:nowrap}
+    .lt-type-group{background:#EFF6FF;color:#1D4ED8;border:1px solid #BFDBFE}
+    .lt-type-personal{background:#FDF4FF;color:#7E22CE;border:1px solid #E9D5FF}
+
+    /* ── Group replacement section in modal ─────────────────────────────── */
+    .repl-section{margin-top:14px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:12px;display:flex;flex-direction:column;gap:8px}
+    .repl-section-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+    .repl-section-title{font-size:13px;font-weight:800;color:var(--text)}
+    .repl-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .repl-badge-sm{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;background:var(--amber-bg);color:var(--amber-tx);border:1px solid var(--amber-bd);font-size:10px;font-weight:900;flex-shrink:0}
+    /* Replacement marker inline in cards */
+    .wa-stu-repl{background:rgba(180,83,9,0.08) !important;border-color:var(--amber-bd) !important}
+    .repl-mark{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:4px;background:var(--amber-bg);color:var(--amber-tx);font-size:9px;font-weight:900;margin-right:3px;flex-shrink:0}
+    .repl-mark-sm{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:3px;background:var(--amber-bg);color:var(--amber-tx);font-size:8px;font-weight:900;margin-right:3px;vertical-align:middle}
+    .daily-stu-repl{background:rgba(251,191,36,0.12);border-color:var(--amber-bd)}
+
+    /* ── Personal class reschedule UI ───────────────────────────────────── */
+    .reschedule-head{display:flex;justify-content:space-between;align-items:center;gap:10px}
+    .reschedule-notice{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 10px;background:var(--primary-soft);border:1px solid #D9D4F0;border-radius:8px}
+    .reschedule-from-badge{font-size:12px;font-weight:700;color:var(--primary-on-soft)}
+    .reschedule-form{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;padding:10px 0 4px;border-top:1px dashed var(--border-2);margin-top:4px}
+    .reschedule-tag{font-size:11px;font-weight:800;color:var(--primary-on-soft);background:var(--primary-soft);border:1px solid #D9D4F0;padding:1px 5px;border-radius:5px;margin-left:5px;cursor:default}
+
+    /* ── Credit balance UI ──────────────────────────────────────────────── */
+    .credit-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border-2)}
+    .credit-row:last-child{border-bottom:none}
+    .credit-row-name{font-size:13px;font-weight:700;color:var(--text);min-width:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .credit-controls{display:flex;align-items:center;gap:8px;flex-shrink:0}
+    .credit-count{font-size:13px;font-weight:800;color:var(--text)}
+    .credit-count.credit-low{color:var(--red-tx)}
+    .credit-btn{width:28px;height:28px;border-radius:8px;border:1px solid var(--border-2);background:var(--surface);color:var(--text);font-size:16px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1}
+    .credit-btn:hover{background:var(--surface-2)}
+    .credit-init{display:flex;align-items:center;gap:6px;flex-shrink:0}
+    /* Inline credit marker on session cards */
+    .credit-mark{font-size:10px;font-weight:700;color:var(--teal);letter-spacing:.1px}
+    .credit-mark.credit-low{color:var(--red-tx)}
     /* Trial annotation — drawn from the swimmer's package (any package whose
        name contains "trial"). Pill in the modal slot, subtle mark in cards. */
     .trial-pill{display:inline-flex;align-items:center;height:36px;padding:0 10px;font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;background:#FEE2E2;color:#B91C1C;border:1px solid #FCA5A5;border-radius:8px;white-space:nowrap;align-self:center;flex:0 0 auto}
