@@ -344,6 +344,87 @@
     .lesson-add-btn{align-self:flex-start;margin-top:4px;font-weight:700}
     .lesson-add-btn:hover{background:var(--primary-soft);color:var(--primary-on-soft);border-color:var(--primary)}
     @media (max-width:768px){.lesson-row{grid-template-columns:1fr 1fr 36px}}
+
+    /* ── Collapsible Register Swimmer card ───────────────────────────────── */    .register-card{padding:0;transition:box-shadow .2s ease;overflow:hidden}
+    .register-card.is-closed:hover{box-shadow:0 4px 16px rgba(109,91,208,.12)}
+    .register-header{width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;background:transparent;border:none;cursor:pointer;text-align:left;font:inherit;color:inherit;border-radius:14px;transition:background .15s ease}
+    .register-card.is-closed .register-header:hover{background:var(--primary-soft)}
+    .register-header-left{display:flex;align-items:center;gap:12px;min-width:0;flex-wrap:wrap}
+    .register-header-icon{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;background:var(--primary);color:#fff;font-size:18px;font-weight:800;line-height:1;flex-shrink:0;transition:transform .15s ease, background .15s ease}
+    .register-card.is-closed .register-header:hover .register-header-icon{transform:scale(1.08)}
+    .register-card.is-open .register-header-icon{background:var(--text-3);font-size:14px}
+    .register-header-title{font-size:17px;font-weight:800;color:var(--text)}
+    .register-header-hint{font-size:12px}
+    .register-header-chev{font-size:14px;color:var(--text-3);font-weight:700;flex-shrink:0}
+    .register-body{padding:4px 18px 18px;animation:registerSlideDown .22s ease}
+    @keyframes registerSlideDown{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+
+    /* ── Multi-swimmer Enroll view ──────────────────────────────────────── */
+    .enroll-slots{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+    .enroll-slot{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:10px;flex-wrap:wrap}
+    .enroll-slot-num{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--primary);color:#fff;font-size:11px;font-weight:800;flex-shrink:0}
+    .enroll-slot-pick{flex:1 1 240px;min-width:200px}
+    .enroll-slot-tags{display:flex;gap:4px;flex-wrap:wrap;flex:1.4 1 200px}
+    .enroll-slot-x{background:transparent;border:1px solid var(--border-2);color:var(--text-3);border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:16px;line-height:1;flex-shrink:0}
+    .enroll-slot-x:hover{background:var(--red-bg);border-color:var(--red-bd);color:var(--red-tx)}
+    .enroll-slot-add{align-self:flex-start;padding:8px 14px;background:var(--primary-soft);border:1px dashed var(--primary);color:var(--primary-on-soft);border-radius:10px;font-weight:700;font-size:12px;cursor:pointer}
+    .enroll-slot-add:hover{background:var(--primary);color:#fff}
+    .enroll-summary{margin-top:12px;padding:8px 12px;background:#fff;border:1px solid var(--border-2);border-radius:8px;font-size:13px;color:var(--text-2)}
+    .enroll-summary-shared{color:var(--primary-on-soft);font-weight:600}
+    .enroll-summary-warn{color:var(--amber-tx);font-weight:600}
+    .enroll-stats{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+    .enroll-stat{padding:4px 10px;border-radius:999px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;border:1px solid}
+    .enroll-stat.fits{background:var(--green-bg);color:var(--green-tx);border-color:var(--green-bd)}
+    .enroll-stat.partial{background:var(--amber-bg);color:var(--amber-tx);border-color:var(--amber-bd)}
+    .enroll-stat.full{background:#f3f4f6;color:#6b7280;border-color:#d1d5db}
+
+    /* Grid (mirrors WeekView wagenda) */
+    .enroll-grid{display:grid;grid-template-columns:64px repeat(7,minmax(120px,1fr));gap:1px;background:var(--border-2);border:1px solid var(--border-2);border-radius:12px;overflow:hidden}
+    .enroll-grid-corner{background:#fff}
+    .enroll-grid-dayhead{background:#fff;padding:8px 6px;text-align:center}
+    .enroll-grid-dayname{font-size:11px;font-weight:800;color:var(--primary-on-soft);text-transform:uppercase;letter-spacing:.6px}
+    .enroll-grid-daydate{font-size:10px;color:var(--text-3);font-weight:600;margin-top:2px}
+    .enroll-grid-time{background:#fff;padding:6px 8px;font-size:11px;font-weight:700;color:var(--text-2);text-align:right;border-top:1px solid var(--border-2)}
+    .enroll-grid-cell{background:#fff;padding:4px;min-height:72px;display:flex;flex-direction:column;gap:4px;position:relative;cursor:default;transition:background .12s ease}
+    .enroll-grid-cell.is-opportunity{cursor:pointer;background:repeating-linear-gradient(45deg,#fff,#fff 8px,rgba(109,91,208,.04) 8px,rgba(109,91,208,.04) 16px)}
+    .enroll-grid-cell.is-opportunity:hover{background:var(--primary-soft)}
+    .enroll-grid-cell.is-gold{background:repeating-linear-gradient(45deg,#FFFBEB,#FFFBEB 8px,#FEF3C7 8px,#FEF3C7 16px);outline:2px dashed #F59E0B;outline-offset:-3px}
+    .enroll-grid-cell.is-gold:hover{background:#FEF3C7}
+    .enroll-cell-hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--primary-on-soft);opacity:0;transition:opacity .15s ease;pointer-events:none}
+    .enroll-grid-cell.is-opportunity:hover .enroll-cell-hint{opacity:1}
+    .enroll-grid-cell.is-gold .enroll-cell-hint{opacity:.6;color:#92400E}
+    .enroll-grid-cell.is-gold:hover .enroll-cell-hint{opacity:1}
+
+    /* Mini cards within cells */
+    .enroll-mini{padding:5px 7px;border-radius:6px;border-left:3px solid transparent;cursor:pointer;transition:transform .12s ease, box-shadow .12s ease;position:relative;z-index:1}
+    .enroll-mini:hover{transform:translateY(-1px);box-shadow:0 4px 10px rgba(0,0,0,.08)}
+    .enroll-mini-top{display:flex;justify-content:space-between;align-items:center;gap:4px}
+    .enroll-mini-type{font-size:11px;font-weight:800;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:1px 5px;border-radius:4px}
+    .enroll-mini-cap{font-size:10px;font-weight:700;color:var(--text-2);flex-shrink:0}
+    .enroll-mini-meta{font-size:10px;color:var(--text-3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .enroll-mini-cta{margin-top:4px;font-size:9px;font-weight:900;letter-spacing:.4px;text-transform:uppercase;padding:2px 5px;border-radius:4px;display:inline-block;border:1px solid}
+    .cta-fits{background:var(--green-bg);color:var(--green-tx);border-color:var(--green-bd)}
+    .cta-partial{background:var(--amber-bg);color:var(--amber-tx);border-color:var(--amber-bd)}
+    .cta-split{background:#FEF3C7;color:#92400E;border-color:#FCD34D}
+    .cta-full{background:#f3f4f6;color:#6b7280;border-color:#d1d5db}
+
+    /* Emphasis by category */
+    .enroll-mini.mini-fits{outline:2px solid var(--green-tx);outline-offset:-1px}
+    .enroll-mini.mini-partial{outline:2px solid var(--amber-tx);outline-offset:-1px;opacity:.95}
+    .enroll-mini.mini-split{outline:2px dashed #F59E0B;outline-offset:-1px}
+    .enroll-mini.mini-full{opacity:.5;filter:grayscale(.4)}
+
+    /* Legend */
+    .enroll-legend{display:flex;align-items:center;gap:14px;margin-top:14px;flex-wrap:wrap;font-size:11px;color:var(--text-2)}
+    .enroll-legend span{display:inline-flex;align-items:center;gap:5px}
+    .enroll-swatch{display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid}
+    .swatch-fits{background:var(--green-bg);border-color:var(--green-tx)}
+    .swatch-partial{background:var(--amber-bg);border-color:var(--amber-tx)}
+    .swatch-split{background:#FEF3C7;border-color:#F59E0B;border-style:dashed}
+    .swatch-full{background:#f3f4f6;border-color:#d1d5db}
+    .swatch-gold{background:repeating-linear-gradient(45deg,#FFFBEB,#FFFBEB 4px,#FEF3C7 4px,#FEF3C7 8px);border-color:#F59E0B;border-style:dashed}
+
+    @media (max-width:900px){.enroll-grid{grid-template-columns:48px repeat(7,minmax(80px,1fr))}.enroll-mini-type{font-size:10px}.enroll-mini-cap{font-size:9px}.enroll-mini-meta{font-size:9px}}
     .reschedule-tag{font-size:11px;font-weight:800;color:var(--primary-on-soft);background:var(--primary-soft);border:1px solid #D9D4F0;padding:1px 5px;border-radius:5px;margin-left:5px;cursor:default}
 
     /* ── Credit balance UI ──────────────────────────────────────────────── */
