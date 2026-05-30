@@ -3419,8 +3419,8 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
   return <div className="modal-backdrop"><div className="modal-card">
     <div className="modal-head">
       <div style={{minWidth:0,flex:1}}>
-        <div style={{fontSize:14,fontWeight:800,lineHeight:1.1}}>{modal.id ? 'Edit' : 'Add'} Session</div>
-        <div className="small subtle" style={{fontSize:11,marginTop:2}}>{DAYS_F[modal.day]} · {minuteToTime(modal.startMinute)} · {modal.weekStartDate}{previewPool ? ` · ${previewPool.name}` : ''}</div>
+        <div style={{fontSize:13,fontWeight:800,lineHeight:1.1}}>{modal.id ? 'Edit' : 'Add'} Session</div>
+        <div className="small subtle" style={{fontSize:10.5,marginTop:1}}>{DAYS_S[modal.day]} {minuteToTime(modal.startMinute)}{previewPool ? ` · ${previewPool.name}` : ''}</div>
       </div>
       <button className="btn btn-ghost small" onClick={() => setModal(null)} aria-label="Close" title="Close (Esc)">✕</button>
     </div>
@@ -3429,19 +3429,23 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
         <div className="field"><label>Lesson Type</label><select className="select" value={modal.form.type} onChange={(e)=>onTypeChange(e.target.value)}>{lessonTypes.map(x => <option key={x.id} value={x.name}>{x.name}</option>)}</select></div>
         <div className="field"><label>Pool</label><select className="select" value={modal.form.poolId || ''} onChange={(e)=>setForm({ poolId: e.target.value || null })}><option value="">(no pool)</option>{pools.map(p => <option key={p.id} value={p.id}>{p.name} · cap {p.capacity_total}</option>)}</select></div>
         <div className="field"><label>Instructor</label><select className="select" value={modal.form.instructorId || ''} onChange={(e)=>onInstructorChange(e.target.value)}><option value="">(unassigned)</option>{instructors.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></div>
-        <div className="field"><label>Duration (minutes)</label><select className="select" value={String(modal.form.durationMinutes)} onChange={(e)=>setForm({ durationMinutes: Number(e.target.value) })}>{durationOptions.map(d => <option key={d} value={d}>{d} min</option>)}</select></div>
-        <div className="field"><label>Time Slot</label><input className="input" value={formatRange(modal.startMinute, modal.form.durationMinutes)} readOnly /></div>
-        <div className="field"><label>Capacity</label><div className="cap-preview"><span className="cap-chip cap-chip-lg" style={{background:previewChip.bg,color:previewChip.tx,borderColor:previewChip.bd}}>{previewStudents}{previewMax > 0 ? ` / ${previewMax}` : ''}</span><span className="small subtle">{previewMax > 0 ? (previewStatus==='over'?'Over':previewStatus==='full'?'Full':previewStatus==='tight'?'Tight':'Room') : 'No ratio'}</span></div></div>
-        <div className="field" style={{gridColumn:'1 / -1'}}>
-          <label>Family group <span className="subtle" style={{textTransform:'none',letterSpacing:0,fontWeight:600}}>· optional</span></label>
-          <select className="select" value={modal.form.familyGroupId || ''} onChange={(e)=>chooseGroup(e.target.value)}>
-            <option value="">No group (enroll individually)</option>
-            {(familyGroups || []).map(g => <option key={g.id} value={g.id}>{g.name}{(membersByGroup && membersByGroup[g.id]) ? ` · ${membersByGroup[g.id].length} member${membersByGroup[g.id].length===1?'':'s'}` : ''}</option>)}
-          </select>
-          {modal.form.familyGroupId ? <div className="hint" style={{marginTop:3}}>👪 Members fill in below.</div> : null}
+        <div className="field"><label>Duration</label><select className="select" value={String(modal.form.durationMinutes)} onChange={(e)=>setForm({ durationMinutes: Number(e.target.value) })}>{durationOptions.map(d => <option key={d} value={d}>{d} min</option>)}</select></div>
+        {/* Plain inline meta line — replaces the boxed Time/Capacity fields. */}
+        <div className="modal-meta-strip">
+          <span>⏱ <strong>{formatRange(modal.startMinute, modal.form.durationMinutes)}</strong></span>
+          {previewMax > 0
+            ? <span className={previewStatus==='over'?'meta-warn':''}>👥 <strong>{previewStudents} / {previewMax}</strong>{previewStatus==='over'?' Over':previewStatus==='full'?' Full':previewStatus==='tight'?' Tight':''}</span>
+            : <span>👥 <strong>{previewStudents}</strong></span>}
         </div>
         <div className="field" style={{gridColumn:'1 / -1'}}>
-          <label>Swimmers {previewMax > 0 ? `· ${previewMax} slots (max for this type)` : ''}</label>
+          <label>Group <span className="subtle" style={{textTransform:'none',letterSpacing:0,fontWeight:600}}>· optional</span></label>
+          <select className="select" value={modal.form.familyGroupId || ''} onChange={(e)=>chooseGroup(e.target.value)}>
+            <option value="">No group</option>
+            {(familyGroups || []).map(g => <option key={g.id} value={g.id}>{g.name}{(membersByGroup && membersByGroup[g.id]) ? ` · ${membersByGroup[g.id].length}` : ''}</option>)}
+          </select>
+        </div>
+        <div className="field" style={{gridColumn:'1 / -1'}}>
+          <label>Swimmers</label>
           <div className="stu-list">
             {(modal.form.studentRows || []).map((r, i) => {
               // Trial flag is per-lesson-type — only fires if this swimmer's
@@ -3480,7 +3484,6 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
         <div className="repl-section-head">
           <div>
             <span className="repl-section-title">Replacement Students</span>
-            <span className="small subtle" style={{marginLeft:8}}>One-off this week — not carried forward on duplicate</span>
           </div>
           <button className="btn btn-ghost small" onClick={()=>{
             const filled = (modal.form.studentRows||[]).filter(r=>r.studentId || (r.name||'').trim()).length;
