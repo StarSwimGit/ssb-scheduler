@@ -3128,8 +3128,8 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
   }
 
   function setRow(i, key, val){ const rows = (modal.form.studentRows || []).slice(); rows[i] = { ...rows[i], [key]: val }; setForm({ studentRows: rows }); }
-  function addRow(){ setForm({ studentRows: [...(modal.form.studentRows || []), { studentId:null, name:'', age:'', remark:'' }] }); }
-  function removeRow(i){ const rows = (modal.form.studentRows || []).slice(); rows.splice(i, 1); if(!rows.length) rows.push({ studentId:null, name:'', age:'', remark:'' }); setForm({ studentRows: rows }); }
+  function addRow(){ setForm({ studentRows: [...(modal.form.studentRows || []), { studentId:null, name:'', age:'', remark:'', attendance:'pending' }] }); }
+  function removeRow(i){ const rows = (modal.form.studentRows || []).slice(); rows.splice(i, 1); if(!rows.length) rows.push({ studentId:null, name:'', age:'', remark:'', attendance:'pending' }); setForm({ studentRows: rows }); }
 
   function onInstructorChange(id){
     const inst = instructors.find(i => i.id === id);
@@ -3140,7 +3140,8 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
   function pickStudent(i, student){
     const rows = (modal.form.studentRows || []).slice();
     const keepRemark = student ? (rows[i]?.remark || '') : '';
-    rows[i] = student ? { studentId: student.id, name: student.name, age: (student.age === null || student.age === undefined ? '' : String(student.age)), remark: keepRemark } : { studentId:null, name:'', age:'', remark:'' };
+    const keepAtt = student ? (rows[i]?.attendance || 'pending') : 'pending';
+    rows[i] = student ? { studentId: student.id, name: student.name, age: (student.age === null || student.age === undefined ? '' : String(student.age)), remark: keepRemark, attendance: keepAtt } : { studentId:null, name:'', age:'', remark:'', attendance:'pending' };
     setForm({ studentRows: rows });
   }
   function setRemark(i, val){ const rows = (modal.form.studentRows || []).slice(); rows[i] = { ...rows[i], remark: val }; setForm({ studentRows: rows }); }
@@ -3462,8 +3463,73 @@ function PrintWeeklyTableSection({ weekBlocksAllPools, wb, selectedWeekStart, gr
 // Global error trap + mount
 // ============================================================================
 
-window.addEventListener('error', (ev) => {
+// ── Error reporting ───────────────────────────────────────────────────
+// Babel-transformed scripts can mask real errors as the generic "Script
+// error." string. We capture as much detail as the runtime gives us
+// (message, source, line:col, stack) and present it readably so issues
+// can actually be diagnosed instead of dead-ending at "Script error." A
+// "Copy details" button puts everything onto the clipboard for sharing.
+
+function showDiagnosticError(label, detail){
   const root = document.getElementById('root');
-  if(root){ root.innerHTML = `<div class="wrap"><div class="card error-card"><div style="font-size:20px;font-weight:800;margin-bottom:8px">App error</div><div class="small">${(ev.error && ev.error.message) || ev.message || 'Unknown error'}</div></div></div>`; }
-});
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  if(!root) return;
+  const block = document.createElement('div');
+  block.style.cssText = 'padding:24px 18px;max-width:880px;margin:24px auto;font-family:Inter,system-ui,sans-serif';
+  block.innerHTML = `
+    <div style="background:#FEE2E2;border:1px solid #FCA5A5;color:#7F1D1D;padding:20px 22px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08)">
+      <div style="font-size:18px;font-weight:800;margin-bottom:6px">⚠ ${label}</div>
+      <div style="font-size:13px;margin-bottom:14px;color:#9B2B2B">The app caught an error. Please screenshot or copy the details below and share them.</div>
+      <pre style="white-space:pre-wrap;word-break:break-word;background:#fff;border:1px solid #FECACA;border-radius:10px;padding:12px 14px;font-size:12px;font-family:'SF Mono',Menlo,Consolas,monospace;color:#7F1D1D;max-height:280px;overflow:auto">${detail.replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</pre>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button id="err-copy" style="background:#7F1D1D;color:#fff;border:none;padding:9px 16px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer">Copy details</button>
+        <button id="err-reload" style="background:#fff;color:#7F1D1D;border:1px solid #FCA5A5;padding:9px 16px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer">Reload</button>
+      </div>
+    </div>`;
+  root.innerHTML = '';
+  root.appendChild(block);
+  const copyBtn = document.getElementById('err-copy');
+  if(copyBtn) copyBtn.onclick = () => { try{ navigator.clipboard.writeText(`${label}\n\n${detail}`); copyBtn.textContent = 'Copied'; }catch(_){} };
+  const reloadBtn = document.getElementById('err-reload');
+  if(reloadBtn) reloadBtn.onclick = () => location.reload();
+}
+function formatErrEvent(ev){
+  const lines = [];
+  if(ev.error){
+    lines.push(`Message: ${ev.error.message || '(none)'}`);
+    if(ev.error.stack) lines.push(`\nStack:\n${ev.error.stack}`);
+  } else {
+    lines.push(`Message: ${ev.message || '(none)'}`);
+  }
+  if(ev.filename) lines.push(`\nSource: ${ev.filename}:${ev.lineno}:${ev.colno}`);
+  if(navigator.userAgent) lines.push(`\nUA: ${navigator.userAgent}`);
+  return lines.join('\n');
+}
+window.addEventListener('error', (ev) => { try{ console.error('[ssb] window error:', ev.error || ev); showDiagnosticError('App error', formatErrEvent(ev)); }catch(_){} });
+window.addEventListener('unhandledrejection', (ev) => { try{
+  const reason = ev.reason;
+  const detail = (reason && reason.stack) ? `Message: ${reason.message || reason}\n\nStack:\n${reason.stack}` : String(reason);
+  console.error('[ssb] unhandled promise rejection:', reason);
+  showDiagnosticError('Async error', detail);
+}catch(_){} });
+
+// React Error Boundary — catches errors thrown during render or in
+// lifecycle methods (event handlers still bubble to window.onerror).
+class ErrorBoundary extends React.Component {
+  constructor(props){ super(props); this.state = { err: null, info: null }; }
+  static getDerivedStateFromError(err){ return { err }; }
+  componentDidCatch(err, info){ console.error('[ssb] render error:', err, info); this.setState({ info }); }
+  render(){
+    if(this.state.err){
+      const lines = [`Message: ${this.state.err.message || this.state.err}`];
+      if(this.state.err.stack) lines.push(`\nStack:\n${this.state.err.stack}`);
+      if(this.state.info && this.state.info.componentStack) lines.push(`\nComponent stack:${this.state.info.componentStack}`);
+      // Use setTimeout so we render normally first, then swap to the
+      // diagnostic — avoids re-entering setState during render.
+      setTimeout(() => showDiagnosticError('Render error', lines.join('\n')), 0);
+      return null;
+    }
+    return this.props.children;
+  }
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<ErrorBoundary><App /></ErrorBoundary>);
