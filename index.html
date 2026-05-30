@@ -173,18 +173,33 @@
     tr:last-child td{border-bottom:none}
     .settings-cols{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.settings-list{display:flex;flex-direction:column;gap:8px;margin-top:12px}
     .row-item{display:flex;gap:8px;align-items:center;justify-content:space-between;background:var(--surface-2);border:1px solid var(--border);border-radius:11px;padding:10px 12px}.empty{padding:20px;text-align:center;color:var(--text-3)}
-    .modal-backdrop{position:fixed;inset:0;background:rgba(28,28,43,.45);display:grid;place-items:center;padding:18px;z-index:60}.modal-card{width:min(900px,100%);background:var(--surface);border:1px solid var(--border);border-radius:20px;overflow:hidden;box-shadow:var(--shadow-lg)}
-    .modal-head{padding:16px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}.modal-body{padding:18px}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-    .field label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--text-2);font-weight:700;margin-bottom:5px}
+    /* Modal — capped at viewport height with a sticky head/footer so the
+       Close button (head) and Save button (footer) are always reachable
+       regardless of how much content fits between them. The body
+       scrolls inside the card. Width reduced from 900→720 — the form is
+       narrow enough not to need the extra horizontal real estate, and the
+       reclaimed width keeps the modal from feeling cavernous on a tablet. */
+    .modal-backdrop{position:fixed;inset:0;background:rgba(28,28,43,.45);display:grid;place-items:center;padding:10px;z-index:60}
+    .modal-card{width:min(720px,100%);max-height:92vh;background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-lg);display:flex;flex-direction:column}
+    .modal-head{flex-shrink:0;padding:10px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--surface)}
+    .modal-body{flex:1 1 auto;overflow-y:auto;padding:12px 14px}
+    .modal-foot{flex-shrink:0;padding:10px 14px;border-top:1px solid var(--border);background:var(--surface);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+    .form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+    .field{margin:0}
+    .field label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-3);font-weight:700;margin-bottom:3px}
+    .modal-body .input,.modal-body .select{padding:6px 10px;font-size:12.5px}
+    .modal-body .hint{font-size:10.5px;color:var(--text-3);margin-top:3px}
+    .modal-section-divider{height:1px;background:var(--border);margin:10px 0 8px}
+    .modal-section-label{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-3);font-weight:800;margin-bottom:6px}
     .hint{font-size:11px;color:var(--text-2);margin-top:4px}
     .swatch{width:100%;height:38px;padding:3px;border:1px solid var(--border-2);border-radius:10px;background:var(--surface-2);cursor:pointer}
     .swatch::-webkit-color-swatch-wrapper{padding:0}.swatch::-webkit-color-swatch{border:none;border-radius:7px}.swatch::-moz-color-swatch{border:none;border-radius:7px}
-    .stu-list{display:flex;flex-direction:column;gap:7px}
-    .stu-row{display:grid;grid-template-columns:24px 1fr;gap:8px;align-items:start}
-    .stu-num{font-size:12px;font-weight:700;color:var(--text-3);text-align:center;padding-top:10px}
-    .stu-fields{display:flex;gap:8px;min-width:0}
-    .stu-fields > .ssel{flex:1.25 1 0;min-width:0}
-    .stu-remark{flex:1 1 0;min-width:0;font-size:13px}
+    .stu-list{display:flex;flex-direction:column;gap:5px}
+    .stu-row{display:grid;grid-template-columns:20px 1fr;gap:6px;align-items:start}
+    .stu-num{font-size:11px;font-weight:700;color:var(--text-3);text-align:center;padding-top:8px}
+    .stu-fields{display:flex;gap:6px;min-width:0;flex-wrap:wrap;align-items:center}
+    .stu-fields > .ssel{flex:1.25 1 0;min-width:160px}
+    .stu-remark{flex:1 1 0;min-width:120px;font-size:12px}
     .stu-x{padding:8px 0;font-size:17px;line-height:1;color:var(--text-2)}
     .stu-x:hover{color:var(--red-tx);border-color:var(--red-bd)}
     .ssel{position:relative;min-width:0}
@@ -301,9 +316,9 @@
     .lt-type-personal{background:#FDF4FF;color:#7E22CE;border:1px solid #E9D5FF}
 
     /* ── Group replacement section in modal ─────────────────────────────── */
-    .repl-section{margin-top:14px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:12px;display:flex;flex-direction:column;gap:8px}
-    .repl-section-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-    .repl-section-title{font-size:13px;font-weight:800;color:var(--text)}
+    .repl-section{margin-top:10px;padding-top:8px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:6px}
+    .repl-section-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+    .repl-section-title{font-size:11px;font-weight:800;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px}
     .repl-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
     .repl-badge-sm{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;background:var(--amber-bg);color:var(--amber-tx);border:1px solid var(--amber-bd);font-size:10px;font-weight:900;flex-shrink:0}
     /* →R button on regular student slots — quietly amber, hover lifts to clear amber */
@@ -384,20 +399,18 @@
     .intake-banner-sub{font-size:12px;color:var(--text-2);margin-top:2px;line-height:1.4}
     .intake-banner-btn{flex-shrink:0;padding:10px 18px;font-size:13px}
 
-    /* Full Class Replacement — collapsible chooser inside the SessionModal,
-       sits just above the Save/Delete footer. Two-card option layout. */
-    .cancel-class-panel{margin-top:16px;border-top:1px dashed var(--border-2);padding-top:14px}
-    .cancel-class-toggle{display:flex;justify-content:space-between;align-items:center;width:100%;padding:11px 14px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:10px;cursor:pointer;font-size:13px;font-weight:700;color:#92400E;transition:.15s ease}
-    .cancel-class-toggle:hover{background:#FEF3C7;border-color:#FCD34D}
-    .cancel-class-toggle.is-open{background:#FEF3C7;border-color:#FCD34D}
-    .cancel-class-chev{font-size:12px;color:#92400E}
-    .cancel-class-options{margin-top:10px;display:flex;flex-direction:column;gap:8px;padding:12px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:10px}
-    .cancel-class-hint{font-size:11px;color:#92400E;line-height:1.4}
-    .cancel-class-buttons{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px}
-    .cancel-class-opt{display:block;width:100%;text-align:left;padding:14px;background:#fff;border:1px solid #FCD34D;border-radius:10px;cursor:pointer;transition:.15s ease}
-    .cancel-class-opt:hover{background:#FEF3C7;border-color:#CA8A04;transform:translateY(-1px);box-shadow:0 4px 12px rgba(202,138,4,.18)}
-    .cancel-class-opt-title{font-size:13px;font-weight:800;color:var(--text);margin-bottom:4px}
-    .cancel-class-opt-sub{font-size:11px;color:var(--text-3);line-height:1.4}
+    /* Full Class Replacement — inline above the modal footer. Compact. */
+    .cancel-class-panel{margin-top:10px;padding-top:8px;border-top:1px solid var(--border)}
+    .cancel-class-toggle{display:flex;justify-content:space-between;align-items:center;width:100%;padding:7px 11px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700;color:#92400E;transition:.15s ease}
+    .cancel-class-toggle:hover,.cancel-class-toggle.is-open{background:#FEF3C7;border-color:#FCD34D}
+    .cancel-class-chev{font-size:11px;color:#92400E}
+    .cancel-class-options{margin-top:6px;display:flex;flex-direction:column;gap:6px;padding:8px 10px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px}
+    .cancel-class-hint{font-size:10.5px;color:#92400E;line-height:1.35}
+    .cancel-class-buttons{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:2px}
+    .cancel-class-opt{display:block;width:100%;text-align:left;padding:8px 10px;background:#fff;border:1px solid #FCD34D;border-radius:8px;cursor:pointer;transition:.15s ease}
+    .cancel-class-opt:hover{background:#FEF3C7;border-color:#CA8A04}
+    .cancel-class-opt-title{font-size:12px;font-weight:800;color:var(--text);margin-bottom:2px}
+    .cancel-class-opt-sub{font-size:10.5px;color:var(--text-3);line-height:1.35}
     @media (max-width:600px){.cancel-class-buttons{grid-template-columns:1fr}}
 
     /* Pending Move banner — replaces the "click a slot to add" affordance
@@ -441,8 +454,8 @@
        Pending = neutral grey hourglass; Attended = green check; Absent = amber X.
        Active state pops with a colored fill so the scheduler can scan a busy
        class at a glance and know who's been marked and who hasn't. */
-    .att-seg{display:inline-flex;border:1px solid var(--border-2);border-radius:8px;overflow:hidden;flex-shrink:0;background:#fff;height:36px}
-    .att-btn{width:32px;height:34px;border:none;background:transparent;color:var(--text-3);font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;line-height:1;transition:.12s ease;border-right:1px solid var(--border-2)}
+    .att-seg{display:inline-flex;border:1px solid var(--border-2);border-radius:6px;overflow:hidden;flex-shrink:0;background:#fff;height:28px}
+    .att-btn{width:26px;height:26px;border:none;background:transparent;color:var(--text-3);font-size:12px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;line-height:1;transition:.12s ease;border-right:1px solid var(--border-2)}
     .att-btn:last-child{border-right:none}
     .att-btn:hover{background:var(--surface-2)}
     .att-btn.is-on.att-pending{background:#E5E7EB;color:#374151}
