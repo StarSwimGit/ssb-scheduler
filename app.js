@@ -3371,11 +3371,11 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
 
   return <div className="modal-backdrop"><div className="modal-card">
     <div className="modal-head">
-      <div>
-        <div style={{fontSize:18,fontWeight:800}}>{modal.id ? 'Edit' : 'Add'} Scheduled Session</div>
-        <div className="small subtle">{modal.weekStartDate} · {DAYS_F[modal.day]} · {minuteToTime(modal.startMinute)}{previewPool ? ` · ${previewPool.name}` : ''}</div>
+      <div style={{minWidth:0,flex:1}}>
+        <div style={{fontSize:14,fontWeight:800,lineHeight:1.1}}>{modal.id ? 'Edit' : 'Add'} Session</div>
+        <div className="small subtle" style={{fontSize:11,marginTop:2}}>{DAYS_F[modal.day]} · {minuteToTime(modal.startMinute)} · {modal.weekStartDate}{previewPool ? ` · ${previewPool.name}` : ''}</div>
       </div>
-      <button className="btn btn-ghost" onClick={() => setModal(null)}>Close</button>
+      <button className="btn btn-ghost small" onClick={() => setModal(null)} aria-label="Close" title="Close (Esc)">✕</button>
     </div>
     <div className="modal-body">
       <div className="form-grid">
@@ -3384,14 +3384,14 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
         <div className="field"><label>Instructor</label><select className="select" value={modal.form.instructorId || ''} onChange={(e)=>onInstructorChange(e.target.value)}><option value="">(unassigned)</option>{instructors.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></div>
         <div className="field"><label>Duration (minutes)</label><select className="select" value={String(modal.form.durationMinutes)} onChange={(e)=>setForm({ durationMinutes: Number(e.target.value) })}>{durationOptions.map(d => <option key={d} value={d}>{d} min</option>)}</select></div>
         <div className="field"><label>Time Slot</label><input className="input" value={formatRange(modal.startMinute, modal.form.durationMinutes)} readOnly /></div>
-        <div className="field"><label>Capacity Preview</label><div className="cap-preview"><span className="cap-chip cap-chip-lg" style={{background:previewChip.bg,color:previewChip.tx,borderColor:previewChip.bd}}>{previewStudents}{previewMax > 0 ? ` / ${previewMax}` : ''}</span><span className="small subtle">{previewMax > 0 ? (previewStatus==='over'?'Over capacity — Module 3 will block or prompt for a split.':previewStatus==='full'?'At capacity.':previewStatus==='tight'?'Near capacity.':'Has room.') : 'Lesson type has no ratio set.'}</span></div></div>
+        <div className="field"><label>Capacity</label><div className="cap-preview"><span className="cap-chip cap-chip-lg" style={{background:previewChip.bg,color:previewChip.tx,borderColor:previewChip.bd}}>{previewStudents}{previewMax > 0 ? ` / ${previewMax}` : ''}</span><span className="small subtle">{previewMax > 0 ? (previewStatus==='over'?'Over':previewStatus==='full'?'Full':previewStatus==='tight'?'Tight':'Room') : 'No ratio'}</span></div></div>
         <div className="field" style={{gridColumn:'1 / -1'}}>
-          <label>Family group <span className="subtle" style={{textTransform:'none',letterSpacing:0,fontWeight:600}}>· optional — fills all members into this class</span></label>
+          <label>Family group <span className="subtle" style={{textTransform:'none',letterSpacing:0,fontWeight:600}}>· optional</span></label>
           <select className="select" value={modal.form.familyGroupId || ''} onChange={(e)=>chooseGroup(e.target.value)}>
             <option value="">No group (enroll individually)</option>
             {(familyGroups || []).map(g => <option key={g.id} value={g.id}>{g.name}{(membersByGroup && membersByGroup[g.id]) ? ` · ${membersByGroup[g.id].length} member${membersByGroup[g.id].length===1?'':'s'}` : ''}</option>)}
           </select>
-          {modal.form.familyGroupId ? <div className="hint" style={{marginTop:5}}>👪 Bound to this group. Its members are placed below — change a slot to override, or set “No group” to unbind.</div> : null}
+          {modal.form.familyGroupId ? <div className="hint" style={{marginTop:3}}>👪 Members fill in below.</div> : null}
         </div>
         <div className="field" style={{gridColumn:'1 / -1'}}>
           <label>Swimmers {previewMax > 0 ? `· ${previewMax} slots (max for this type)` : ''}</label>
@@ -3421,10 +3421,8 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
               </div>;
             })}
           </div>
-          <div className="hint" style={{marginTop:8}}>{bucketFallback ? 'No swimmers tagged for this lesson type yet — showing all. Tag them in the Swimmers tab.' : 'Slots are fixed to the lesson type’s maximum. Leave a slot empty to skip it, or clear a slot with its ×.'}</div>
         </div>
       </div>
-      <div className="student-box"><div className="small subtle" style={{marginBottom:6}}>Parallel sessions and splits</div><div className="small">Multiple sessions can run at the same day and time. Each is one row in <b>weekly_sessions</b>; pools are independent.</div></div>
 
       {/* ── GROUP: drop-in replacement section ── */}
       {!isPersonal && <div className="repl-section">
@@ -3534,7 +3532,7 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
             }));
             setRescheduleOpen(false);
           }}>Apply reschedule</button>
-          <div className="hint" style={{gridColumn:'1/-1',marginTop:0}}>The class returns to its original slot from next week onwards. Any duplicate of this week will restore the canonical schedule.</div>
+          <div className="hint" style={{gridColumn:'1/-1',marginTop:0}}>Returns to canonical slot from next week.</div>
         </div>}
       </div>}
 
@@ -3604,14 +3602,13 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
           </div>
         </div>}
       </div>}
-
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:16,gap:12,flexWrap:'wrap'}}>
-        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-          {modal.id ? <button className="btn btn-danger" onClick={deleteSession}>Delete Session</button> : null}
-          <button className="btn btn-ghost" onClick={() => openAddAtTime(modal.day, modal.startMinute, modal.form.poolId)}>+ Add Another Session Same Time</button>
-        </div>
-        <button className="btn btn-primary" onClick={saveSession}>{saveBusy ? 'Saving...' : 'Save Session'}</button>
+    </div>
+    <div className="modal-foot">
+      <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+        {modal.id ? <button className="btn btn-danger small" onClick={deleteSession}>Delete</button> : null}
+        <button className="btn btn-ghost small" onClick={() => openAddAtTime(modal.day, modal.startMinute, modal.form.poolId)}>+ Same Time</button>
       </div>
+      <button className="btn btn-primary" onClick={saveSession}>{saveBusy ? 'Saving…' : 'Save Session'}</button>
     </div>
   </div></div>;
 }
