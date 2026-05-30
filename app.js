@@ -1240,7 +1240,7 @@ function App(){
 
   const monthDates = monthCells(monthCursor);
   const selectedItems = sessionsForDate(selectedDate);
-  const selectedWeekLabel = `${selectedWeekStart} to ${addDays(selectedWeekStart, 6)}`;
+  // selectedWeekLabel removed — the header now shows today's date instead.
   const lessonTypeCounts = useMemo(() => {
     const m = {};
     sessions.forEach(s => { if(s.lessonTypeId) m[s.lessonTypeId] = (m[s.lessonTypeId] || 0) + 1; });
@@ -1287,9 +1287,9 @@ function App(){
 
   return <div>
     <div className="header"><div className="header-inner">
-      <div className="brand"><div className="logo">🏊</div><div><div style={{fontSize:16,fontWeight:800,letterSpacing:'-.4px',lineHeight:1}}>SSB Scheduler</div><div style={{fontSize:10,color:'#64748B',marginTop:2}}>Pool-aware lesson calendar</div></div></div>
+      <div className="brand"><div className="logo">🏊</div><div><div style={{fontSize:14,fontWeight:800,letterSpacing:'-.3px',lineHeight:1}}>SSB Scheduler</div><div style={{fontSize:9,color:'#64748B',marginTop:2}}>Pool-aware lesson calendar</div></div></div>
       <div className="header-meta">
-        <div className="header-summary"><span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalStudents}</span> students · <span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalSessions}</span> sessions · <span style={{color:'var(--primary)',fontWeight:800}}>{selectedWeekLabel}</span></div>
+        <div className="header-summary"><span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalStudents}</span> students · <span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalSessions}</span> sessions · <span style={{color:'var(--primary)',fontWeight:800}}>{new Date().toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'})}</span></div>
         <div className="header-status"><span className={`status-dot ${loading?'is-loading':(error?'is-error':'is-ok')}`} aria-hidden="true" />{loading ? 'Connecting…' : (error ? 'Error' : (status || 'Ready'))}</div>
       </div>
       <div className="header-tabs">
