@@ -85,6 +85,31 @@ function hourLabel(mins){ const h24 = Math.floor(mins / 60), m = mins % 60, ampm
 function shortName(name){ const parts = String(name || '').trim().split(/\s+/).filter(Boolean); return parts.slice(0, 2).join(' '); }
 // Age shown in years, e.g. " (5)". Blank when unknown.
 function ageSuffix(s){ return (s && s.age !== null && s.age !== undefined && s.age !== '') ? ` (${s.age})` : ''; }
+// Compute total months between a DOB and today. Birthday-aware (subtracts a
+// month if today is before the day-of-month). Returns null on invalid input.
+function ageMonthsFromDob(dob){
+  if(!dob) return null;
+  try{
+    const d = (typeof dob === 'string') ? fromDateStr(dob) : new Date(dob);
+    const now = new Date();
+    let months = (now.getFullYear() - d.getFullYear()) * 12 + (now.getMonth() - d.getMonth());
+    if(now.getDate() < d.getDate()) months--;
+    return Math.max(0, months);
+  } catch(_){ return null; }
+}
+// Display age: half-year precision for under-5s (e.g. 1.5, 2.0, 4.5),
+// integer years for 5+. Matches the precision the swim school actually
+// uses when slotting toddlers into age-banded classes.
+function ageFromDob(dob){
+  const m = ageMonthsFromDob(dob);
+  if(m == null) return null;
+  if(m < 60) return Math.floor(m / 6) / 2;
+  return Math.floor(m / 12);
+}
+function ageDisplay(age){
+  if(age === null || age === undefined || age === '') return '—';
+  return `${age}y`;
+}
 function studentLabel(s){ return s.name + ageSuffix(s) + (s && s.remark ? ` — ${s.remark}` : ''); }
 // Build the modal's student rows: existing students first, padded with blanks
 // up to the lesson type's ratio (so "max 4" shows 4 boxes). Falls back to 4.
@@ -335,26 +360,35 @@ function App(){
         if(!byStudent[e.student_id]) byStudent[e.student_id] = [];
         byStudent[e.student_id].push({ id: e.id, lessonTypeId: e.lesson_type_id, packageId: e.package_id });
       });
-      setStudents((rows || []).map(r => ({
-        id: r.id,
-        name: r.name || '',
-        age: (r.age === null || r.age === undefined ? null : Number(r.age)),
-        gender: r.gender || null,
-        package: r.package || '',
-        packageId: r.package_id || null,
-        familyGroupId: r.family_group_id || null,
-        lessonTypeIds: Array.isArray(r.lesson_type_ids) ? r.lesson_type_ids : [],
-        enrollments: byStudent[r.id] || [],
-        isActive: r.is_active !== false,
-        guardianName: r.guardian_name || '',
-        guardianEmail: r.guardian_email || '',
-        guardianPhone: r.guardian_phone || '',
-        emergencyPhone: r.emergency_phone || '',
-        emergencyRelationship: r.emergency_relationship || '',
-        emergencySameAsGuardian: !!r.emergency_same_as_guardian,
-        tcAcceptedAt: r.tc_accepted_at || null,
-        tcAcceptanceId: r.tc_acceptance_id || null
-      })));
+      setStudents((rows || []).map(r => {
+        const dob = r.date_of_birth || null;
+        // DOB is the source of truth — age is recomputed every load so it
+        // tracks today's date (a 4-year-old becomes 5 on their birthday
+        // without any data write). Fallback to stored age only when DOB is
+        // missing (legacy rows pre-migration).
+        const ageNow = dob != null ? ageFromDob(dob) : (r.age === null || r.age === undefined ? null : Number(r.age));
+        return {
+          id: r.id,
+          name: r.name || '',
+          dob: dob,
+          age: ageNow,
+          gender: r.gender || null,
+          package: r.package || '',
+          packageId: r.package_id || null,
+          familyGroupId: r.family_group_id || null,
+          lessonTypeIds: Array.isArray(r.lesson_type_ids) ? r.lesson_type_ids : [],
+          enrollments: byStudent[r.id] || [],
+          isActive: r.is_active !== false,
+          guardianName: r.guardian_name || '',
+          guardianEmail: r.guardian_email || '',
+          guardianPhone: r.guardian_phone || '',
+          emergencyPhone: r.emergency_phone || '',
+          emergencyRelationship: r.emergency_relationship || '',
+          emergencySameAsGuardian: !!r.emergency_same_as_guardian,
+          tcAcceptedAt: r.tc_accepted_at || null,
+          tcAcceptanceId: r.tc_acceptance_id || null
+        };
+      }));
     } catch(e){ console.warn('Swimmer registry not available yet (run the students migration):', e?.message || e); setStudents([]); }
   }
 
@@ -922,7 +956,7 @@ function App(){
   }
 
   // ───── Swimmer registry CRUD ──────────────────────────────────────────────
-  async function addStudent({ name, age, gender, enrollments, guardianName, guardianEmail, guardianPhone, emergencyPhone, emergencyRelationship, emergencySameAsGuardian }){
+  async function addStudent({ name, dateOfBirth, gender, enrollments, guardianName, guardianEmail, guardianPhone, emergencyPhone, emergencyRelationship, emergencySameAsGuardian }){
     try{
       setError('');
       const validEnrollments = (enrollments || []).filter(e => e.lessonTypeId);
@@ -930,8 +964,12 @@ function App(){
       const primaryPackageId = validEnrollments[0]?.packageId || null;
       const primaryPkg = primaryPackageId ? packageById(primaryPackageId) : null;
       const sameAsG = !!emergencySameAsGuardian;
+      const dob = dateOfBirth || null;
+      const computedAge = dob ? ageFromDob(dob) : null;
       const inserted = await insertRows('students', {
-        name, age: (age === '' || age == null) ? null : Number(age),
+        name,
+        date_of_birth: dob,
+        age: computedAge,
         gender: gender || null,
         package_id: primaryPackageId, package: primaryPkg ? primaryPkg.name : null,
         lesson_type_ids: lessonTypeIds, is_active: true,
@@ -953,7 +991,11 @@ function App(){
       setError('');
       const body = {};
       if('name' in patch) body.name = patch.name;
-      if('age' in patch) body.age = (patch.age === '' || patch.age == null) ? null : Number(patch.age);
+      if('dateOfBirth' in patch){
+        const dob = patch.dateOfBirth || null;
+        body.date_of_birth = dob;
+        body.age = dob ? ageFromDob(dob) : null;
+      }
       if('gender' in patch) body.gender = patch.gender || null;
       if('guardianName' in patch) body.guardian_name = patch.guardianName || null;
       if('guardianEmail' in patch) body.guardian_email = patch.guardianEmail || null;
@@ -2564,7 +2606,7 @@ function LessonsEditor({ enrollments, setEnrollments, lessonTypes, packages }){
 
 function StudentEditor({ row, lessonTypes, packages, onSave }){
   const [name, setName] = useState(row.name || '');
-  const [age, setAge] = useState(row.age == null ? '' : String(row.age));
+  const [dob, setDob] = useState(row.dob || '');
   const [gender, setGender] = useState(row.gender || null);
   const [enrollments, setEnrollments] = useState(
     (row.enrollments && row.enrollments.length)
@@ -2582,13 +2624,15 @@ function StudentEditor({ row, lessonTypes, packages, onSave }){
   const [adultSelf, setAdultSelf] = useState(false);
   function handleSameAsGuardian(v){ setSameAsGuardian(v); if(v){ setEmergencyPhone(guardianPhone); setEmergencyRel('Parent / Guardian'); } }
   function handleAdultSelf(v){ setAdultSelf(v); if(v) setGuardianName(name); }
+  const computedAge = dob ? ageFromDob(dob) : null;
 
   return <div className="lesson-edit">
     <div className="student-form-section">
       <div className="student-form-section-title">Swimmer Details</div>
-      <div className="form-grid" style={{gridTemplateColumns:'1fr 80px auto'}}>
+      <div className="form-grid" style={{gridTemplateColumns:'1.3fr auto 84px auto'}}>
         <div className="field"><label>Name</label><input className="input" value={name} onChange={e=>{ setName(e.target.value); if(adultSelf) setGuardianName(e.target.value); }} /></div>
-        <div className="field"><label>Age (yrs)</label><input className="input" type="number" min="0" max="120" step="0.5" value={age} onChange={e=>setAge(e.target.value)} /></div>
+        <div className="field"><label>Date of Birth</label><input className="input" type="date" value={dob} max={todayStr()} onChange={e=>setDob(e.target.value)} /></div>
+        <div className="field"><label>Age</label><div className={`age-display ${computedAge==null?'is-empty':''}`} aria-label="Auto-calculated age">{ageDisplay(computedAge)}</div></div>
         <div className="field"><label>Gender</label>
           <div className="gender-toggle"><button type="button" className={`gender-opt ${gender==='female'?'active':''}`} onClick={()=>setGender(gender==='female'?null:'female')}>♀ F</button><button type="button" className={`gender-opt ${gender==='male'?'active':''}`} onClick={()=>setGender(gender==='male'?null:'male')}>♂ M</button></div>
         </div>
@@ -2622,7 +2666,7 @@ function StudentEditor({ row, lessonTypes, packages, onSave }){
     {!row.tcAcceptedAt && <div className="tc-status-row tc-pending">⚠ Terms &amp; Conditions not yet accepted — go to the T&amp;C tab to send for signature.</div>}
     <div style={{display:'flex',justifyContent:'flex-end',marginTop:10}}><button className="btn btn-primary" onClick={()=>{
       const v = name.trim(); if(!v) return;
-      onSave({ name:v, age, gender, enrollments, guardianName, guardianEmail, guardianPhone, emergencySameAsGuardian:sameAsGuardian, emergencyPhone: sameAsGuardian?guardianPhone:emergencyPhone, emergencyRelationship: sameAsGuardian?'Parent / Guardian':emergencyRel });
+      onSave({ name:v, dateOfBirth: dob || null, gender, enrollments, guardianName, guardianEmail, guardianPhone, emergencySameAsGuardian:sameAsGuardian, emergencyPhone: sameAsGuardian?guardianPhone:emergencyPhone, emergencyRelationship: sameAsGuardian?'Parent / Guardian':emergencyRel });
     }}>Save Swimmer</button></div>
   </div>;
 }
@@ -2705,7 +2749,7 @@ function FamilyGroupsPanel({ groups, students, groupPackages, lessonTypes, packa
 
 function StudentsView({ students, lessonTypes, lessonTypeById, packages, packageById, groupById, scheduleByStudent, creditByKey, addStudent, updateStudent, deleteStudent }){
   const [name, setName] = useState('');
-  const [age, setAge] = useState('');
+  const [dob, setDob] = useState('');
   const [gender, setGender] = useState(null);
   const [enrollments, setEnrollments] = useState([{ lessonTypeId: '', packageId: '' }]);
   const [guardianName, setGuardianName] = useState('');
@@ -2771,7 +2815,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
 
   const COLS = 8;
 
-  function resetForm(){ setName(''); setAge(''); setGender(null); setEnrollments([{ lessonTypeId: '', packageId: '' }]); setGuardianName(''); setGuardianEmail(''); setGuardianPhone(''); setSameAsGuardian(false); setEmergencyPhone(''); setEmergencyRel(''); setAdultSelf(false); }
+  function resetForm(){ setName(''); setDob(''); setGender(null); setEnrollments([{ lessonTypeId: '', packageId: '' }]); setGuardianName(''); setGuardianEmail(''); setGuardianPhone(''); setSameAsGuardian(false); setEmergencyPhone(''); setEmergencyRel(''); setAdultSelf(false); }
 
   return <>
     <div className={`card register-card ${formExpanded ? 'is-open' : 'is-closed'}`} style={{marginBottom:16}}>
@@ -2788,9 +2832,10 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
 
         <div className="student-form-section">
           <div className="student-form-section-title">Swimmer Details</div>
-          <div className="form-grid" style={{gridTemplateColumns:'1fr 80px auto'}}>
+          <div className="form-grid" style={{gridTemplateColumns:'1.3fr auto 84px auto'}}>
             <div className="field" style={{margin:0}}><label>Full Name</label><input className="input" value={name} onChange={e=>{ setName(e.target.value); if(adultSelf) setGuardianName(e.target.value); }} placeholder="Swimmer's full name" /></div>
-            <div className="field" style={{margin:0}}><label>Age (yrs)</label><input className="input" type="number" min="0" max="120" step="0.5" value={age} onChange={e=>setAge(e.target.value)} placeholder="0" /></div>
+            <div className="field" style={{margin:0}}><label>Date of Birth</label><input className="input" type="date" value={dob} max={todayStr()} onChange={e=>setDob(e.target.value)} /></div>
+            <div className="field" style={{margin:0}}><label>Age</label><div className={`age-display ${dob?'':'is-empty'}`} aria-label="Auto-calculated age">{ageDisplay(dob ? ageFromDob(dob) : null)}</div></div>
             <div className="field" style={{margin:0}}>
               <label>Gender</label>
               <div className="gender-toggle"><button type="button" className={`gender-opt ${gender==='female'?'active':''}`} onClick={()=>setGender(gender==='female'?null:'female')}>♀ F</button><button type="button" className={`gender-opt ${gender==='male'?'active':''}`} onClick={()=>setGender(gender==='male'?null:'male')}>♂ M</button></div>
@@ -2826,7 +2871,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
           <button className="btn btn-ghost" onClick={resetForm}>Clear</button>
           <button className="btn btn-primary" onClick={()=>{
             const v = name.trim(); if(!v) return;
-            addStudent({ name:v, age, gender, enrollments, guardianName, guardianEmail, guardianPhone, emergencySameAsGuardian:sameAsGuardian, emergencyPhone:sameAsGuardian?guardianPhone:emergencyPhone, emergencyRelationship:sameAsGuardian?'Parent / Guardian':emergencyRel });
+            addStudent({ name:v, dateOfBirth: dob || null, gender, enrollments, guardianName, guardianEmail, guardianPhone, emergencySameAsGuardian:sameAsGuardian, emergencyPhone:sameAsGuardian?guardianPhone:emergencyPhone, emergencyRelationship:sameAsGuardian?'Parent / Guardian':emergencyRel });
             resetForm();
             setFormExpanded(false);
           }}>Register Swimmer</button>
