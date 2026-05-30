@@ -626,7 +626,10 @@ function App(){
       instructorName: firstInst?.name || '',
       poolId: firstPool,
       durationMinutes: dur,
-      studentRows: buildStudentRows([], firstType?.students_per_instructor)
+      studentRows: buildStudentRows([], firstType?.students_per_instructor),
+      // Always present so the modal's .filter/.some() chains never hit undefined,
+      // even when the modal opens in 'add' mode with no existing replacements.
+      replacementRows: []
     };
   }
 
@@ -688,7 +691,8 @@ function App(){
         type:item.type, lessonTypeId:item.lessonTypeId,
         instructorId: firstInst ? firstInst.id : (instructorByName(item.legacyInstructor)?.id || null),
         instructorName: firstInst ? firstInst.name : (item.legacyInstructor || ''),
-        poolId: item.poolId, durationMinutes:item.durationMinutes, studentRows: rows
+        poolId: item.poolId, durationMinutes:item.durationMinutes, studentRows: rows,
+        replacementRows: []
       }
     });
   }
@@ -710,7 +714,8 @@ function App(){
         instructorName: firstInst?.name || '',
         poolId: (lessonType && lessonType.default_pool_id) || (activePools()[0] && activePools()[0].id) || null,
         durationMinutes: (lessonType && lessonType.default_duration_minutes) || 50,
-        studentRows: buildStudentRows(existing, lessonType?.students_per_instructor)
+        studentRows: buildStudentRows(existing, lessonType?.students_per_instructor),
+        replacementRows: []
       }
     });
   }
@@ -3259,8 +3264,8 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
           const wk = modal.weekStartDate;
           const ltId = currentLt?.id;
           if(!ltId) return null;
-          const pendingCandidates = (replacementPending || []).filter(p => p.lesson_type_id === ltId && p.week_start_date === wk && !modal.form.replacementRows.some(r => r.studentId === p.student_id));
-          const trialCandidates = students.filter(s => trialStudentIds && trialStudentIds.has(s.id) && (s.lessonTypeIds||[]).includes(ltId) && !modal.form.studentRows.some(r => r.studentId === s.id) && !modal.form.replacementRows.some(r => r.studentId === s.id));
+          const pendingCandidates = (replacementPending || []).filter(p => p.lesson_type_id === ltId && p.week_start_date === wk && !(modal.form.replacementRows || []).some(r => r.studentId === p.student_id));
+          const trialCandidates = students.filter(s => trialStudentIds && trialStudentIds.has(s.id) && (s.lessonTypeIds||[]).includes(ltId) && !(modal.form.studentRows || []).some(r => r.studentId === s.id) && !(modal.form.replacementRows || []).some(r => r.studentId === s.id));
           if(!pendingCandidates.length && !trialCandidates.length) return null;
           function addAsReplacement(studentId, fromLabel){
             const stu = studentById[studentId];
@@ -3282,7 +3287,7 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
           const ltId = currentLt?.id;
           const isPending = !!(r.studentId && ltId && pendingByKey && pendingByKey[`${r.studentId}:${ltId}:${wk}`]);
           const isTrialRow = !!(r.studentId && trialStudentIds && trialStudentIds.has(r.studentId));
-          const replCandidates = students.filter(s => !modal.form.studentRows.some(sr => sr.studentId === s.id) && !modal.form.replacementRows.some((rr,ri) => ri !== i && rr.studentId === s.id));
+          const replCandidates = students.filter(s => !(modal.form.studentRows || []).some(sr => sr.studentId === s.id) && !(modal.form.replacementRows || []).some((rr,ri) => ri !== i && rr.studentId === s.id));
           return <div key={i} className="repl-row">
             <span className="repl-badge-sm">R</span>
             <div style={{flex:'1.5',minWidth:0,position:'relative'}}>
