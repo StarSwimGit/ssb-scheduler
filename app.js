@@ -114,10 +114,10 @@ function studentLabel(s){ return s.name + ageSuffix(s) + (s && s.remark ? ` — 
 // Build the modal's student rows: existing students first, padded with blanks
 // up to the lesson type's ratio (so "max 4" shows 4 boxes). Falls back to 4.
 function buildStudentRows(existing, cap){
-  const rows = (existing || []).map(s => ({ studentId: s.studentId || null, name: s.name || '', age: (s.age === null || s.age === undefined ? '' : String(s.age)), remark: s.remark || '' }));
+  const rows = (existing || []).map(s => ({ studentId: s.studentId || null, name: s.name || '', age: (s.age === null || s.age === undefined ? '' : String(s.age)), remark: s.remark || '', attendance: s.attendance || 'pending' }));
   const c = Number(cap) > 0 ? Number(cap) : 4;
   const target = Math.max(c, rows.length, 1);
-  while(rows.length < target) rows.push({ studentId:null, name:'', age:'', remark:'' });
+  while(rows.length < target) rows.push({ studentId:null, name:'', age:'', remark:'', attendance:'pending' });
   return rows;
 }
 // Re-normalize rows when the lesson type changes: keep filled rows, pad to the new ratio.
@@ -126,7 +126,7 @@ function rebuildRowsForCap(rows, cap){
   const c = Number(cap) > 0 ? Number(cap) : 4;
   const target = Math.max(c, filled.length, 1);
   const out = filled.slice();
-  while(out.length < target) out.push({ studentId:null, name:'', age:'', remark:'' });
+  while(out.length < target) out.push({ studentId:null, name:'', age:'', remark:'', attendance:'pending' });
   return out;
 }
 function formatRange(startMin, durationMin){ return `${minuteToTime(startMin)}–${minuteToTime(startMin + durationMin)}`; }
@@ -321,7 +321,7 @@ function App(){
     (studentRows || []).forEach(r => {
       const key = String(r.session_id);
       if(!studentsBySession[key]) studentsBySession[key] = [];
-      studentsBySession[key].push({ id:r.id, studentId:r.student_id || null, name:r.student_name || '', age:(r.student_age === null || r.student_age === undefined ? null : Number(r.student_age)), remark:r.remark || '', isReplacement: !!r.is_replacement, replacementFrom: r.replacement_from || '' });
+      studentsBySession[key].push({ id:r.id, studentId:r.student_id || null, name:r.student_name || '', age:(r.student_age === null || r.student_age === undefined ? null : Number(r.student_age)), remark:r.remark || '', isReplacement: !!r.is_replacement, replacementFrom: r.replacement_from || '', attendance: r.attendance_status || 'pending' });
     });
     const instructorsBySession = {};
     (instructorJoinRows || []).forEach(r => {
@@ -643,10 +643,17 @@ function App(){
     const firstInst = item.instructors[0] || null;
     const regularStudents = (item.students || []).filter(s => !s.isReplacement);
     const replacementStudents = (item.students || []).filter(s => s.isReplacement);
+    // Snapshot attendance so saveSession can compute credit deltas only for
+    // actual state transitions (pending↔attended, pending↔absent).
+    const originalAttendance = {};
+    (item.students || []).forEach(s => {
+      if(s.studentId) originalAttendance[s.studentId] = s.attendance || 'pending';
+    });
     setModal({
       mode:'edit', id:item.id, weekStartDate:item.weekStartDate, day:item.day, startMinute:item.startMinute,
       rescheduledFromDay: item.rescheduledFromDay ?? null,
       rescheduledFromStartMinute: item.rescheduledFromStartMinute ?? null,
+      originalAttendance,
       form:{
         type:item.type,
         lessonTypeId:item.lessonTypeId,
@@ -656,7 +663,7 @@ function App(){
         familyGroupId: item.familyGroupId || null,
         durationMinutes:item.durationMinutes,
         studentRows: buildStudentRows(regularStudents, lessonTypeByName(item.type)?.students_per_instructor),
-        replacementRows: replacementStudents.map(s => ({ studentId:s.studentId, name:s.name, age:s.age, replacementFrom:s.replacementFrom || '' }))
+        replacementRows: replacementStudents.map(s => ({ studentId:s.studentId, name:s.name, age:s.age, replacementFrom:s.replacementFrom || '', attendance: s.attendance || 'pending' }))
       }
     });
   }
@@ -745,14 +752,14 @@ function App(){
         sessionId = inserted?.[0]?.id;
       }
       // Regular enrolled students
-      const rows = (modal.form.studentRows || []).map(r => ({ studentId:r.studentId || null, name:(r.name || '').trim(), age:r.age, remark:(r.remark || '').trim() })).filter(r => r.name || r.studentId);
+      const rows = (modal.form.studentRows || []).map(r => ({ studentId:r.studentId || null, name:(r.name || '').trim(), age:r.age, remark:(r.remark || '').trim(), attendance: r.attendance || 'pending' })).filter(r => r.name || r.studentId);
       if(sessionId && rows.length){
-        await insertRows('weekly_session_students', rows.map(r => ({ session_id: sessionId, student_id: r.studentId, student_name: r.name, student_age: (r.age === '' || r.age === null || r.age === undefined) ? null : Number(r.age), remark: r.remark || null, is_replacement: false })));
+        await insertRows('weekly_session_students', rows.map(r => ({ session_id: sessionId, student_id: r.studentId, student_name: r.name, student_age: (r.age === '' || r.age === null || r.age === undefined) ? null : Number(r.age), remark: r.remark || null, is_replacement: false, attendance_status: r.attendance })));
       }
       // Replacement students (group classes) — one-off, tagged separately
       const replRows = (modal.form.replacementRows || []).filter(r => r.name || r.studentId);
       if(sessionId && replRows.length){
-        await insertRows('weekly_session_students', replRows.map(r => ({ session_id: sessionId, student_id: r.studentId || null, student_name: (r.name || '').trim(), student_age: r.age != null ? Number(r.age) : null, remark: r.remark || null, is_replacement: true, replacement_from: (r.replacementFrom || '').trim() || null })));
+        await insertRows('weekly_session_students', replRows.map(r => ({ session_id: sessionId, student_id: r.studentId || null, student_name: (r.name || '').trim(), student_age: r.age != null ? Number(r.age) : null, remark: r.remark || null, is_replacement: true, replacement_from: (r.replacementFrom || '').trim() || null, attendance_status: r.attendance || 'pending' })));
         // Clear pending-replacement entries for swimmers who were placed by this save.
         const wk = modal.weekStartDate || selectedWeekStart;
         for(const r of replRows){
@@ -778,6 +785,30 @@ function App(){
           }
         }
         await loadCreditBalances();
+      }
+      // Attendance → credit deltas. Compare each saved student's new
+      // attendance to the originalAttendance snapshot. Any pending → marked
+      // transition deducts a credit (one lesson consumed); any marked →
+      // pending restores one. attended ↔ absent doesn't change credits.
+      // adjustCredit is a no-op when the swimmer has no balance row, which
+      // is exactly the right behavior for monthly-package swimmers — their
+      // attendance is still recorded for reporting, just no credit math.
+      if(sessionId && lt?.id){
+        const orig = modal.originalAttendance || {};
+        const allSavedRows = [...rows, ...replRows.map(r => ({ studentId: r.studentId, attendance: r.attendance || 'pending' }))];
+        const isConsuming = (s) => s === 'attended' || s === 'absent';
+        for(const r of allSavedRows){
+          if(!r.studentId) continue;
+          const oldS = orig[r.studentId] || 'pending';
+          const newS = r.attendance || 'pending';
+          if(oldS === newS) continue;
+          if(!isConsuming(oldS) && isConsuming(newS)){
+            await adjustCredit(r.studentId, lt.id, -1);
+          } else if(isConsuming(oldS) && !isConsuming(newS)){
+            await adjustCredit(r.studentId, lt.id, 1);
+          }
+          // attended ↔ absent: no credit change (both already consumed the lesson)
+        }
       }
       await loadSessions();
       setModal(null);
@@ -3101,6 +3132,8 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
     setForm({ studentRows: rows });
   }
   function setRemark(i, val){ const rows = (modal.form.studentRows || []).slice(); rows[i] = { ...rows[i], remark: val }; setForm({ studentRows: rows }); }
+  function setAttendance(i, val){ const rows = (modal.form.studentRows || []).slice(); rows[i] = { ...rows[i], attendance: val }; setForm({ studentRows: rows }); }
+  function setReplAttendance(i, val){ const rows = (modal.form.replacementRows || []).slice(); rows[i] = { ...rows[i], attendance: val }; setForm({ replacementRows: rows }); }
 
   // Bind this session to a family group and drop ALL its members into the slots
   // at once (padded to the lesson-type ratio). groupId '' clears the binding.
@@ -3181,6 +3214,11 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
                     const ok = await markForReplacement({ studentId:r.studentId, sessionId:modal.id, weekStartDate:wk, lessonTypeId:ltId, lessonTypeName:currentLt.name, day:modal.day, startMinute:modal.startMinute });
                     if(ok){ /* row is gone from DB after loadSessions; close modal so user sees fresh data */ setModal(null); }
                   }}>→ R</button> : null}
+                  {(r.studentId || (r.name || '').trim()) ? <div className="att-seg" role="group" aria-label="Attendance">
+                    <button type="button" className={`att-btn att-pending ${(r.attendance||'pending')==='pending'?'is-on':''}`} onClick={()=>setAttendance(i,'pending')} title="Not yet marked — credit untouched">⏳</button>
+                    <button type="button" className={`att-btn att-attended ${r.attendance==='attended'?'is-on':''}`} onClick={()=>setAttendance(i,'attended')} title="Attended — lesson delivered (−1 credit on save)">✓</button>
+                    <button type="button" className={`att-btn att-absent ${r.attendance==='absent'?'is-on':''}`} onClick={()=>setAttendance(i,'absent')} title="Absent — counts as a delivered lesson, no replacement entitled (−1 credit on save)">✗</button>
+                  </div> : null}
                   <input className="input stu-remark" placeholder="Remark (optional)" value={r.remark || ''} onChange={(e)=>setRemark(i, e.target.value)} />
                 </div>
               </div>;
@@ -3244,6 +3282,11 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
               {isPending ? <span className="qp-tag qp-tag-r" style={{position:'absolute',top:-8,right:6,zIndex:1}}>R-pending</span> : (isTrialRow ? <span className="qp-tag qp-tag-trial" style={{position:'absolute',top:-8,right:6,zIndex:1}}>trial</span> : null)}
             </div>
             <input className="input" style={{flex:1}} placeholder="From class (e.g. Mon 11AM)" value={r.replacementFrom||''} onChange={(e)=>{ const rows=[...(modal.form.replacementRows||[])]; rows[i]={...rows[i],replacementFrom:e.target.value}; setModal({...modal,form:{...modal.form,replacementRows:rows}}); }} />
+            {(r.studentId || (r.name||'').trim()) ? <div className="att-seg" role="group" aria-label="Attendance">
+              <button type="button" className={`att-btn att-pending ${(r.attendance||'pending')==='pending'?'is-on':''}`} onClick={()=>setReplAttendance(i,'pending')} title="Not yet marked — credit untouched">⏳</button>
+              <button type="button" className={`att-btn att-attended ${r.attendance==='attended'?'is-on':''}`} onClick={()=>setReplAttendance(i,'attended')} title="Attended — lesson delivered (−1 credit on save)">✓</button>
+              <button type="button" className={`att-btn att-absent ${r.attendance==='absent'?'is-on':''}`} onClick={()=>setReplAttendance(i,'absent')} title="Absent — counts as a delivered lesson, no replacement entitled (−1 credit on save)">✗</button>
+            </div> : null}
             <button className="btn btn-ghost small" style={{flexShrink:0}} onClick={()=>{ const rows=(modal.form.replacementRows||[]).filter((_,ri)=>ri!==i); setModal({...modal,form:{...modal.form,replacementRows:rows}}); }}>×</button>
           </div>;
         })}
