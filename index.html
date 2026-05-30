@@ -384,6 +384,55 @@
     .intake-banner-sub{font-size:12px;color:var(--text-2);margin-top:2px;line-height:1.4}
     .intake-banner-btn{flex-shrink:0;padding:10px 18px;font-size:13px}
 
+    /* Full Class Replacement — collapsible chooser inside the SessionModal,
+       sits just above the Save/Delete footer. Two-card option layout. */
+    .cancel-class-panel{margin-top:16px;border-top:1px dashed var(--border-2);padding-top:14px}
+    .cancel-class-toggle{display:flex;justify-content:space-between;align-items:center;width:100%;padding:11px 14px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:10px;cursor:pointer;font-size:13px;font-weight:700;color:#92400E;transition:.15s ease}
+    .cancel-class-toggle:hover{background:#FEF3C7;border-color:#FCD34D}
+    .cancel-class-toggle.is-open{background:#FEF3C7;border-color:#FCD34D}
+    .cancel-class-chev{font-size:12px;color:#92400E}
+    .cancel-class-options{margin-top:10px;display:flex;flex-direction:column;gap:8px;padding:12px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:10px}
+    .cancel-class-hint{font-size:11px;color:#92400E;line-height:1.4}
+    .cancel-class-buttons{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px}
+    .cancel-class-opt{display:block;width:100%;text-align:left;padding:14px;background:#fff;border:1px solid #FCD34D;border-radius:10px;cursor:pointer;transition:.15s ease}
+    .cancel-class-opt:hover{background:#FEF3C7;border-color:#CA8A04;transform:translateY(-1px);box-shadow:0 4px 12px rgba(202,138,4,.18)}
+    .cancel-class-opt-title{font-size:13px;font-weight:800;color:var(--text);margin-bottom:4px}
+    .cancel-class-opt-sub{font-size:11px;color:var(--text-3);line-height:1.4}
+    @media (max-width:600px){.cancel-class-buttons{grid-template-columns:1fr}}
+
+    /* Pending Move banner — replaces the "click a slot to add" affordance
+       with "click a slot to drop the moved class" until the user either
+       picks a target or cancels. Bright purple so it can't be missed. */
+    .pending-move-banner{display:flex;align-items:center;gap:14px;padding:12px 16px;background:linear-gradient(135deg,var(--primary) 0%, #8B73E8 100%);color:#fff;border-radius:12px;margin-bottom:12px;box-shadow:0 6px 20px rgba(109,91,208,.32);animation:pendingMovePulse 1.6s ease-in-out infinite}
+    @keyframes pendingMovePulse{0%,100%{box-shadow:0 6px 20px rgba(109,91,208,.32)}50%{box-shadow:0 6px 28px rgba(109,91,208,.52)}}
+    .pending-move-icon{font-size:22px;line-height:1;flex-shrink:0}
+    .pending-move-text{flex:1;min-width:0}
+    .pending-move-title{font-size:14px;font-weight:800;letter-spacing:.2px}
+    .pending-move-sub{font-size:11px;opacity:.92;margin-top:2px;line-height:1.4}
+    .pending-move-banner .btn.btn-ghost{background:rgba(255,255,255,.18);color:#fff;border-color:rgba(255,255,255,.28)}
+    .pending-move-banner .btn.btn-ghost:hover{background:rgba(255,255,255,.28)}
+    /* Highlight every empty slot while a move is pending — the cursor and
+       hover feedback make the whole grid feel "clickable" so the scheduler
+       knows they're in a drop-target state. */
+    .wa-cell-targetable{cursor:crosshair !important;background:rgba(109,91,208,.04) !important}
+    .wa-cell-targetable:hover{background:rgba(109,91,208,.14) !important;outline:2px dashed var(--primary);outline-offset:-2px}
+
+    /* Pending Replacements card — surfaces the limbo bucket so the
+       scheduler can see and undo a →R action that was made by mistake
+       (or as a test). Amber styling because it's an actionable state,
+       not an error. Renders only when there's at least one pending row
+       for the currently-selected week. */
+    .pending-repl-card{background:linear-gradient(135deg,#FFFBEB 0%, #FEF3C7 100%);border:1px solid #FCD34D;border-radius:14px;padding:14px 16px;margin-bottom:12px;box-shadow:0 2px 8px rgba(202,138,4,.08)}
+    .pending-repl-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:10px}
+    .pending-repl-badge{width:30px;height:30px;border-radius:50%;background:#CA8A04;color:#fff;display:grid;place-items:center;font-size:13px;font-weight:800;flex-shrink:0}
+    .pending-repl-title{font-size:13px;font-weight:800;color:#854D0E;letter-spacing:.2px}
+    .pending-repl-sub{font-size:11px;color:#92400E;margin-top:2px;line-height:1.4}
+    .pending-repl-list{display:flex;flex-direction:column;gap:6px}
+    .pending-repl-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;background:#fff;border:1px solid #FDE68A;border-radius:10px;flex-wrap:wrap}
+    .pending-repl-info{display:flex;flex-direction:column;gap:1px;min-width:0}
+    .pending-repl-name{font-size:13px;font-weight:700;color:var(--text)}
+    .pending-repl-meta{font-size:11px;color:var(--text-3)}
+
     /* Read-only auto-computed age chip next to the DOB input */
     .age-display{display:inline-flex;align-items:center;justify-content:center;height:36px;padding:0 12px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:8px;font-weight:800;color:var(--text);font-size:13px;min-width:60px;font-variant-numeric:tabular-nums}
     .age-display.is-empty{color:var(--text-3);font-weight:500}
