@@ -121,6 +121,15 @@
     .wa-cell:hover{background:var(--primary-soft)}
     .wa-card{border-radius:11px;padding:7px 9px;cursor:pointer;box-shadow:0 1px 3px rgba(30,27,75,0.07)}
     .wa-card.event-over{box-shadow:0 0 0 1.5px rgba(214,59,59,0.5) inset}
+    /* Ghost — a cancelled (forwarded/rescheduled) session that stays in
+       the original spot, dimmed, click to restore. No coloured stripe,
+       no fill — just a dashed grey outline so it reads as "absent". */
+    .wa-card.wa-card-cancelled{background:repeating-linear-gradient(135deg,#F5F5F7,#F5F5F7 6px,#EDEDF0 6px,#EDEDF0 12px) !important;border:1px dashed #B8BCC8 !important;border-left:1px dashed #B8BCC8 !important;color:#6B7080 !important;opacity:.78;transition:.15s ease}
+    .wa-card.wa-card-cancelled:hover{opacity:1;border-color:#9098AC !important;background:repeating-linear-gradient(135deg,#FAFAFB,#FAFAFB 6px,#F2F2F5 6px,#F2F2F5 12px) !important}
+    .wa-card-title-strike{text-decoration:line-through;color:#6B7080}
+    .wa-card-strike{text-decoration:line-through;color:#7A8094}
+    .wa-cancelled-tag{font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:#7A2E2E;background:#FEF2F2;border:1px solid #FBD5D5;border-radius:4px;padding:1px 5px;white-space:nowrap}
+    .wa-card-restore-hint{font-size:9.5px;color:#9098AC;margin-top:3px;font-style:italic;text-align:right}
     .wa-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:5px}
     .wa-card-title{font-size:12.5px;font-weight:800;line-height:1.2;min-width:0;overflow:hidden;text-overflow:ellipsis}
     .wa-card-line{font-size:11px;line-height:1.35;opacity:.92;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
@@ -324,6 +333,7 @@
        chip boxes. */
     .credit-row{display:flex;align-items:center;gap:8px;padding:2px 0;font-size:12px}
     .credit-row-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+    .credit-row-last{color:var(--text-3);font-size:10.5px;font-weight:500}
     .credit-controls{display:flex;align-items:center;gap:5px}
     .credit-count{font-size:11.5px;font-weight:700;color:var(--text-2);white-space:nowrap}
     .credit-count.credit-low{color:var(--red-tx)}
@@ -570,6 +580,32 @@
     /* Inline credit marker on session cards */
     .credit-mark{font-size:10px;font-weight:700;color:var(--teal);letter-spacing:.1px}
     .credit-mark.credit-low{color:var(--red-tx)}
+    /* Credit ledger panel — expands from the Swimmers row. Plain, dense,
+       one row per purchase. */
+    .credit-panel{background:#FAFAFC;border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:14px 18px}
+    .credit-panel-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px}
+    .credit-panel-title{font-size:14px;font-weight:800;color:var(--text)}
+    .credit-panel-sub{font-size:11px;color:var(--text-3);margin-top:2px;line-height:1.35}
+    .credit-panel-empty{padding:10px;background:#fff;border:1px dashed var(--border);border-radius:8px;font-size:12px;color:var(--text-3);text-align:center}
+    .credit-add-form{background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:12px}
+    .credit-add-row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+    .credit-add-row .field{flex:1 1 110px;margin:0;min-width:0}
+    .credit-add-hint{font-size:11px;color:var(--text-3);flex:1;align-self:center;margin-right:auto}
+    .credit-lt-block{background:#fff;border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-top:8px}
+    .credit-lt-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+    .credit-lt-name{display:inline-block;font-size:11px;font-weight:800;padding:3px 9px;border:1px solid;border-radius:5px}
+    .credit-lt-totals{font-size:12px;color:var(--text-2)}
+    .credit-lt-totals strong{color:var(--text)}
+    .credit-lt-totals .credit-low{color:var(--red-tx)}
+    .credit-lt-aggregate{color:var(--text-3);font-size:11px}
+    .credit-empty{font-size:11px;color:var(--text-3);padding:4px 0;font-style:italic}
+    .credit-ledger{width:100%;font-size:12px;border-collapse:collapse}
+    .credit-ledger thead th{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-3);font-weight:800;padding:4px 6px;text-align:left;border-bottom:1px solid var(--border)}
+    .credit-ledger tbody td{padding:5px 6px;border-bottom:1px solid var(--border-2)}
+    .credit-ledger tbody tr:last-child td{border-bottom:none}
+    .credit-delta{font-weight:800;font-family:'SF Mono',Monaco,Consolas,monospace}
+    .credit-delta-pos{color:var(--green-tx)}
+    .credit-delta-neg{color:var(--red-tx)}
     /* Trial annotation — drawn from the swimmer's package (any package whose
        name contains "trial"). Pill in the modal slot, subtle mark in cards. */
     .trial-pill{display:inline-flex;align-items:center;height:22px;padding:0 7px;font-size:9.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;background:#FEE2E2;color:#B91C1C;border:1px solid #FCA5A5;border-radius:5px;white-space:nowrap;align-self:center;flex:0 0 auto}
