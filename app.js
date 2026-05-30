@@ -256,6 +256,7 @@ function App(){
   const [students,setStudents] = useState([]);
   const [familyGroups,setFamilyGroups] = useState([]);
   const [creditBalances,setCreditBalances] = useState([]);
+  const [creditPurchases,setCreditPurchases] = useState([]);
   const [replacementPending,setReplacementPending] = useState([]);
   const [tcAcceptances,setTcAcceptances] = useState([]);
   const [remarks,setRemarks] = useState({});
@@ -280,7 +281,7 @@ function App(){
     try{
       setLoading(true); setError('');
       await loadOptions();
-      await Promise.all([loadSessions(), loadStudents(), loadGroups(), loadCreditBalances(), loadReplacementPending(), loadTcAcceptances(), loadRemarks(monthCursor)]);
+      await Promise.all([loadSessions(), loadStudents(), loadGroups(), loadCreditBalances(), loadCreditPurchases(), loadReplacementPending(), loadTcAcceptances(), loadRemarks(monthCursor)]);
       setStatus('Connected');
     } catch(err){ handleErr(err); }
     finally{ setLoading(false); }
@@ -343,6 +344,14 @@ function App(){
       legacyInstructor: r.instructor || '',
       rescheduledFromDay: r.rescheduled_from_day != null ? Number(r.rescheduled_from_day) - 1 : null,
       rescheduledFromStartMinute: r.rescheduled_from_start_minute != null ? Number(r.rescheduled_from_start_minute) : null,
+      // Cancellation state — when set, this session is a "ghost" left at
+      // its original spot after being forwarded or rescheduled. The
+      // target_session_id points to the replacement (next-week clone or
+      // new-slot session). Clicking the ghost in the grid offers a
+      // restore action that unwinds back to this row.
+      cancelledAt: r.cancelled_at || null,
+      cancelledReason: r.cancelled_reason || null,
+      cancelledTargetSessionId: r.cancelled_target_session_id || null,
       students: studentsBySession[String(r.id)] || [],
       instructors: instructorsBySession[String(r.id)] || []
     }));
@@ -404,6 +413,75 @@ function App(){
       const rows = await selectRows('student_credit_balances', '*');
       setCreditBalances(rows || []);
     } catch(e){ console.warn('Credit balances not available (run the replacement+credits migration):', e?.message || e); setCreditBalances([]); }
+  }
+
+  // ── Credit Purchases ────────────────────────────────────────────────
+  // Every credit-issuing event (sign-up, top-up, gift, manual adjustment)
+  // recorded as its own row. The running balance in
+  // student_credit_balances is the denormalised cache. Use:
+  //   - addCreditPurchase to record a purchase AND bump the balance
+  //   - reverseCreditPurchase (delete) to remove a purchase AND
+  //     decrement the balance accordingly
+  async function loadCreditPurchases(){
+    try{
+      const rows = await selectRows('credit_purchases', '*', '&order=purchase_date.desc,created_at.desc');
+      setCreditPurchases(rows || []);
+    } catch(e){ console.warn('Credit purchases not available (run the ghost+credits migration):', e?.message || e); setCreditPurchases([]); }
+  }
+  async function addCreditPurchase({ studentId, lessonTypeId, purchaseDate, creditsAdded, source, notes }){
+    try{
+      setError('');
+      const add = Number(creditsAdded);
+      if(!studentId || !lessonTypeId || !add) return;
+      await insertRows('credit_purchases', [{
+        student_id: studentId, lesson_type_id: lessonTypeId,
+        purchase_date: purchaseDate || toDateStr(new Date()),
+        credits_added: add,
+        source: source || 'manual',
+        notes: notes || null
+      }]);
+      // Bump the running balance row. If none exists yet, create it
+      // with this purchase as the seed.
+      const key = creditKey(studentId, lessonTypeId);
+      const bal = creditByKey[key];
+      if(bal){
+        const newRemaining = Math.max(0, (Number(bal.remaining_balance) || 0) + add);
+        const newInitial = Math.max(0, (Number(bal.initial_balance) || 0) + Math.max(0, add));
+        await patchRows('student_credit_balances', { student_id: studentId, lesson_type_id: lessonTypeId }, {
+          remaining_balance: newRemaining,
+          initial_balance: newInitial,
+          updated_at: new Date().toISOString()
+        });
+      } else {
+        // First purchase for this (student, LT) — seed the balance row.
+        await insertRows('student_credit_balances', [{
+          student_id: studentId, lesson_type_id: lessonTypeId,
+          initial_balance: Math.max(0, add), remaining_balance: Math.max(0, add)
+        }]);
+      }
+      await Promise.all([loadCreditBalances(), loadCreditPurchases()]);
+      setStatus(`Recorded ${add > 0 ? '+' : ''}${add} credit${Math.abs(add)===1?'':'s'} for swimmer.`);
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to add credit purchase'); }
+  }
+  async function deleteCreditPurchase(purchase){
+    if(!purchase || !purchase.id) return;
+    if(!confirm(`Delete this credit record: ${purchase.credits_added > 0 ? '+' : ''}${purchase.credits_added} on ${purchase.purchase_date}?\n\nThe running balance will be adjusted accordingly.`)) return;
+    try{
+      await deleteRows('credit_purchases', { id: purchase.id });
+      // Reverse the running balance.
+      const key = creditKey(purchase.student_id, purchase.lesson_type_id);
+      const bal = creditByKey[key];
+      if(bal){
+        const next = Math.max(0, (Number(bal.remaining_balance) || 0) - Number(purchase.credits_added));
+        const init = Math.max(0, (Number(bal.initial_balance) || 0) - Math.max(0, Number(purchase.credits_added)));
+        await patchRows('student_credit_balances', { student_id: purchase.student_id, lesson_type_id: purchase.lesson_type_id }, {
+          remaining_balance: next,
+          initial_balance: init,
+          updated_at: new Date().toISOString()
+        });
+      }
+      await Promise.all([loadCreditBalances(), loadCreditPurchases()]);
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to delete credit record'); }
   }
 
   // Pending-replacement state — swimmers who were removed from their booked
@@ -507,17 +585,19 @@ function App(){
     if(!sessionId) return;
     const src = sessions.find(s => s.id === sessionId);
     if(!src){ alert('Source session not found.'); return; }
+    if(src.cancelledAt){ alert('This session is already cancelled.'); return; }
 
     const nextWeekStart = addDays(src.weekStartDate, 7);
 
     // Two paths, depending on whether next week already holds the same
     // recurring slot:
-    //   (A) Match exists → just delete this week's run. The swimmers will
-    //       attend next week's existing class as usual; we don't want to
-    //       create a parallel duplicate alongside it.
+    //   (A) Match exists → don't create another copy; just point the
+    //       cancellation marker at the existing next-week session.
     //   (B) No match → clone the session forward: insert a new row in
     //       next week, copy the non-replacement student rows and the
-    //       instructor links, then delete this week's session.
+    //       instructor links, then mark this week's row as cancelled.
+    // In both paths the original row stays in the DB — it becomes a
+    // greyed-out "ghost" in the weekly grid, restorable by clicking.
     // Replacement students are week-scoped one-offs and are NEVER carried
     // forward — they belong to the original week's replacement bucket.
     const existingNextWeek = sessions.find(s =>
@@ -525,13 +605,14 @@ function App(){
       s.day === src.day &&
       s.startMinute === src.startMinute &&
       s.lessonTypeId === src.lessonTypeId &&
-      (s.poolId || null) === (src.poolId || null)
+      (s.poolId || null) === (src.poolId || null) &&
+      !s.cancelledAt
     );
     const enrolledRegular = (src.students || []).filter(s => !s.isReplacement);
     const swimmerCount = enrolledRegular.length;
     const confirmMsg = existingNextWeek
-      ? `Forward ${sourceLabel} to next week (${nextWeekStart})?\n\nNext week already has the same class at the same slot — this week's run is cancelled and the ${swimmerCount} swimmer${swimmerCount===1?'':'s'} will attend that existing session.\n\nCredits already consumed this week will be refunded.`
-      : `Forward ${sourceLabel} to next week (${nextWeekStart})?\n\nThis week's session is cancelled and recreated next week (same day, same time) with the same ${swimmerCount} swimmer${swimmerCount===1?'':'s'}.\n\nCredits already consumed this week will be refunded.`;
+      ? `Forward ${sourceLabel} to next week (${nextWeekStart})?\n\nNext week already has the same class at the same slot — this week's run is cancelled and the ${swimmerCount} swimmer${swimmerCount===1?'':'s'} will attend that existing session.\n\nThe original spot stays visible as a greyed-out shell; click it to restore. Credits already consumed this week will be refunded.`
+      : `Forward ${sourceLabel} to next week (${nextWeekStart})?\n\nThis week's session is cancelled and recreated next week (same day, same time) with the same ${swimmerCount} swimmer${swimmerCount===1?'':'s'}.\n\nThe original spot stays visible as a greyed-out shell; click it to restore. Credits already consumed this week will be refunded.`;
     if(!confirm(confirmMsg)) return;
 
     try{
@@ -549,6 +630,7 @@ function App(){
         }
       }
 
+      let targetId = existingNextWeek ? existingNextWeek.id : null;
       if(!existingNextWeek){
         // Clone into next week.
         const inserted = await insertRows('weekly_sessions', [{
@@ -562,11 +644,11 @@ function App(){
           family_group_id: src.familyGroupId || null,
           instructor: src.legacyInstructor || null
         }]);
-        const newSessionId = inserted?.[0]?.id;
-        if(newSessionId){
+        targetId = inserted?.[0]?.id;
+        if(targetId){
           if(enrolledRegular.length){
             await insertRows('weekly_session_students', enrolledRegular.map(s => ({
-              session_id: newSessionId,
+              session_id: targetId,
               student_id: s.studentId || null,
               student_name: s.name || '',
               student_age: s.age != null ? Number(s.age) : null,
@@ -578,7 +660,7 @@ function App(){
           if(src.instructors && src.instructors.length){
             try{
               await insertRows('session_instructors', src.instructors.map(i => ({
-                session_id: newSessionId,
+                session_id: targetId,
                 instructor_id: i.id
               })));
             } catch(_){} // session_instructors table may not exist on older DBs — instructor name is also on the session row as a fallback
@@ -586,17 +668,61 @@ function App(){
         }
       }
 
-      // Delete this week's session now that the next-week side is set up.
-      await deleteRows('weekly_session_students', { session_id: sessionId });
-      try{ await deleteRows('session_instructors', { session_id: sessionId }); } catch(_){}
-      await deleteRows('weekly_sessions', { id: sessionId });
+      // Mark this week's session as cancelled-forwarded, pointing at the
+      // target. Don't delete — the original stays as a ghost.
+      await patchRows('weekly_sessions', { id: sessionId }, {
+        cancelled_at: new Date().toISOString(),
+        cancelled_reason: 'forwarded',
+        cancelled_target_session_id: targetId || null
+      });
 
       await loadSessions();
       setModal(null);
       setStatus(existingNextWeek
-        ? `Forwarded ${sourceLabel} → ${nextWeekStart} (merged into existing next-week session).`
-        : `Forwarded ${sourceLabel} → ${nextWeekStart} (cloned ${swimmerCount} swimmer${swimmerCount===1?'':'s'} forward).`);
+        ? `Forwarded ${sourceLabel} → ${nextWeekStart} (merged into existing next-week session). Original is greyed out — click to restore.`
+        : `Forwarded ${sourceLabel} → ${nextWeekStart} (cloned ${swimmerCount} swimmer${swimmerCount===1?'':'s'} forward). Original is greyed out — click to restore.`);
     } catch(err){ handleErr(err); alert(err.message || 'Failed to forward class'); }
+  }
+
+  // restoreCancelledSession — unwind a forward/reschedule. Deletes the
+  // target session (which holds students + instructors that were cloned
+  // over) and clears the cancellation marker on the original so it
+  // becomes live again at its original spot. We don't reverse any credit
+  // refunds the cancellation issued — those were correct for the period
+  // the class was missing; if attendance is re-marked the credits will
+  // re-deduct on save normally.
+  async function restoreCancelledSession(sessionId){
+    const ghost = sessions.find(s => s.id === sessionId);
+    if(!ghost){ alert('Session not found.'); return; }
+    if(!ghost.cancelledAt){ alert('This session is not cancelled.'); return; }
+
+    const label = `${ghost.type} on ${DAYS_F[ghost.day]} ${minuteToTime(ghost.startMinute)}`;
+    const reasonLabel = ghost.cancelledReason === 'forwarded' ? 'forward to next week'
+                      : ghost.cancelledReason === 'rescheduled' ? 'reschedule'
+                      : 'cancellation';
+    if(!confirm(`Restore ${label} to its original spot?\n\nThis undoes the ${reasonLabel}: the replacement session will be deleted and this slot becomes live again with its swimmers.`)) return;
+    try{
+      // Delete the target (replacement) session if we have one and it
+      // still exists. The on-delete-set-null FK means we don't strictly
+      // need to clear cancelled_target_session_id first, but we do it
+      // anyway in the PATCH below.
+      if(ghost.cancelledTargetSessionId){
+        const target = sessions.find(s => s.id === ghost.cancelledTargetSessionId);
+        if(target){
+          await deleteRows('weekly_session_students', { session_id: target.id });
+          try{ await deleteRows('session_instructors', { session_id: target.id }); } catch(_){}
+          await deleteRows('weekly_sessions', { id: target.id });
+        }
+      }
+      // Clear the cancellation marker on the original.
+      await patchRows('weekly_sessions', { id: sessionId }, {
+        cancelled_at: null,
+        cancelled_reason: null,
+        cancelled_target_session_id: null
+      });
+      await loadSessions();
+      setStatus(`Restored ${label} to its original slot.`);
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to restore session'); }
   }
   function startFullClassMove({ sessionId, sourceLabel, lessonTypeName, weekStartDate, originalDay, originalStartMinute, swimmerCount }){
     if(!sessionId) return;
@@ -607,20 +733,76 @@ function App(){
   function cancelPendingMove(){ setPendingMove(null); setStatus(''); }
   async function placePendingMove(targetDay, targetStartMinute){
     if(!pendingMove) return;
+    const src = sessions.find(s => s.id === pendingMove.sessionId);
+    if(!src){ alert('Source session not found.'); setPendingMove(null); return; }
+    if(src.cancelledAt){ alert('This session is already cancelled.'); setPendingMove(null); return; }
     const targetLabel = `${DAYS_F[targetDay]} ${minuteToTime(targetStartMinute)}`;
-    if(!confirm(`Move ${pendingMove.lessonTypeName} (${pendingMove.swimmerCount} swimmer${pendingMove.swimmerCount===1?'':'s'}) from ${pendingMove.sourceLabel} to ${targetLabel}?`)) return;
+    if(!confirm(`Move ${pendingMove.lessonTypeName} (${pendingMove.swimmerCount} swimmer${pendingMove.swimmerCount===1?'':'s'}) from ${pendingMove.sourceLabel} to ${targetLabel}?\n\nThe original spot stays visible as a greyed-out shell — click it to restore.`)) return;
     try{
-      await patchRows('weekly_sessions', { id: pendingMove.sessionId }, {
+      // Refund any credits already consumed on the original — same logic
+      // as Forward: the class is being moved so attendance to date is
+      // wiped on the clone (it starts at "pending").
+      if(src.lessonTypeId){
+        for(const s of (src.students || [])){
+          if(!s.studentId) continue;
+          const att = s.attendance || 'pending';
+          if(att === 'attended' || att === 'absent'){
+            await adjustCredit(s.studentId, src.lessonTypeId, 1);
+          }
+        }
+      }
+
+      // Clone the session at the new slot. Same week, new weekday +
+      // start_minute. We carry rescheduled_from_* on the CLONE (not the
+      // ghost) so a future Duplicate Previous Week still restores the
+      // canonical slot for the next week.
+      const enrolledRegular = (src.students || []).filter(s => !s.isReplacement);
+      const inserted = await insertRows('weekly_sessions', [{
+        week_start_date: src.weekStartDate,
         weekday: targetDay + 1,
         start_minute: targetStartMinute,
-        // Mark as moved so Duplicate Previous Week can restore the
-        // canonical slot in the next duplication.
-        rescheduled_from_day: pendingMove.originalDay + 1,
-        rescheduled_from_start_minute: pendingMove.originalStartMinute
+        duration_minutes: src.durationMinutes,
+        lesson_type: src.type,
+        lesson_type_id: src.lessonTypeId,
+        pool_id: src.poolId || null,
+        family_group_id: src.familyGroupId || null,
+        instructor: src.legacyInstructor || null,
+        rescheduled_from_day: src.day + 1,
+        rescheduled_from_start_minute: src.startMinute
+      }]);
+      const targetId = inserted?.[0]?.id;
+      if(targetId){
+        if(enrolledRegular.length){
+          await insertRows('weekly_session_students', enrolledRegular.map(s => ({
+            session_id: targetId,
+            student_id: s.studentId || null,
+            student_name: s.name || '',
+            student_age: s.age != null ? Number(s.age) : null,
+            remark: s.remark || null,
+            is_replacement: false,
+            attendance_status: 'pending'
+          })));
+        }
+        if(src.instructors && src.instructors.length){
+          try{
+            await insertRows('session_instructors', src.instructors.map(i => ({
+              session_id: targetId,
+              instructor_id: i.id
+            })));
+          } catch(_){}
+        }
+      }
+
+      // Mark original as cancelled-rescheduled, pointing at the clone.
+      await patchRows('weekly_sessions', { id: pendingMove.sessionId }, {
+        cancelled_at: new Date().toISOString(),
+        cancelled_reason: 'rescheduled',
+        cancelled_target_session_id: targetId || null
       });
+
       await loadSessions();
       setPendingMove(null);
-      setStatus(`Moved ${pendingMove.lessonTypeName} to ${targetLabel}.`);
+      setStatus(`Moved ${pendingMove.lessonTypeName} to ${targetLabel}. Original spot greyed out — click to restore.`);
     } catch(err){ handleErr(err); alert(err.message || 'Failed to move class'); }
   }
 
@@ -651,6 +833,26 @@ function App(){
     creditBalances.forEach(b => { m[creditKey(b.student_id, b.lesson_type_id)] = b; });
     return m;
   }, [creditBalances]);
+  // Purchases-by-key memo — same shape as creditByKey but holds the
+  // chronological purchase list. Each value is an array of purchase
+  // rows sorted by purchase_date descending (newest first).
+  const purchasesByKey = useMemo(() => {
+    const m = {};
+    creditPurchases.forEach(p => {
+      const k = creditKey(p.student_id, p.lesson_type_id);
+      (m[k] = m[k] || []).push(p);
+    });
+    return m;
+  }, [creditPurchases]);
+  // Purchases grouped by student (across all lesson types) for the
+  // Swimmers tab's expandable credit panel.
+  const purchasesByStudent = useMemo(() => {
+    const m = {};
+    creditPurchases.forEach(p => {
+      (m[p.student_id] = m[p.student_id] || []).push(p);
+    });
+    return m;
+  }, [creditPurchases]);
 
   async function loadRemarks(cursor){
     const start = new Date(cursor.getFullYear(), cursor.getMonth()-1, 1);
@@ -778,7 +980,14 @@ function App(){
     activeInstructors().forEach(x => byInst[x.name] = 0);
     activePools().forEach(p => byPool[p.name] = 0);
     let totalStudents = 0;
+    let totalSessions = 0;
     weekSessions.forEach(s => {
+      // Cancelled ghosts don't count — they're shells of classes that
+      // didn't happen this week. Their swimmers moved with the
+      // replacement session, which is already in the list (possibly in
+      // a different week or slot).
+      if(s.cancelledAt) return;
+      totalSessions += 1;
       const excluded = excludeFromStudentTotals(s.type);
       const count = excluded ? 0 : s.students.length;
       byType[s.type] = (byType[s.type] || 0) + count;
@@ -787,7 +996,7 @@ function App(){
       s.instructors.forEach(inst => { byInst[inst.name] = (byInst[inst.name] || 0) + count; });
       totalStudents += count;
     });
-    return { byType, byInst, byPool, totalStudents, totalSessions: weekSessions.length };
+    return { byType, byInst, byPool, totalStudents, totalSessions };
   }, [weekSessions, options]);
 
   function defaultFormForStart(startMinute, poolId){
@@ -819,6 +1028,14 @@ function App(){
   }
 
   function openEdit(item){
+    // Ghost session — clicking the greyed-out shell prompts to restore
+    // it to its original slot, undoing the forward/reschedule. We hand
+    // off to restoreCancelledSession rather than opening the editor;
+    // the underlying row is locked while cancelled (no edits allowed).
+    if(item && item.cancelledAt){
+      restoreCancelledSession(item.id);
+      return;
+    }
     const firstInst = item.instructors[0] || null;
     const regularStudents = (item.students || []).filter(s => !s.isReplacement);
     const replacementStudents = (item.students || []).filter(s => s.isReplacement);
@@ -1329,7 +1546,9 @@ function App(){
     try{
       if(!isFutureSelectedWeek){ alert('Week duplication is only available for a future week.'); return; }
       const prevWeekStart = addDays(selectedWeekStart, -7);
-      const sourceSessions = sessions.filter(s => s.weekStartDate === prevWeekStart).sort((a,b) => a.day - b.day || a.startMinute - b.startMinute);
+      const sourceSessions = sessions
+        .filter(s => s.weekStartDate === prevWeekStart && !s.cancelledAt)
+        .sort((a,b) => a.day - b.day || a.startMinute - b.startMinute);
       if(!sourceSessions.length){ alert('No classes found in the previous week to duplicate.'); return; }
       // Pre-count trial swimmers in the source so we can mention it in the confirm prompt.
       const trialInSource = sourceSessions.reduce((n, s) => n + (s.students || []).filter(st => st.studentId && trialStudentIds.has(st.studentId)).length, 0);
@@ -1484,10 +1703,16 @@ function App(){
   // double-booking warning in the enrollment modal.
   const weekEnrollments = useMemo(() => {
     const m = {};
-    weekSessions.forEach(s => s.students.forEach(st => {
-      if(!st.studentId) return;
-      (m[st.studentId] = m[st.studentId] || []).push({ day:s.day, startMinute:s.startMinute, type:s.type, sessionId:s.id });
-    }));
+    weekSessions.forEach(s => {
+      // Cancelled ghosts retain their student rows for restore purposes
+      // but those swimmers aren't actually booked into this slot anymore —
+      // skip the ghost so the double-booking warning doesn't false-fire.
+      if(s.cancelledAt) return;
+      s.students.forEach(st => {
+        if(!st.studentId) return;
+        (m[st.studentId] = m[st.studentId] || []).push({ day:s.day, startMinute:s.startMinute, type:s.type, sessionId:s.id });
+      });
+    });
     return m;
   }, [weekSessions]);
 
@@ -1623,6 +1848,9 @@ function App(){
           groupById={groupById}
           scheduleByStudent={scheduleByStudent}
           creditByKey={creditByKey}
+          purchasesByStudent={purchasesByStudent}
+          addCreditPurchase={addCreditPurchase}
+          deleteCreditPurchase={deleteCreditPurchase}
           addStudent={addStudent}
           updateStudent={updateStudent}
           deleteStudent={deleteStudent}
@@ -1693,6 +1921,8 @@ function App(){
       trialStudentIds={trialStudentIds}
         trialByLessonType={trialByLessonType}
       creditByKey={creditByKey}
+      purchasesByKey={purchasesByKey}
+      addCreditPurchase={addCreditPurchase}
       adjustCredit={adjustCredit}
       initCredit={initCredit}
       pendingByKey={pendingByKey}
@@ -1884,10 +2114,28 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
   const instName = (block.instructors[0]?.name) || block.legacyInstructor || '';
   const isPersonal = lessonTypeByName(block.type)?.class_type === 'personal';
   const isRescheduled = block.rescheduledFromDay != null;
+  const isCancelled = !!block.cancelledAt;
   // Trial flag is per-lesson-type: only fires if the swimmer's enrollment
   // matches this card's lesson type. Falls back to the global set if no map
   // is passed (defensive — shouldn't happen in normal mount path).
   const trialSet = (trialByLessonType && block.lessonTypeId) ? trialByLessonType[block.lessonTypeId] : trialStudentIds;
+  // Cancelled session — greyed-out shell. Clicking calls onEdit which
+  // detects the cancelled state and routes to restore. Don't render
+  // capacity, students, or instructor details — they're misleading
+  // on a class that didn't happen.
+  if(isCancelled){
+    const reasonLabel = block.cancelledReason === 'forwarded' ? 'Forwarded → next week'
+                      : block.cancelledReason === 'rescheduled' ? 'Rescheduled — moved'
+                      : 'Cancelled';
+    return <div className="wa-card wa-card-cancelled" onClick={(e)=>{e.stopPropagation(); onEdit(block);}} title="Click to restore this session to its original slot">
+      <div className="wa-card-head">
+        <span className="wa-card-title wa-card-title-strike">{block.type}</span>
+        <span className="wa-cancelled-tag">{reasonLabel}</span>
+      </div>
+      <div className="wa-card-line wa-card-strike">{compactRange(block.startMinute, block.durationMinutes)}{instName ? ` · ${instName}` : ''}</div>
+      <div className="wa-card-restore-hint">Click to restore</div>
+    </div>;
+  }
   return <div className={`wa-card ${isOver?'event-over':''} ${missingInst?'wa-card-warn':''}`}
     onClick={(e)=>{e.stopPropagation(); onEdit(block);}}
     style={{ background:c.bg, borderLeft:`3px solid ${c.bd}`, color:c.tx }}>
@@ -3006,6 +3254,149 @@ function StudentEditor({ row, lessonTypes, packages, onSave }){
   </div>;
 }
 
+// ============================================================================
+// CreditHistoryPanel — per-swimmer credit ledger. Shows running balance per
+// lesson-type, the chronological purchase history beneath, and an inline
+// "Add purchase" form. Each purchase row is the authoritative record of
+// when credits arrived; the running balance in student_credit_balances is
+// the denormalised cache that the schedule reads. Adding a purchase
+// bumps the balance; deleting one reverses it.
+// ============================================================================
+function CreditHistoryPanel({ swimmer, lessonTypes, lessonTypeById, purchases, creditByKey, addCreditPurchase, deleteCreditPurchase, onClose }){
+  const swimmerLts = (swimmer.lessonTypeIds || []).map(id => lessonTypeById(id)).filter(Boolean);
+  const defaultLtId = swimmerLts[0]?.id || lessonTypes[0]?.id || '';
+  const [purchaseDate, setPurchaseDate] = useState(toDateStr(new Date()));
+  const [ltId, setLtId] = useState(defaultLtId);
+  const [credits, setCredits] = useState(4);
+  const [source, setSource] = useState('topup');
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  // Group purchases by lesson type so each LT shows its own ledger.
+  const purchasesByLt = {};
+  (purchases || []).forEach(p => {
+    (purchasesByLt[p.lesson_type_id] = purchasesByLt[p.lesson_type_id] || []).push(p);
+  });
+  // Sort within each LT by date desc (newest first).
+  Object.values(purchasesByLt).forEach(arr => arr.sort((a,b) => (b.purchase_date || '').localeCompare(a.purchase_date || '') || (b.created_at || '').localeCompare(a.created_at || '')));
+
+  // Lesson types to display — all enrolled types, plus any LT that has
+  // purchase history but no current enrollment (so historical records
+  // don't vanish when a swimmer un-enrolls).
+  const displayLtIds = new Set(swimmerLts.map(lt => lt.id));
+  Object.keys(purchasesByLt).forEach(id => displayLtIds.add(id));
+  const displayLts = [...displayLtIds].map(id => lessonTypeById(id)).filter(Boolean);
+
+  async function submitPurchase(){
+    if(!ltId || !credits) return;
+    setBusy(true);
+    try{
+      await addCreditPurchase({
+        studentId: swimmer.id,
+        lessonTypeId: ltId,
+        purchaseDate,
+        creditsAdded: Number(credits),
+        source,
+        notes: notes.trim() || null
+      });
+      // Reset for the next entry but keep the LT + source so the user
+      // can add multiple top-ups quickly.
+      setCredits(4);
+      setNotes('');
+    } finally { setBusy(false); }
+  }
+
+  function fmtDate(d){
+    if(!d) return '';
+    try{ return new Date(d).toLocaleDateString(undefined, { day:'numeric', month:'short', year:'numeric' }); } catch(_){ return d; }
+  }
+  function sourceLabel(s){
+    if(s === 'signup') return '🆕 Sign-up';
+    if(s === 'topup') return '💳 Top-up';
+    if(s === 'gift') return '🎁 Gift';
+    if(s === 'manual') return '✏️ Manual';
+    if(s === 'refund') return '↩ Refund';
+    return s || '—';
+  }
+
+  return <div className="credit-panel">
+    <div className="credit-panel-head">
+      <div>
+        <div className="credit-panel-title">💳 Credit ledger · {swimmer.name}</div>
+        <div className="credit-panel-sub">Every purchase recorded with its date. The running balance is purchases minus credits consumed by attendance.</div>
+      </div>
+      <button className="btn btn-ghost small" onClick={onClose}>Close</button>
+    </div>
+
+    {/* Add-purchase form */}
+    <div className="credit-add-form">
+      <div className="credit-add-row">
+        <div className="field"><label>Date</label><input className="input" type="date" value={purchaseDate} onChange={e=>setPurchaseDate(e.target.value)} /></div>
+        <div className="field"><label>Lesson Type</label>
+          <select className="select" value={ltId} onChange={e=>setLtId(e.target.value)}>
+            <option value="">— select —</option>
+            {(lessonTypes || []).map(lt => <option key={lt.id} value={lt.id}>{lt.name}</option>)}
+          </select>
+        </div>
+        <div className="field"><label>Credits</label><input className="input" type="number" value={credits} onChange={e=>setCredits(e.target.value)} placeholder="4" /></div>
+        <div className="field"><label>Source</label>
+          <select className="select" value={source} onChange={e=>setSource(e.target.value)}>
+            <option value="signup">Sign-up</option>
+            <option value="topup">Top-up</option>
+            <option value="gift">Gift</option>
+            <option value="manual">Manual adjustment</option>
+            <option value="refund">Refund</option>
+          </select>
+        </div>
+        <div className="field" style={{flex:'2 1 240px'}}>
+          <label>Notes <span className="subtle" style={{textTransform:'none',letterSpacing:0,fontWeight:600}}>· optional</span></label>
+          <input className="input" value={notes} onChange={e=>setNotes(e.target.value)} placeholder="e.g. cash, receipt #1234" />
+        </div>
+      </div>
+      <div style={{display:'flex',justifyContent:'flex-end',marginTop:6,gap:6}}>
+        <span className="credit-add-hint">Use negative credits to record a manual deduction (e.g. expiry).</span>
+        <button className="btn btn-primary small" onClick={submitPurchase} disabled={busy || !ltId || !Number(credits)}>{busy ? 'Saving…' : '+ Record purchase'}</button>
+      </div>
+    </div>
+
+    {/* Per-lesson-type ledgers */}
+    {displayLts.length === 0 && <div className="credit-panel-empty">No lesson-type enrolments yet. Add one in Edit, then record a purchase here.</div>}
+    {displayLts.map(lt => {
+      const bal = creditByKey[`${swimmer.id}:${lt.id}`];
+      const list = purchasesByLt[lt.id] || [];
+      const totalPurchased = list.reduce((sum,p) => sum + Number(p.credits_added || 0), 0);
+      return <div key={lt.id} className="credit-lt-block">
+        <div className="credit-lt-head">
+          <span className="credit-lt-name" style={{background:lt.bg_color,color:lt.text_color,borderColor:lt.border_color}}>{lt.name}</span>
+          <span className="credit-lt-totals">
+            {bal
+              ? <>
+                  <strong className={bal.remaining_balance<=2?'credit-low':''}>{bal.remaining_balance}</strong> remaining of <strong>{bal.initial_balance}</strong> total
+                </>
+              : <em className="subtle">No balance row yet</em>}
+            {list.length > 0 && <span className="credit-lt-aggregate"> · {totalPurchased > 0 ? '+' : ''}{totalPurchased} credits across {list.length} record{list.length===1?'':'s'}</span>}
+          </span>
+        </div>
+        {list.length === 0
+          ? <div className="credit-empty">No purchases recorded for this lesson type.</div>
+          : <table className="credit-ledger">
+              <thead><tr><th style={{width:120}}>Date</th><th style={{width:90}}>Credits</th><th style={{width:130}}>Source</th><th>Notes</th><th style={{width:36}}></th></tr></thead>
+              <tbody>
+                {list.map(p => <tr key={p.id}>
+                  <td style={{fontWeight:600}}>{fmtDate(p.purchase_date)}</td>
+                  <td><span className={`credit-delta ${Number(p.credits_added) < 0 ? 'credit-delta-neg' : 'credit-delta-pos'}`}>{Number(p.credits_added) > 0 ? '+' : ''}{p.credits_added}</span></td>
+                  <td>{sourceLabel(p.source)}</td>
+                  <td className="subtle">{p.notes || '—'}</td>
+                  <td><button className="btn btn-danger small" title="Delete this purchase record" onClick={()=>deleteCreditPurchase(p)}>×</button></td>
+                </tr>)}
+              </tbody>
+            </table>
+        }
+      </div>;
+    })}
+  </div>;
+}
+
 function FamilyGroupsPanel({ groups, students, groupPackages, lessonTypes, packageById, membersByGroup, scheduleByStudent, addGroup, updateGroup, deleteGroup, setStudentGroup }){
   const [name, setName] = useState('');
   const [pkgId, setPkgId] = useState('');
@@ -3082,7 +3473,7 @@ function FamilyGroupsPanel({ groups, students, groupPackages, lessonTypes, packa
   </div>;
 }
 
-function StudentsView({ students, lessonTypes, lessonTypeById, packages, packageById, groupById, scheduleByStudent, creditByKey, addStudent, updateStudent, deleteStudent }){
+function StudentsView({ students, lessonTypes, lessonTypeById, packages, packageById, groupById, scheduleByStudent, creditByKey, purchasesByStudent, addCreditPurchase, deleteCreditPurchase, addStudent, updateStudent, deleteStudent }){
   const [name, setName] = useState('');
   const [dob, setDob] = useState('');
   const [gender, setGender] = useState(null);
@@ -3095,6 +3486,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
   const [emergencyRel, setEmergencyRel] = useState('');
   const [adultSelf, setAdultSelf] = useState(false);
   const [editId, setEditId] = useState(null);
+  const [creditId, setCreditId] = useState(null);
   const [q, setQ] = useState('');
   const [sortBy, setSortBy] = useState('name');
   const [formExpanded, setFormExpanded] = useState(false);
@@ -3251,9 +3643,10 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
               <td>{cr?<div className="credit-cell"><span className={`credit-cell-num ${afterWeek<=2?'credit-low':''}`}>{afterWeek}</span><span className="credit-cell-sub">{cr.remaining}/{cr.initial}{cr.scheduled>0?<> · <span style={{color:'var(--amber-tx)'}}>−{cr.scheduled} wk</span></>:null}</span></div>:<span className="subtle">—</span>}</td>
               <td>{tcOk?<span className="tc-badge-ok" title={`Accepted ${new Date(s.tcAcceptedAt).toLocaleDateString()} · ID: ${s.tcAcceptanceId}`}>✅ Signed</span>:<span className="tc-badge-pending" title="Terms & Conditions not yet accepted">⚠ Pending</span>}</td>
               <td style={{fontSize:11}}>{sched?sched.map((g,gi)=><div key={gi} style={{marginBottom:2}}><span style={{fontWeight:700}}>{g.type}:</span> <span className="subtle">{g.times.join(', ')}</span></div>):<span className="subtle">Not scheduled</span>}</td>
-              <td><div style={{display:'flex',gap:6,justifyContent:'flex-end'}}><button className="btn btn-ghost small" onClick={()=>setEditId(editId===s.id?null:s.id)}>{editId===s.id?'Close':'Edit'}</button><button className="btn btn-danger small" onClick={()=>deleteStudent(s)}>Delete</button></div></td>
+              <td><div style={{display:'flex',gap:6,justifyContent:'flex-end',flexWrap:'wrap'}}><button className="btn btn-ghost small" onClick={()=>setCreditId(creditId===s.id?null:s.id)} title="View / manage credit purchases">💳 Credits</button><button className="btn btn-ghost small" onClick={()=>setEditId(editId===s.id?null:s.id)}>{editId===s.id?'Close':'Edit'}</button><button className="btn btn-danger small" onClick={()=>deleteStudent(s)}>Delete</button></div></td>
             </tr>
             {editId===s.id?<tr><td colSpan={COLS} style={{padding:0}}><StudentEditor row={s} lessonTypes={lessonTypes} packages={packages} onSave={(patch)=>{updateStudent(s.id,patch);setEditId(null);}}/></td></tr>:null}
+            {creditId===s.id?<tr><td colSpan={COLS} style={{padding:0}}><CreditHistoryPanel swimmer={s} lessonTypes={lessonTypes} lessonTypeById={lessonTypeById} purchases={(purchasesByStudent||{})[s.id]||[]} creditByKey={creditByKey} addCreditPurchase={addCreditPurchase} deleteCreditPurchase={deleteCreditPurchase} onClose={()=>setCreditId(null)} /></td></tr>:null}
           </React.Fragment>;
         }):<tr><td colSpan={COLS} className="empty">No swimmers registered yet.</td></tr>}
         </tbody></table>
@@ -3400,7 +3793,7 @@ ${TC_COMPANY} Administration`);
   </div>;
 }
 
-function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById, students, studentById, weekEnrollments, familyGroups, membersByGroup, trialStudentIds, trialByLessonType, creditByKey, adjustCredit, initCredit, pendingByKey, replacementPending, markForReplacement, forwardClassToNextWeek, startFullClassMove }){
+function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById, students, studentById, weekEnrollments, familyGroups, membersByGroup, trialStudentIds, trialByLessonType, creditByKey, purchasesByKey, addCreditPurchase, adjustCredit, initCredit, pendingByKey, replacementPending, markForReplacement, forwardClassToNextWeek, startFullClassMove }){
   const [rescheduleOpen, setRescheduleOpen] = useState(false);
   const [cancelClassOpen, setCancelClassOpen] = useState(false);
   const [reschedDay, setReschedDay] = useState(0);
@@ -3685,8 +4078,16 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
         <div className="repl-section-title" style={{marginBottom:6}}>Credit Balances</div>
         {(modal.form.studentRows||[]).filter(r=>r.studentId).map((r,i)=>{
           const bal = creditByKey && creditByKey[`${r.studentId}:${currentLt?.id}`];
+          // Most recent purchase for this (swimmer, lesson type), used
+          // to surface "purchased on" info inline so the scheduler can
+          // confirm which batch the balance was seeded from.
+          const purchases = purchasesByKey && currentLt?.id ? (purchasesByKey[`${r.studentId}:${currentLt.id}`] || []) : [];
+          const lastPurchase = purchases[0] || null;
+          const lastPurchaseLabel = lastPurchase
+            ? `${Number(lastPurchase.credits_added) > 0 ? '+' : ''}${lastPurchase.credits_added} on ${lastPurchase.purchase_date}`
+            : null;
           return <div key={r.studentId||i} className="credit-row">
-            <span className="credit-row-name">{r.name || 'Student'}</span>
+            <span className="credit-row-name">{r.name || 'Student'}{lastPurchaseLabel ? <span className="credit-row-last"> · last {lastPurchaseLabel}</span> : null}</span>
             {bal
               ? <div className="credit-controls">
                   <span className={`credit-count ${bal.remaining_balance<=2?'credit-low':''}`}>{bal.remaining_balance} / {bal.initial_balance} credits</span>
@@ -3694,8 +4095,24 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
                   <button className="credit-btn" title="Add 1 credit (credit returned)" onClick={()=>adjustCredit(r.studentId,currentLt.id,+1)}>+</button>
                 </div>
               : <div className="credit-init">
-                  <input className="input" style={{width:80,fontSize:12}} type="number" min="1" placeholder="Credits" value={initCreditInput[r.studentId]||4} onChange={(e)=>setInitCreditInput(prev=>({...prev,[r.studentId]:e.target.value}))} />
-                  <button className="btn btn-ghost small" onClick={()=>{ const n=initCreditInput[r.studentId]||4; if(n) initCredit(r.studentId,currentLt?.id,n); }}>Set initial</button>
+                  <input className="input" style={{width:64,fontSize:12}} type="number" min="1" placeholder="Credits" value={initCreditInput[r.studentId]||4} onChange={(e)=>setInitCreditInput(prev=>({...prev,[r.studentId]:e.target.value}))} />
+                  <button className="btn btn-ghost small" title="Record this as a purchase (with today's date) and set the initial balance" onClick={async ()=>{
+                    const n = Number(initCreditInput[r.studentId]||4);
+                    if(!n || !currentLt?.id) return;
+                    // Prefer addCreditPurchase so the seed shows up in the
+                    // swimmer's purchase ledger with today's date. Falls
+                    // back to initCredit if the purchases backend isn't
+                    // available yet (e.g. migration not run).
+                    if(addCreditPurchase){
+                      await addCreditPurchase({
+                        studentId: r.studentId, lessonTypeId: currentLt.id,
+                        purchaseDate: toDateStr(new Date()), creditsAdded: n,
+                        source: 'signup', notes: 'Seeded from session editor'
+                      });
+                    } else {
+                      initCredit(r.studentId, currentLt.id, n);
+                    }
+                  }}>Record purchase</button>
                 </div>
             }
           </div>;
