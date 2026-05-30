@@ -505,15 +505,98 @@ function App(){
   const [pendingMove, setPendingMove] = useState(null);
   async function forwardClassToNextWeek(sessionId, sourceLabel){
     if(!sessionId) return;
-    if(!confirm(`Cancel ${sourceLabel} for this week and forward to next week?\n\nSwimmers' credits will NOT be consumed for this week. Make sure next week's session exists (use Duplicate Previous Week from there if it doesn't).`)) return;
+    const src = sessions.find(s => s.id === sessionId);
+    if(!src){ alert('Source session not found.'); return; }
+
+    const nextWeekStart = addDays(src.weekStartDate, 7);
+
+    // Two paths, depending on whether next week already holds the same
+    // recurring slot:
+    //   (A) Match exists → just delete this week's run. The swimmers will
+    //       attend next week's existing class as usual; we don't want to
+    //       create a parallel duplicate alongside it.
+    //   (B) No match → clone the session forward: insert a new row in
+    //       next week, copy the non-replacement student rows and the
+    //       instructor links, then delete this week's session.
+    // Replacement students are week-scoped one-offs and are NEVER carried
+    // forward — they belong to the original week's replacement bucket.
+    const existingNextWeek = sessions.find(s =>
+      s.weekStartDate === nextWeekStart &&
+      s.day === src.day &&
+      s.startMinute === src.startMinute &&
+      s.lessonTypeId === src.lessonTypeId &&
+      (s.poolId || null) === (src.poolId || null)
+    );
+    const enrolledRegular = (src.students || []).filter(s => !s.isReplacement);
+    const swimmerCount = enrolledRegular.length;
+    const confirmMsg = existingNextWeek
+      ? `Forward ${sourceLabel} to next week (${nextWeekStart})?\n\nNext week already has the same class at the same slot — this week's run is cancelled and the ${swimmerCount} swimmer${swimmerCount===1?'':'s'} will attend that existing session.\n\nCredits already consumed this week will be refunded.`
+      : `Forward ${sourceLabel} to next week (${nextWeekStart})?\n\nThis week's session is cancelled and recreated next week (same day, same time) with the same ${swimmerCount} swimmer${swimmerCount===1?'':'s'}.\n\nCredits already consumed this week will be refunded.`;
+    if(!confirm(confirmMsg)) return;
+
     try{
+      // Refund credits for any swimmer whose attendance was already marked
+      // attended/absent on this session — those credits were deducted on
+      // the prior save but shouldn't have been, since the class is now
+      // being forwarded (i.e., it didn't actually happen this week).
+      if(src.lessonTypeId){
+        for(const s of (src.students || [])){
+          if(!s.studentId) continue;
+          const att = s.attendance || 'pending';
+          if(att === 'attended' || att === 'absent'){
+            await adjustCredit(s.studentId, src.lessonTypeId, 1);
+          }
+        }
+      }
+
+      if(!existingNextWeek){
+        // Clone into next week.
+        const inserted = await insertRows('weekly_sessions', [{
+          week_start_date: nextWeekStart,
+          weekday: src.day + 1,
+          start_minute: src.startMinute,
+          duration_minutes: src.durationMinutes,
+          lesson_type: src.type,
+          lesson_type_id: src.lessonTypeId,
+          pool_id: src.poolId || null,
+          family_group_id: src.familyGroupId || null,
+          instructor: src.legacyInstructor || null
+        }]);
+        const newSessionId = inserted?.[0]?.id;
+        if(newSessionId){
+          if(enrolledRegular.length){
+            await insertRows('weekly_session_students', enrolledRegular.map(s => ({
+              session_id: newSessionId,
+              student_id: s.studentId || null,
+              student_name: s.name || '',
+              student_age: s.age != null ? Number(s.age) : null,
+              remark: s.remark || null,
+              is_replacement: false,
+              attendance_status: 'pending'   // fresh week, fresh attendance
+            })));
+          }
+          if(src.instructors && src.instructors.length){
+            try{
+              await insertRows('session_instructors', src.instructors.map(i => ({
+                session_id: newSessionId,
+                instructor_id: i.id
+              })));
+            } catch(_){} // session_instructors table may not exist on older DBs — instructor name is also on the session row as a fallback
+          }
+        }
+      }
+
+      // Delete this week's session now that the next-week side is set up.
       await deleteRows('weekly_session_students', { session_id: sessionId });
-      await deleteRows('session_instructors', { session_id: sessionId });
+      try{ await deleteRows('session_instructors', { session_id: sessionId }); } catch(_){}
       await deleteRows('weekly_sessions', { id: sessionId });
+
       await loadSessions();
       setModal(null);
-      setStatus(`Cancelled ${sourceLabel} for this week — credits preserved.`);
-    } catch(err){ handleErr(err); alert(err.message || 'Failed to cancel class'); }
+      setStatus(existingNextWeek
+        ? `Forwarded ${sourceLabel} → ${nextWeekStart} (merged into existing next-week session).`
+        : `Forwarded ${sourceLabel} → ${nextWeekStart} (cloned ${swimmerCount} swimmer${swimmerCount===1?'':'s'} forward).`);
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to forward class'); }
   }
   function startFullClassMove({ sessionId, sourceLabel, lessonTypeName, weekStartDate, originalDay, originalStartMinute, swimmerCount }){
     if(!sessionId) return;
@@ -3637,7 +3720,7 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
               forwardClassToNextWeek && forwardClassToNextWeek(modal.id, label);
             }}>
               <div className="cancel-class-opt-title">⏭ Forward to next week</div>
-              <div className="cancel-class-opt-sub">Cancel this week's session entirely. Swimmers attend the same slot next week as usual. Credits preserved.</div>
+              <div className="cancel-class-opt-sub">Cancels this week's run and recreates the same class next week (same day, time, swimmers). Any credits already consumed this week are refunded. If next week already has this class, it merges in instead of duplicating.</div>
             </button>
             <button type="button" className="cancel-class-opt" onClick={()=>{
               const label = `${DAYS_F[modal.day]} ${minuteToTime(modal.startMinute)}`;
