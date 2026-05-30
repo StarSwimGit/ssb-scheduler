@@ -82,7 +82,7 @@ function minuteToTime(mins){ const h24 = Math.floor(mins / 60), m = mins % 60, a
 // Compact label for whole-hour agenda rows: "10 AM", "12 PM", "1:30 PM".
 function hourLabel(mins){ const h24 = Math.floor(mins / 60), m = mins % 60, ampm = h24 < 12 ? 'AM' : 'PM'; const h = h24 % 12 || 12; return m === 0 ? `${h} ${ampm}` : `${h}:${String(m).padStart(2,'0')} ${ampm}`; }
 // Display-only: shorten a full name to its first two words ("Ashton Ang Zi Yang" → "Ashton Ang"). Full name is untouched in the database.
-function shortName(name){ const parts = String(name || '').trim().split(/\s+/).filter(Boolean); return parts.slice(0, 2).join(' '); }
+function shortName(name){ const parts = String(name || '').trim().split(/\s+/).filter(Boolean); return parts.slice(0, 3).join(' '); }
 // Age shown in years, e.g. " (5)". Blank when unknown.
 function ageSuffix(s){ return (s && s.age !== null && s.age !== undefined && s.age !== '') ? ` (${s.age})` : ''; }
 // Compute total months between a DOB and today. Birthday-aware (subtracts a
