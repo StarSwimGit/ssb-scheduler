@@ -197,7 +197,7 @@ function IntakeForm(){
 
   return <div className="page">
     <div className="brand-card">
-      <div className="brand-logo">🏊</div>
+      <img src="./logo.png" alt="Star Swim Sdn Bhd" className="brand-logo" />
       <div className="brand-title">Swimmer Registration</div>
       <div className="brand-sub">{TC_COMPANY} · Welcome — please fill in your details below</div>
     </div>
