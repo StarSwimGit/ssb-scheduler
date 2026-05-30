@@ -352,6 +352,18 @@
     .age-display{display:inline-flex;align-items:center;justify-content:center;height:36px;padding:0 12px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:8px;font-weight:800;color:var(--text);font-size:13px;min-width:60px;font-variant-numeric:tabular-nums}
     .age-display.is-empty{color:var(--text-3);font-weight:500}
 
+    /* Attendance segment — one row per swimmer in the session modal.
+       Pending = neutral grey hourglass; Attended = green check; Absent = amber X.
+       Active state pops with a colored fill so the scheduler can scan a busy
+       class at a glance and know who's been marked and who hasn't. */
+    .att-seg{display:inline-flex;border:1px solid var(--border-2);border-radius:8px;overflow:hidden;flex-shrink:0;background:#fff;height:36px}
+    .att-btn{width:32px;height:34px;border:none;background:transparent;color:var(--text-3);font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;line-height:1;transition:.12s ease;border-right:1px solid var(--border-2)}
+    .att-btn:last-child{border-right:none}
+    .att-btn:hover{background:var(--surface-2)}
+    .att-btn.is-on.att-pending{background:#E5E7EB;color:#374151}
+    .att-btn.is-on.att-attended{background:var(--green-bg);color:var(--green-tx)}
+    .att-btn.is-on.att-absent{background:var(--amber-bg);color:var(--amber-tx)}
+
     /* ── Lessons rows (register + edit) ──────────────────────────────────── */
     .lessons-rows{display:flex;flex-direction:column;gap:8px}
     .lesson-row{display:grid;grid-template-columns:1.4fr 1.6fr 36px;gap:8px;align-items:center}
