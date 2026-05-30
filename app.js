@@ -3628,7 +3628,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
       </div>
       <div className="table-wrap">
         <table><thead><tr>
-          <th style={{width:'17%'}}>Name</th><th style={{width:40}}>Age</th><th style={{width:'15%'}}>Lesson Type</th><th style={{width:'15%'}}>Package</th><th style={{width:'8%'}}>Credits</th><th style={{width:'8%'}}>T&amp;C</th><th>Schedule</th><th style={{width:112}}></th>
+          <th style={{width:'16%'}}>Name</th><th style={{width:36}}>Age</th><th style={{width:'14%'}}>Lesson Type</th><th style={{width:'14%'}}>Package</th><th style={{width:'7%'}}>Credits</th><th style={{width:'6%'}}>T&amp;C</th><th>Schedule</th><th style={{width:96,whiteSpace:'nowrap'}}></th>
         </tr></thead>
         <tbody>{displayList.length ? displayList.map((row,ri)=>{
           if(row.kind==='group') return <tr key={`g-${row.gid}`} className="swimmer-group-header"><td colSpan={COLS}><span className="group-header-label">👪 {row.label}</span></td></tr>;
@@ -3643,7 +3643,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
               <td>{cr?<div className="credit-cell"><span className={`credit-cell-num ${afterWeek<=2?'credit-low':''}`}>{afterWeek}</span><span className="credit-cell-sub">{cr.remaining}/{cr.initial}{cr.scheduled>0?<> · <span style={{color:'var(--amber-tx)'}}>−{cr.scheduled} wk</span></>:null}</span></div>:<span className="subtle">—</span>}</td>
               <td>{tcOk?<span className="tc-badge-ok" title={`Accepted ${new Date(s.tcAcceptedAt).toLocaleDateString()} · ID: ${s.tcAcceptanceId}`}>✅ Signed</span>:<span className="tc-badge-pending" title="Terms & Conditions not yet accepted">⚠ Pending</span>}</td>
               <td style={{fontSize:11}}>{sched?sched.map((g,gi)=><div key={gi} style={{marginBottom:2}}><span style={{fontWeight:700}}>{g.type}:</span> <span className="subtle">{g.times.join(', ')}</span></div>):<span className="subtle">Not scheduled</span>}</td>
-              <td><div style={{display:'flex',gap:6,justifyContent:'flex-end',flexWrap:'wrap'}}><button className="btn btn-ghost small" onClick={()=>setCreditId(creditId===s.id?null:s.id)} title="View / manage credit purchases">💳 Credits</button><button className="btn btn-ghost small" onClick={()=>setEditId(editId===s.id?null:s.id)}>{editId===s.id?'Close':'Edit'}</button><button className="btn btn-danger small" onClick={()=>deleteStudent(s)}>Delete</button></div></td>
+              <td style={{whiteSpace:'nowrap'}}><div style={{display:'flex',gap:4,justifyContent:'flex-end',flexWrap:'nowrap'}}><button className="btn btn-ghost small" onClick={()=>setCreditId(creditId===s.id?null:s.id)} title="View / manage credit purchases">💳</button><button className="btn btn-ghost small" onClick={()=>setEditId(editId===s.id?null:s.id)}>{editId===s.id?'Close':'Edit'}</button><button className="btn btn-danger small" onClick={()=>deleteStudent(s)}>Del</button></div></td>
             </tr>
             {editId===s.id?<tr><td colSpan={COLS} style={{padding:0}}><StudentEditor row={s} lessonTypes={lessonTypes} packages={packages} onSave={(patch)=>{updateStudent(s.id,patch);setEditId(null);}}/></td></tr>:null}
             {creditId===s.id?<tr><td colSpan={COLS} style={{padding:0}}><CreditHistoryPanel swimmer={s} lessonTypes={lessonTypes} lessonTypeById={lessonTypeById} purchases={(purchasesByStudent||{})[s.id]||[]} creditByKey={creditByKey} addCreditPurchase={addCreditPurchase} deleteCreditPurchase={deleteCreditPurchase} onClose={()=>setCreditId(null)} /></td></tr>:null}
