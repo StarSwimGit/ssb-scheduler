@@ -1510,8 +1510,7 @@ function WeekView(props){
         <button className="btn btn-print small-btn" onClick={onExportExcel} title="Download this week as a multi-tab attendance roster">Export Excel</button>
       </PeriodNav>
       <div className="nav-note">{isFutureSelectedWeek ? 'Future week — "Remove all classes" and "Duplicate Previous Week" are enabled.' : 'Current and past weeks are protected from bulk removal.'}</div>
-      {weekGrid}
-      <div className="legend-bar legend-bar-v">
+      <div className="legend-bar legend-bar-v" style={{marginBottom:12}}>
         <div className="legend-row">
           <span className="legend-label">Types</span>
           <div className="legend">
@@ -1535,6 +1534,7 @@ function WeekView(props){
           </button>
         </div>
       </div>
+      {weekGrid}
     </div>
 
     <div className="print-rundown">
