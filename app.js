@@ -1379,6 +1379,21 @@ function App(){
     students.forEach(s => { if(s.packageId && trialPkgIds.has(s.packageId)) ids.add(s.id); });
     return ids;
   }, [students, options.packages]);
+  // Lesson-type-scoped trial lookup: trialByLessonType[ltId] is the Set of
+  // trial student IDs enrolled in that lesson type. A student in the global
+  // trial set who's only enrolled in LTS won't appear under PERSONAL —
+  // matching the policy that "trial" is per-lesson-type, not global.
+  const trialByLessonType = useMemo(() => {
+    const m = {};
+    students.forEach(s => {
+      if(!trialStudentIds.has(s.id)) return;
+      (s.lessonTypeIds || []).forEach(ltId => {
+        if(!m[ltId]) m[ltId] = new Set();
+        m[ltId].add(s.id);
+      });
+    });
+    return m;
+  }, [students, trialStudentIds]);
   const groupById = useMemo(() => { const m = {}; familyGroups.forEach(g => m[g.id] = g); return m; }, [familyGroups]);
   const membersByGroup = useMemo(() => { const m = {}; students.forEach(s => { if(s.familyGroupId){ (m[s.familyGroupId] = m[s.familyGroupId] || []).push(s); } }); return m; }, [students]);
 
@@ -1476,6 +1491,7 @@ function App(){
         onCancelPendingMove={cancelPendingMove}
         onExportExcel={exportWeekExcel}
         trialStudentIds={trialStudentIds}
+        trialByLessonType={trialByLessonType}
         creditByKey={creditByKey}
       />}
 
@@ -1502,6 +1518,7 @@ function App(){
         instructorFilterActive={selectedInstructors.size > 0}
         colorsFor={colorsFor}
         trialStudentIds={trialStudentIds}
+        trialByLessonType={trialByLessonType}
         creditByKey={creditByKey}
       />}
 
@@ -1591,6 +1608,7 @@ function App(){
       familyGroups={familyGroups}
       membersByGroup={membersByGroup}
       trialStudentIds={trialStudentIds}
+        trialByLessonType={trialByLessonType}
       creditByKey={creditByKey}
       adjustCredit={adjustCredit}
       initCredit={initCredit}
@@ -1617,7 +1635,7 @@ function WeekView(props){
           activeInstructors, isInstructorActive, onToggleInstructor, onClearInstructors, instructorFilterActive,
           weekPendingReplacements, lessonTypeById, studentById, onCancelPendingReplacement,
           pendingMove, onPlacePendingMove, onCancelPendingMove,
-          trialStudentIds, creditByKey } = props;
+          trialStudentIds, trialByLessonType, creditByKey } = props;
 
   const [printMenu, setPrintMenu] = useState(false);
 
@@ -1663,7 +1681,8 @@ function WeekView(props){
               onAdd(di, minuteToSlot(h), selectedPoolId || undefined);
             }
           }}>
-            {cell.map(block => <AgendaCard key={block.id} block={block} colorsFor={colorsFor} lessonTypeByName={lessonTypeByName} poolById={poolById} showPoolBadge={showPoolBadge} onEdit={onEdit} trialStudentIds={trialStudentIds} creditByKey={creditByKey} />)}
+            {cell.map(block => <AgendaCard key={block.id} block={block} colorsFor={colorsFor} lessonTypeByName={lessonTypeByName} poolById={poolById} showPoolBadge={showPoolBadge} onEdit={onEdit} trialStudentIds={trialStudentIds}
+        trialByLessonType={trialByLessonType} creditByKey={creditByKey} />)}
           </div>;
         })}
       </React.Fragment>)}
@@ -1771,7 +1790,7 @@ function WeekView(props){
 
 // M2.2: agenda card — a static, full-width card inside a day-hour cell. Details
 // stack on separate lines; the student list wraps to use vertical space.
-function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadge, onEdit, trialStudentIds, creditByKey }){
+function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadge, onEdit, trialStudentIds, trialByLessonType, creditByKey }){
   const c = colorsFor(block.type);
   const lt = lessonTypeByName(block.type);
   const cap = sessionCapacity(block, lt);
@@ -1782,6 +1801,10 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
   const instName = (block.instructors[0]?.name) || block.legacyInstructor || '';
   const isPersonal = lessonTypeByName(block.type)?.class_type === 'personal';
   const isRescheduled = block.rescheduledFromDay != null;
+  // Trial flag is per-lesson-type: only fires if the swimmer's enrollment
+  // matches this card's lesson type. Falls back to the global set if no map
+  // is passed (defensive — shouldn't happen in normal mount path).
+  const trialSet = (trialByLessonType && block.lessonTypeId) ? trialByLessonType[block.lessonTypeId] : trialStudentIds;
   return <div className={`wa-card ${isOver?'event-over':''} ${missingInst?'wa-card-warn':''}`}
     onClick={(e)=>{e.stopPropagation(); onEdit(block);}}
     style={{ background:c.bg, borderLeft:`3px solid ${c.bd}`, color:c.tx }}>
@@ -1794,7 +1817,7 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
     <div className={`wa-card-line wa-card-inst ${missingInst?'inst-missing':''}`}>{missingInst ? <span className="warn-tri" title="Instructor was removed — pick a new one in the modal">⚠</span> : null}<span className={missingInst?'inst-orphan':''}>{instName || 'Unassigned'}</span>{missingInst ? <span className="inst-warn-chip">Needs instructor</span> : null}</div>
     {block.students.length
       ? <div className="wa-card-students">{block.students.map((s,i) => {
-          const isTrial = !!(s.studentId && trialStudentIds && trialStudentIds.has(s.studentId));
+          const isTrial = !!(s.studentId && trialSet && trialSet.has(s.studentId));
           const isRepl = s.isReplacement;
           const bal = s.studentId && creditByKey ? creditByKey[`${s.studentId}:${block.lessonTypeId}`] : null;
           return <span key={s.id || i} className={`wa-stu ${isRepl?'wa-stu-repl':''}`} title={studentLabel(s) + (isTrial?' (trial)':'') + (isRepl?` replacing from ${s.replacementFrom||'?'}`:'')}>{isRepl?<span className="repl-mark">R</span>:null}{shortName(s.name) + ageSuffix(s)}{isTrial ? <span className="trial-mark"> (trial)</span> : null}{bal ? <span className={`credit-mark ${bal.remaining_balance<=2?'credit-low':''}`}> · {bal.remaining_balance}cr</span> : null}{s.remark ? ` — ${s.remark}` : ''}</span>;
@@ -1807,7 +1830,7 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
 // DailyView (M2: pool labels on each session)
 // ============================================================================
 
-function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, lessonTypeByName, poolById, onAddAtTime, onEdit, selectedWeekStart, currentWeekStart, onPrevWeek, onNextWeek, onThisWeek, onExportExcel, activeLessonTypes, isTypeEnabled, onToggleType, onToggleAllTypes, allTypesShown, activeInstructors, isInstructorActive, onToggleInstructor, onClearInstructors, instructorFilterActive, trialStudentIds, creditByKey }){
+function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, lessonTypeByName, poolById, onAddAtTime, onEdit, selectedWeekStart, currentWeekStart, onPrevWeek, onNextWeek, onThisWeek, onExportExcel, activeLessonTypes, isTypeEnabled, onToggleType, onToggleAllTypes, allTypesShown, activeInstructors, isInstructorActive, onToggleInstructor, onClearInstructors, instructorFilterActive, trialStudentIds, trialByLessonType, creditByKey }){
   const wb = weekBounds(selectedDate);
   const weekDays = Array.from({length:7}, (_,i) => { const d = new Date(wb.start); d.setDate(wb.start.getDate()+i); return { date:d, ds:toDateStr(d), idx:i }; });
   const items = sessionsForDate(selectedDate);
@@ -1876,12 +1899,18 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
                         <div className="daily-event-title" style={{color:c.tx}}>{it.type} {pool ? <span className="pool-badge">{pool.name}</span> : null}{it.familyGroupId ? <span title="Family group booking" style={{marginLeft:4}}>👪</span> : null}{isRescheduledIt ? <span className="reschedule-tag" title={`Rescheduled — was ${DAYS_S[it.rescheduledFromDay]} ${minuteToTime(it.rescheduledFromStartMinute)}`}> ⇄</span> : null}</div>
                         <div className={`daily-event-sub ${missingInst?'inst-missing':''}`}>{compactRange(it.startMinute, it.durationMinutes)} · {missingInst ? <><span className="warn-tri">⚠</span><span className="inst-orphan">{instName || 'Unassigned'}</span><span className="inst-warn-chip">Needs instructor</span></> : instName || '—'}</div>
                         {it.students.length
-                          ? <div className="daily-event-students">{it.students.map((s, si) => {
-                              const isTrial = !!(s.studentId && trialStudentIds && trialStudentIds.has(s.studentId));
-                              const isRepl = s.isReplacement;
-                              const bal = isPersonalIt && s.studentId && creditByKey ? creditByKey[`${s.studentId}:${it.lessonTypeId}`] : null;
-                              return <span key={s.id || si} className={`daily-event-stu ${isRepl?'daily-stu-repl':''}`} title={isRepl?`Replacement from ${s.replacementFrom||'?'}`:undefined}>{isRepl?<span className="repl-mark-sm">R</span>:null}{s.name + ageSuffix(s)}{isTrial ? <span className="trial-mark"> (trial)</span> : null}{bal ? <span className={`credit-mark ${bal.remaining_balance<=2?'credit-low':''}`}> · {bal.remaining_balance}cr</span> : null}</span>;
-                            })}</div>
+                          ? (() => {
+                              // Per-session trial set: only swimmers whose
+                              // enrolment includes THIS lesson type flag as
+                              // trial. Falls back to global set defensively.
+                              const trialSet = (trialByLessonType && it.lessonTypeId) ? trialByLessonType[it.lessonTypeId] : trialStudentIds;
+                              return <div className="daily-event-students">{it.students.map((s, si) => {
+                                const isTrial = !!(s.studentId && trialSet && trialSet.has(s.studentId));
+                                const isRepl = s.isReplacement;
+                                const bal = s.studentId && creditByKey ? creditByKey[`${s.studentId}:${it.lessonTypeId}`] : null;
+                                return <span key={s.id || si} className={`daily-event-stu ${isRepl?'daily-stu-repl':''}`} title={isRepl?`Replacement from ${s.replacementFrom||'?'}`:undefined}>{isRepl?<span className="repl-mark-sm">R</span>:null}{s.name + ageSuffix(s)}{isTrial ? <span className="trial-mark"> (trial)</span> : null}{bal ? <span className={`credit-mark ${bal.remaining_balance<=2?'credit-low':''}`}> · {bal.remaining_balance}cr</span> : null}</span>;
+                              })}</div>;
+                            })()
                           : <div className="daily-event-sub">No students listed</div>}
                         {it.students.filter(s=>s.remark).map((s,ri)=><div key={ri} className="daily-event-note">📝 {shortName(s.name)}: {s.remark}</div>)}
                       </div>
@@ -2733,15 +2762,24 @@ function StudentSelect({ valueId, fallbackLabel, studentById, candidates, onPick
   const sel = valueId ? studentById[valueId] : null;
   const label = sel ? `${sel.name}${sel.age != null ? ` (${sel.age})` : ''}` : (fallbackLabel || '');
   const filtered = (candidates || []).filter(s => !q || (s.name || '').toLowerCase().includes(q.toLowerCase()));
-  // Sort: pending-replacement first, then trial, then the rest alphabetical —
-  // so flagged candidates surface at the top of the dropdown when scheduler
-  // is looking for one.
+  // Trial flag is context-sensitive: a swimmer's global "trial" status only
+  // surfaces here if the current session's lesson type matches one of their
+  // enrolled lesson types. A trial LTS swimmer dropped into a Personal-class
+  // dropdown reads as a regular candidate, not as "trial".
+  function isTrialFor(s){
+    if(!(trialStudentIds && trialStudentIds.has(s.id))) return false;
+    if(!lessonTypeId) return false;
+    return (s.lessonTypeIds || []).includes(lessonTypeId);
+  }
+  // Sort: pending-replacement first, then context-matching trial, then the
+  // rest alphabetical — so flagged candidates surface at the top of the
+  // dropdown when scheduler is looking for one.
   const sortedFiltered = filtered.slice().sort((a, b) => {
     const aP = !!(pendingByKey && lessonTypeId && weekStartDate && pendingByKey[`${a.id}:${lessonTypeId}:${weekStartDate}`]);
     const bP = !!(pendingByKey && lessonTypeId && weekStartDate && pendingByKey[`${b.id}:${lessonTypeId}:${weekStartDate}`]);
     if(aP !== bP) return aP ? -1 : 1;
-    const aT = !!(trialStudentIds && trialStudentIds.has(a.id));
-    const bT = !!(trialStudentIds && trialStudentIds.has(b.id));
+    const aT = isTrialFor(a);
+    const bT = isTrialFor(b);
     if(aT !== bT) return aT ? -1 : 1;
     return (a.name || '').localeCompare(b.name || '');
   });
@@ -2766,12 +2804,12 @@ function StudentSelect({ valueId, fallbackLabel, studentById, candidates, onPick
         <div className="ssel-list">
           {sortedFiltered.length ? sortedFiltered.map(s => {
             const isPending = !!(pendingByKey && lessonTypeId && weekStartDate && pendingByKey[`${s.id}:${lessonTypeId}:${weekStartDate}`]);
-            const isTrial = !!(trialStudentIds && trialStudentIds.has(s.id));
+            const isTrial = isTrialFor(s);
             const pendingInfo = isPending ? pendingByKey[`${s.id}:${lessonTypeId}:${weekStartDate}`] : null;
             return <button key={s.id} type="button" className={`ssel-item ${isPending ? 'ssel-item-pending' : ''} ${isTrial ? 'ssel-item-trial' : ''}`} onClick={()=>choose(s)}>
               <span className="ssel-item-main">
                 {isPending ? <span className="ssel-flag ssel-flag-r" title={`Pending replacement from ${pendingInfo.original_session_label}`}>R-pending</span> : null}
-                {isTrial ? <span className="ssel-flag ssel-flag-trial" title="Trial swimmer — one-off booking">trial</span> : null}
+                {isTrial ? <span className="ssel-flag ssel-flag-trial" title="Trial swimmer — one-off booking for this lesson type">trial</span> : null}
                 <span className="ssel-item-name">{s.name}</span>
               </span>
               <span className="ssel-item-meta">{s.age != null ? `${s.age}y` : ''}{isPending ? ` · from ${pendingInfo.original_session_label}` : (s.package ? ` · ${s.package}` : '')}</span>
@@ -3279,7 +3317,7 @@ ${TC_COMPANY} Administration`);
   </div>;
 }
 
-function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById, students, studentById, weekEnrollments, familyGroups, membersByGroup, trialStudentIds, creditByKey, adjustCredit, initCredit, pendingByKey, replacementPending, markForReplacement, forwardClassToNextWeek, startFullClassMove }){
+function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById, students, studentById, weekEnrollments, familyGroups, membersByGroup, trialStudentIds, trialByLessonType, creditByKey, adjustCredit, initCredit, pendingByKey, replacementPending, markForReplacement, forwardClassToNextWeek, startFullClassMove }){
   const [rescheduleOpen, setRescheduleOpen] = useState(false);
   const [cancelClassOpen, setCancelClassOpen] = useState(false);
   const [reschedDay, setReschedDay] = useState(0);
@@ -3357,9 +3395,18 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
 
   // Candidates for the dropdowns: swimmers tagged for this lesson type; if none
   // are tagged yet, fall back to all active swimmers so the user isn't stuck.
+  // Trial swimmers are always strictly lesson-type-scoped though — they're
+  // never surfaced unless their enrolment includes the current lesson type,
+  // even in fallback mode. Otherwise a trial LTS swimmer would appear as a
+  // candidate when scheduling a Personal class, which makes no sense.
   const lessonTypeId = previewLt?.id || modal?.form?.lessonTypeId || null;
   const inBucket = (students || []).filter(s => s.isActive !== false && lessonTypeId && (s.lessonTypeIds || []).includes(lessonTypeId));
-  const candidates = inBucket.length ? inBucket : (students || []).filter(s => s.isActive !== false);
+  const candidates = (inBucket.length ? inBucket : (students || []).filter(s => s.isActive !== false))
+    .filter(s => {
+      if(!(trialStudentIds && trialStudentIds.has(s.id))) return true;
+      // Trial swimmer: only keep if their enrollment matches this lesson type.
+      return !!lessonTypeId && (s.lessonTypeIds || []).includes(lessonTypeId);
+    });
   const bucketFallback = lessonTypeId && !inBucket.length;
   function rowConflict(row, idx){
     if(!row.studentId) return null;
@@ -3397,7 +3444,10 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
           <label>Swimmers {previewMax > 0 ? `· ${previewMax} slots (max for this type)` : ''}</label>
           <div className="stu-list">
             {(modal.form.studentRows || []).map((r, i) => {
-              const isTrial = !!(r.studentId && trialStudentIds && trialStudentIds.has(r.studentId));
+              // Trial flag is per-lesson-type — only fires if this swimmer's
+              // enrolment includes the current session's lesson type.
+              const trialSetForLt = (trialByLessonType && currentLt?.id) ? trialByLessonType[currentLt.id] : null;
+              const isTrial = !!(r.studentId && trialSetForLt && trialSetForLt.has(r.studentId));
               const wk = modal.weekStartDate;
               const ltId = currentLt?.id;
               const isPending = !!(r.studentId && ltId && pendingByKey && pendingByKey[`${r.studentId}:${ltId}:${wk}`]);
@@ -3405,7 +3455,8 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
               return <div className="stu-row" key={i}>
                 <span className="stu-num">{i+1}</span>
                 <div className="stu-fields">
-                  <StudentSelect valueId={r.studentId} fallbackLabel={r.studentId ? null : (r.name ? `${r.name}${r.age ? ` (${r.age})` : ''}` : '')} studentById={studentById} candidates={candidates} onPick={(stu)=>pickStudent(i, stu)} conflict={rowConflict(r, i)} trialStudentIds={trialStudentIds} pendingByKey={pendingByKey} weekStartDate={wk} lessonTypeId={ltId} />
+                  <StudentSelect valueId={r.studentId} fallbackLabel={r.studentId ? null : (r.name ? `${r.name}${r.age ? ` (${r.age})` : ''}` : '')} studentById={studentById} candidates={candidates} onPick={(stu)=>pickStudent(i, stu)} conflict={rowConflict(r, i)} trialStudentIds={trialStudentIds}
+        trialByLessonType={trialByLessonType} pendingByKey={pendingByKey} weekStartDate={wk} lessonTypeId={ltId} />
                   {isTrial ? <span className="trial-pill" title="This swimmer is on a Trial package — one-off booking that won't carry over when duplicating weeks.">trial</span> : null}
                   {canMarkReplacement ? <button type="button" className="repl-mark-btn" title="Move this swimmer out for replacement — they will become a candidate in other same-type classes this week" onClick={async ()=>{
                     const ok = await markForReplacement({ studentId:r.studentId, sessionId:modal.id, weekStartDate:wk, lessonTypeId:ltId, lessonTypeName:currentLt.name, day:modal.day, startMinute:modal.startMinute });
@@ -3478,7 +3529,8 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
           const wk = modal.weekStartDate;
           const ltId = currentLt?.id;
           const isPending = !!(r.studentId && ltId && pendingByKey && pendingByKey[`${r.studentId}:${ltId}:${wk}`]);
-          const isTrialRow = !!(r.studentId && trialStudentIds && trialStudentIds.has(r.studentId));
+          const trialSetReplLt = (trialByLessonType && ltId) ? trialByLessonType[ltId] : null;
+          const isTrialRow = !!(r.studentId && trialSetReplLt && trialSetReplLt.has(r.studentId));
           const replCandidates = students.filter(s => !(modal.form.studentRows || []).some(sr => sr.studentId === s.id) && !(modal.form.replacementRows || []).some((rr,ri) => ri !== i && rr.studentId === s.id));
           return <div key={i} className="repl-row">
             <span className="repl-badge-sm">R</span>
@@ -3488,7 +3540,8 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
                 const pendingHit = stu && ltId && pendingByKey && pendingByKey[`${stu.id}:${ltId}:${wk}`];
                 rows[i]={ ...rows[i], studentId:stu?.id||null, name:stu?.name||'', age:stu?.age??null, replacementFrom: pendingHit ? pendingHit.original_session_label : (trialStudentIds && stu && trialStudentIds.has(stu.id) ? '(trial)' : rows[i].replacementFrom) };
                 setModal({...modal,form:{...modal.form,replacementRows:rows}});
-              }} conflict={null} trialStudentIds={trialStudentIds} pendingByKey={pendingByKey} weekStartDate={wk} lessonTypeId={ltId} />
+              }} conflict={null} trialStudentIds={trialStudentIds}
+        trialByLessonType={trialByLessonType} pendingByKey={pendingByKey} weekStartDate={wk} lessonTypeId={ltId} />
               {isPending ? <span className="qp-tag qp-tag-r" style={{position:'absolute',top:-8,right:6,zIndex:1}}>R-pending</span> : (isTrialRow ? <span className="qp-tag qp-tag-trial" style={{position:'absolute',top:-8,right:6,zIndex:1}}>trial</span> : null)}
             </div>
             <input className="input" style={{flex:1}} placeholder="From class (e.g. Mon 11AM)" value={r.replacementFrom||''} onChange={(e)=>{ const rows=[...(modal.form.replacementRows||[])]; rows[i]={...rows[i],replacementFrom:e.target.value}; setModal({...modal,form:{...modal.form,replacementRows:rows}}); }} />
