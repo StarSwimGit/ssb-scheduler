@@ -2849,6 +2849,18 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
   function resetForm(){ setName(''); setDob(''); setGender(null); setEnrollments([{ lessonTypeId: '', packageId: '' }]); setGuardianName(''); setGuardianEmail(''); setGuardianPhone(''); setSameAsGuardian(false); setEmergencyPhone(''); setEmergencyRel(''); setAdultSelf(false); }
 
   return <>
+    <div className="card intake-banner" style={{marginBottom:16}}>
+      <div className="intake-banner-inner">
+        <div className="intake-banner-icon" aria-hidden="true">🏊</div>
+        <div className="intake-banner-text">
+          <div className="intake-banner-title">Parent Intake Form</div>
+          <div className="intake-banner-sub">Open a clean registration page on this tablet for parents to fill in their own details. Submitted swimmers appear here automatically.</div>
+        </div>
+        <button type="button" className="btn btn-primary intake-banner-btn" onClick={()=>window.open('./intake.html', '_blank', 'noopener,noreferrer')} title="Opens the parent intake form in a new tab — hand the tablet over and tap 'Register Another Family' when done">
+          Open Form <span aria-hidden="true" style={{marginLeft:6}}>↗</span>
+        </button>
+      </div>
+    </div>
     <div className={`card register-card ${formExpanded ? 'is-open' : 'is-closed'}`} style={{marginBottom:16}}>
       <button type="button" className="register-header" onClick={()=>setFormExpanded(v=>!v)} aria-expanded={formExpanded}>
         <div className="register-header-left">
