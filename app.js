@@ -1288,17 +1288,24 @@ function App(){
   return <div>
     <div className="header"><div className="header-inner">
       <div className="brand"><div className="logo">🏊</div><div><div style={{fontSize:16,fontWeight:800,letterSpacing:'-.4px',lineHeight:1}}>SSB Scheduler</div><div style={{fontSize:10,color:'#64748B',marginTop:2}}>Pool-aware lesson calendar</div></div></div>
-      <div style={{display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
-        <div className="small subtle"><span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalStudents}</span> students · <span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalSessions}</span> sessions · <span style={{color:'var(--primary)',fontWeight:800}}>{selectedWeekLabel}</span></div>
+      <div className="header-meta">
+        <div className="header-summary"><span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalStudents}</span> students · <span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalSessions}</span> sessions · <span style={{color:'var(--primary)',fontWeight:800}}>{selectedWeekLabel}</span></div>
+        <div className="header-status"><span className={`status-dot ${loading?'is-loading':(error?'is-error':'is-ok')}`} aria-hidden="true" />{loading ? 'Connecting…' : (error ? 'Error' : (status || 'Ready'))}</div>
+      </div>
+      <div className="header-tabs">
         <div className="tabs">
-          {['day','week','month','students','enroll','summary','tc','settings'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='week'?'📅 Weekly':v==='day'?'📋 Daily':v==='month'?'🗓️ Monthly':v==='students'?'👥 Swimmers':v==='enroll'?'🎯 Enroll':v==='summary'?'📊 Summary':v==='tc'?'📄 T&C':'⚙️ Settings'}</button>)}
+          {['day','week','month','students','enroll'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='week'?'📅 Weekly':v==='day'?'📋 Daily':v==='month'?'🗓️ Monthly':v==='students'?'👥 Swimmers':'🎯 Enroll'}</button>)}
+          {/* Intake is special — it opens the parent-facing intake.html in a new tab/window rather than switching view in this app. Placed inside the left tabs group, immediately before the Summary/Settings group. */}
+          <button type="button" className="tab tab-link" onClick={() => window.open('./intake.html', '_blank', 'noopener,noreferrer')} title="Open the parent intake form in a new tab — hand the tablet over and tap 'Register Another Family' when done">📝 Intake <span aria-hidden="true" style={{marginLeft:3,opacity:.6,fontSize:11}}>↗</span></button>
+        </div>
+        <div className="tabs tabs-right">
+          {['summary','settings'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='summary'?'📊 Summary':'⚙️ Settings'}</button>)}
         </div>
       </div>
     </div></div>
 
     <div className="wrap">
       {loading ? <div className="card" style={{textAlign:'center',padding:'42px'}}><div style={{fontSize:34,marginBottom:10}}>⏳</div><div>Loading scheduler…</div><div className="small subtle" style={{marginTop:6}}>{status || 'Connecting to Supabase'}</div></div> : null}
-      {!loading && view!=='settings' && <div className="card" style={{marginBottom:16}}><div style={{fontWeight:800,marginBottom:4}}>Status</div><div className="small subtle">{status || 'Ready'}</div></div>}
       {!loading && error ? <div className="card error-card"><div style={{fontWeight:800,marginBottom:4}}>Error</div><div className="small">{error}</div></div> : null}
 
       {!loading && view==='week' && <WeekView
@@ -1421,7 +1428,7 @@ function App(){
         onCreate={openCreateFor}
       />}
       {!loading && view==='summary' && <SummaryView summary={summary} pools={activePools()} />}
-      {!loading && view==='tc' && <TCView students={students} lessonTypes={activeLessonTypes()} lessonTypeById={lessonTypeById} onSaveAcceptance={saveTcAcceptance} />}
+      {/* T&C view removed from the menu — parents now sign T&C inside intake.html. */}
 
       {!loading && view==='settings' && <SettingsView
         options={options}
