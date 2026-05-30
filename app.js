@@ -1,4 +1,3 @@
-
 // ============================================================================
 // SSB Scheduler app.js — Module 2 build
 // ============================================================================
@@ -449,6 +448,99 @@ function App(){
     } catch(_){}
   }
 
+  async function cancelPendingReplacement(pending, opts = { restore: true }){
+    if(!pending || !pending.id) return false;
+    const student = studentById[pending.student_id];
+    const swimmerName = student?.name || 'this swimmer';
+    const originalSession = sessions.find(s => s.id === pending.original_session_id);
+    const willRestore = !!opts.restore && pending.original_session_id && !!originalSession;
+    // If the spot has been filled while the swimmer was in limbo and the
+    // class is now at/over cap, ask before pushing them back in.
+    if(willRestore){
+      const lt = lessonTypeById(pending.lesson_type_id);
+      const cap = sessionCapacity(originalSession, lt);
+      if(cap.max > 0 && cap.current >= cap.max){
+        if(!confirm(`${pending.original_session_label} is now full (${cap.current}/${cap.max}). Add ${swimmerName} back anyway? The class will be over capacity.`)) return false;
+      }
+    }
+    const msg = willRestore
+      ? `Cancel pending replacement for ${swimmerName} and put them back in ${pending.original_session_label}?`
+      : `Remove ${swimmerName} from the pending-replacement bucket?\n\n(Their original class no longer exists, so they won't be auto-restored. You can re-add them manually if needed.)`;
+    if(!confirm(msg)) return false;
+    try{
+      if(willRestore){
+        await insertRows('weekly_session_students', [{
+          session_id: pending.original_session_id,
+          student_id: pending.student_id,
+          student_name: student?.name || swimmerName,
+          student_age: student?.age != null ? Number(student.age) : null,
+          is_replacement: false,
+          attendance_status: 'pending'
+        }]);
+      }
+      await deleteRows('replacement_pending', { id: pending.id });
+      await Promise.all([loadSessions(), loadReplacementPending()]);
+      setStatus(willRestore ? `Restored ${swimmerName} to ${pending.original_session_label}.` : `Cancelled pending replacement for ${swimmerName}.`);
+      return true;
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to cancel pending replacement'); return false; }
+  }
+
+  // ── Full Class Replacement module ────────────────────────────────────
+  // Two paths to cancel an entire scheduled class for the week:
+  //
+  //  (A) forwardClassToNextWeek — deletes the session for THIS week. No
+  //      attendance is marked, so no credits deduct. Swimmers attend the
+  //      same slot next week as normal. The scheduler is responsible for
+  //      ensuring next week's session exists (Duplicate Previous Week
+  //      handles that when needed).
+  //
+  //  (B) startFullClassMove — sets `pendingMove`, closes the modal, and
+  //      drops the WeekView into "pick a slot" mode. The next slot click
+  //      anywhere in the weekly grid calls placePendingMove(targetDay,
+  //      targetStartMinute), which UPDATEs the session row in place
+  //      (preserving its id, students, instructors, attendance, and credit
+  //      ties — only weekday + start_minute change). The rescheduled_from_*
+  //      columns mark it as moved so a future Duplicate Previous Week
+  //      restores the canonical slot.
+  const [pendingMove, setPendingMove] = useState(null);
+  async function forwardClassToNextWeek(sessionId, sourceLabel){
+    if(!sessionId) return;
+    if(!confirm(`Cancel ${sourceLabel} for this week and forward to next week?\n\nSwimmers' credits will NOT be consumed for this week. Make sure next week's session exists (use Duplicate Previous Week from there if it doesn't).`)) return;
+    try{
+      await deleteRows('weekly_session_students', { session_id: sessionId });
+      await deleteRows('session_instructors', { session_id: sessionId });
+      await deleteRows('weekly_sessions', { id: sessionId });
+      await loadSessions();
+      setModal(null);
+      setStatus(`Cancelled ${sourceLabel} for this week — credits preserved.`);
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to cancel class'); }
+  }
+  function startFullClassMove({ sessionId, sourceLabel, lessonTypeName, weekStartDate, originalDay, originalStartMinute, swimmerCount }){
+    if(!sessionId) return;
+    setPendingMove({ sessionId, sourceLabel, lessonTypeName, weekStartDate, originalDay, originalStartMinute, swimmerCount });
+    setModal(null);
+    setStatus(`Click an empty slot in the weekly grid to drop ${lessonTypeName} (${sourceLabel}).`);
+  }
+  function cancelPendingMove(){ setPendingMove(null); setStatus(''); }
+  async function placePendingMove(targetDay, targetStartMinute){
+    if(!pendingMove) return;
+    const targetLabel = `${DAYS_F[targetDay]} ${minuteToTime(targetStartMinute)}`;
+    if(!confirm(`Move ${pendingMove.lessonTypeName} (${pendingMove.swimmerCount} swimmer${pendingMove.swimmerCount===1?'':'s'}) from ${pendingMove.sourceLabel} to ${targetLabel}?`)) return;
+    try{
+      await patchRows('weekly_sessions', { id: pendingMove.sessionId }, {
+        weekday: targetDay + 1,
+        start_minute: targetStartMinute,
+        // Mark as moved so Duplicate Previous Week can restore the
+        // canonical slot in the next duplication.
+        rescheduled_from_day: pendingMove.originalDay + 1,
+        rescheduled_from_start_minute: pendingMove.originalStartMinute
+      });
+      await loadSessions();
+      setPendingMove(null);
+      setStatus(`Moved ${pendingMove.lessonTypeName} to ${targetLabel}.`);
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to move class'); }
+  }
+
   async function loadTcAcceptances(){
     try{
       const rows = await selectRows('tc_acceptances', '*');
@@ -778,10 +870,14 @@ function App(){
       if(sessionId && inst){
         await insertRows('session_instructors', [{ session_id: sessionId, instructor_id: inst.id }]);
       }
-      // Auto-seed credit balance for personal-class students with no existing balance
-      if(lt && lt.class_type === 'personal' && lt.id && sessionId){
+      // Auto-seed credit balance for any swimmer placed in this session who
+      // doesn't already have one. All lesson types are credit-based now —
+      // not just personals. Default is 4 credits/month (matches the
+      // 4-weeks-1-lesson-per-week cadence); a package with billing_count
+      // overrides that default.
+      if(lt && lt.id && sessionId){
         const pkg = (options.packages || []).find(p => p.lesson_type_id === lt.id && (p.name || '').toLowerCase() === 'normal' && p.is_active !== false);
-        const initCredits = pkg?.billing_count ? Number(pkg.billing_count) : 0;
+        const initCredits = pkg?.billing_count ? Number(pkg.billing_count) : 4;
         for(const r of rows){
           if(!r.studentId) continue;
           const key = creditKey(r.studentId, lt.id);
@@ -1019,6 +1115,18 @@ function App(){
       if(studentId && validEnrollments.length){
         try{ await insertRows('student_enrollments', validEnrollments.map(e => ({ student_id: studentId, lesson_type_id: e.lessonTypeId, package_id: e.packageId || null }))); }
         catch(err){ console.warn('Could not insert enrollments (table may not exist yet):', err?.message || err); }
+        // Credit-based for every lesson type now — seed 4 credits (or
+        // package.billing_count if set) per (student, lesson_type) the
+        // moment they sign up. Silent on duplicate-key races.
+        for(const e of validEnrollments){
+          const pkg = e.packageId ? (options.packages || []).find(p => p.id === e.packageId) : null;
+          const init = pkg?.billing_count ? Number(pkg.billing_count) : 4;
+          if(init > 0){
+            try{ await insertRows('student_credit_balances', [{ student_id: studentId, lesson_type_id: e.lessonTypeId, initial_balance: init, remaining_balance: init }]); }
+            catch(_){}
+          }
+        }
+        await loadCreditBalances();
       }
       await loadStudents();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to add swimmer'); }
@@ -1060,6 +1168,20 @@ function App(){
             await insertRows('student_enrollments', validEnrollments.map(e => ({ student_id: id, lesson_type_id: e.lessonTypeId, package_id: e.packageId || null })));
           }
         } catch(err){ console.warn('Could not sync enrollments (table may not exist yet):', err?.message || err); }
+        // Credit-based for every lesson type — make sure each enrollment
+        // has a balance. Skips lesson types where the swimmer already has
+        // one (avoids resetting an in-progress month back to 4).
+        for(const e of validEnrollments){
+          const key = creditKey(id, e.lessonTypeId);
+          if(creditByKey[key]) continue;
+          const pkg = e.packageId ? (options.packages || []).find(p => p.id === e.packageId) : null;
+          const init = pkg?.billing_count ? Number(pkg.billing_count) : 4;
+          if(init > 0){
+            try{ await insertRows('student_credit_balances', [{ student_id: id, lesson_type_id: e.lessonTypeId, initial_balance: init, remaining_balance: init }]); }
+            catch(_){}
+          }
+        }
+        await loadCreditBalances();
       }
       await loadStudents();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to update swimmer'); }
@@ -1345,6 +1467,13 @@ function App(){
         onToggleInstructor={toggleInstructor}
         onClearInstructors={clearInstructors}
         instructorFilterActive={selectedInstructors.size > 0}
+        weekPendingReplacements={replacementPending.filter(p => p.week_start_date === selectedWeekStart)}
+        lessonTypeById={lessonTypeById}
+        studentById={studentById}
+        onCancelPendingReplacement={cancelPendingReplacement}
+        pendingMove={pendingMove}
+        onPlacePendingMove={placePendingMove}
+        onCancelPendingMove={cancelPendingMove}
         onExportExcel={exportWeekExcel}
         trialStudentIds={trialStudentIds}
         creditByKey={creditByKey}
@@ -1468,6 +1597,8 @@ function App(){
       pendingByKey={pendingByKey}
       replacementPending={replacementPending}
       markForReplacement={markForReplacement}
+      forwardClassToNextWeek={forwardClassToNextWeek}
+      startFullClassMove={startFullClassMove}
     /> : null}
   </div>;
 }
@@ -1484,6 +1615,8 @@ function WeekView(props){
           onPrevWeek, onNextWeek, onThisWeek, onDuplicateWeek, onClearDay, onJumpToDay,
           isTypeEnabled, onToggleType, onToggleAllTypes, allTypesShown, onExportExcel,
           activeInstructors, isInstructorActive, onToggleInstructor, onClearInstructors, instructorFilterActive,
+          weekPendingReplacements, lessonTypeById, studentById, onCancelPendingReplacement,
+          pendingMove, onPlacePendingMove, onCancelPendingMove,
           trialStudentIds, creditByKey } = props;
 
   const [printMenu, setPrintMenu] = useState(false);
@@ -1523,7 +1656,13 @@ function WeekView(props){
         <div className="wa-time">{hourLabel(h)}</div>
         {DAYS_S.map((_,di) => {
           const cell = weekBlocks[di].packed.filter(b => b.startMinute >= h && b.startMinute < h + 60);
-          return <div key={di+'-'+h} className="wa-cell" onClick={() => onAdd(di, minuteToSlot(h), selectedPoolId || undefined)}>
+          return <div key={di+'-'+h} className={`wa-cell ${pendingMove?'wa-cell-targetable':''}`} onClick={() => {
+            if(pendingMove){
+              onPlacePendingMove && onPlacePendingMove(di, slotToMinute(minuteToSlot(h)));
+            } else {
+              onAdd(di, minuteToSlot(h), selectedPoolId || undefined);
+            }
+          }}>
             {cell.map(block => <AgendaCard key={block.id} block={block} colorsFor={colorsFor} lessonTypeByName={lessonTypeByName} poolById={poolById} showPoolBadge={showPoolBadge} onEdit={onEdit} trialStudentIds={trialStudentIds} creditByKey={creditByKey} />)}
           </div>;
         })}
@@ -1578,6 +1717,37 @@ function WeekView(props){
           </button>
         </div>
       </div>
+      {pendingMove && <div className="pending-move-banner">
+        <div className="pending-move-icon" aria-hidden="true">📅</div>
+        <div className="pending-move-text">
+          <div className="pending-move-title">Pick a slot to place {pendingMove.lessonTypeName}</div>
+          <div className="pending-move-sub">Moving from <strong>{pendingMove.sourceLabel}</strong> · {pendingMove.swimmerCount} swimmer{pendingMove.swimmerCount===1?'':'s'} — click any time-cell in the grid below.</div>
+        </div>
+        <button type="button" className="btn btn-ghost small" onClick={onCancelPendingMove}>Cancel move</button>
+      </div>}
+      {(weekPendingReplacements || []).length > 0 && <div className="pending-repl-card">
+        <div className="pending-repl-head">
+          <span className="pending-repl-badge" aria-hidden="true">R</span>
+          <div>
+            <div className="pending-repl-title">Pending Replacements · {weekPendingReplacements.length}</div>
+            <div className="pending-repl-sub">Swimmers in limbo for this week — credit untouched until they're placed in another class. Cancel below to put them back in their original class (or clear the limbo state).</div>
+          </div>
+        </div>
+        <div className="pending-repl-list">
+          {weekPendingReplacements.map(p => {
+            const stu = studentById ? studentById[p.student_id] : null;
+            const lt = lessonTypeById ? lessonTypeById(p.lesson_type_id) : null;
+            const stillExists = (props.weekBlocks || []).some(day => (day.packed || []).some(b => b.id === p.original_session_id));
+            return <div key={p.id} className="pending-repl-row">
+              <div className="pending-repl-info">
+                <span className="pending-repl-name">{stu ? `${stu.name}${stu.age != null ? ` (${stu.age})` : ''}` : '(unknown swimmer)'}</span>
+                <span className="pending-repl-meta">{lt ? lt.name : p.lesson_type_id} · from {p.original_session_label}{!stillExists ? ' · original class deleted' : ''}</span>
+              </div>
+              <button type="button" className="btn btn-ghost small" onClick={()=>onCancelPendingReplacement && onCancelPendingReplacement(p, { restore: true })} title={stillExists ? `Cancel — restore to ${p.original_session_label}` : 'Original class no longer exists — clearing the limbo state only'}>{stillExists ? 'Cancel & restore' : 'Cancel only'}</button>
+            </div>;
+          })}
+        </div>
+      </div>}
       {weekGrid}
     </div>
 
@@ -1626,7 +1796,7 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
       ? <div className="wa-card-students">{block.students.map((s,i) => {
           const isTrial = !!(s.studentId && trialStudentIds && trialStudentIds.has(s.studentId));
           const isRepl = s.isReplacement;
-          const bal = isPersonal && s.studentId && creditByKey ? creditByKey[`${s.studentId}:${block.lessonTypeId}`] : null;
+          const bal = s.studentId && creditByKey ? creditByKey[`${s.studentId}:${block.lessonTypeId}`] : null;
           return <span key={s.id || i} className={`wa-stu ${isRepl?'wa-stu-repl':''}`} title={studentLabel(s) + (isTrial?' (trial)':'') + (isRepl?` replacing from ${s.replacementFrom||'?'}`:'')}>{isRepl?<span className="repl-mark">R</span>:null}{shortName(s.name) + ageSuffix(s)}{isTrial ? <span className="trial-mark"> (trial)</span> : null}{bal ? <span className={`credit-mark ${bal.remaining_balance<=2?'credit-low':''}`}> · {bal.remaining_balance}cr</span> : null}{s.remark ? ` — ${s.remark}` : ''}</span>;
         })}</div>
       : <div className="wa-card-line wa-card-students-empty">—</div>}
@@ -3109,8 +3279,9 @@ ${TC_COMPANY} Administration`);
   </div>;
 }
 
-function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById, students, studentById, weekEnrollments, familyGroups, membersByGroup, trialStudentIds, creditByKey, adjustCredit, initCredit, pendingByKey, replacementPending, markForReplacement }){
+function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById, students, studentById, weekEnrollments, familyGroups, membersByGroup, trialStudentIds, creditByKey, adjustCredit, initCredit, pendingByKey, replacementPending, markForReplacement, forwardClassToNextWeek, startFullClassMove }){
   const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  const [cancelClassOpen, setCancelClassOpen] = useState(false);
   const [reschedDay, setReschedDay] = useState(0);
   const [reschedMinute, setReschedMinute] = useState(480);
   const [initCreditInput, setInitCreditInput] = useState({});
@@ -3262,7 +3433,15 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
             <span className="repl-section-title">Replacement Students</span>
             <span className="small subtle" style={{marginLeft:8}}>One-off this week — not carried forward on duplicate</span>
           </div>
-          <button className="btn btn-ghost small" onClick={()=>setModal({...modal,form:{...modal.form,replacementRows:[...(modal.form.replacementRows||[]),{studentId:null,name:'',age:null,replacementFrom:''}]}})}>+ Add replacement</button>
+          <button className="btn btn-ghost small" onClick={()=>{
+            const filled = (modal.form.studentRows||[]).filter(r=>r.studentId || (r.name||'').trim()).length;
+            const repl = (modal.form.replacementRows||[]).length;
+            const cap = sessionCapacity({ students: Array(filled + repl), instructors: currentLt ? [{}] : [] }, currentLt);
+            if(cap.max > 0 && (filled + repl) >= cap.max){
+              if(!confirm(`Class is full (${filled + repl}/${cap.max}). Add another replacement slot anyway? The class will be over capacity.`)) return;
+            }
+            setModal({...modal,form:{...modal.form,replacementRows:[...(modal.form.replacementRows||[]),{studentId:null,name:'',age:null,replacementFrom:'',attendance:'pending'}]}});
+          }}>+ Add replacement</button>
         </div>
         {(() => {
           // Pending-replacement candidates for THIS lesson type + week, surfaced
@@ -3278,7 +3457,14 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
           function addAsReplacement(studentId, fromLabel){
             const stu = studentById[studentId];
             if(!stu) return;
-            const rows = [...(modal.form.replacementRows||[]), { studentId, name:stu.name, age:stu.age, replacementFrom: fromLabel || '' }];
+            // Cap check before adding (matches the "+ Add replacement" guard).
+            const filled = (modal.form.studentRows||[]).filter(r=>r.studentId || (r.name||'').trim()).length;
+            const repl = (modal.form.replacementRows||[]).length;
+            const cap = sessionCapacity({ students: Array(filled + repl), instructors: currentLt ? [{}] : [] }, currentLt);
+            if(cap.max > 0 && (filled + repl) >= cap.max){
+              if(!confirm(`Class is full (${filled + repl}/${cap.max}). Add ${stu.name} as replacement anyway? The class will be over capacity.`)) return;
+            }
+            const rows = [...(modal.form.replacementRows||[]), { studentId, name:stu.name, age:stu.age, replacementFrom: fromLabel || '', attendance:'pending' }];
             setModal({ ...modal, form:{ ...modal.form, replacementRows: rows } });
           }
           return <div className="repl-quickpick">
@@ -3318,7 +3504,7 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
         })}
       </div>}
 
-      {/* ── PERSONAL: reschedule + credit balances ── */}
+      {/* ── PERSONAL: reschedule this week only ── */}
       {isPersonal && <div className="repl-section">
         {isRescheduled && <div className="reschedule-notice">
           <span className="reschedule-from-badge">⇄ Rescheduled this week — was originally {DAYS_F[modal.rescheduledFromDay]} at {minuteToTime(modal.rescheduledFromStartMinute)}</span>
@@ -3350,27 +3536,72 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
           }}>Apply reschedule</button>
           <div className="hint" style={{gridColumn:'1/-1',marginTop:0}}>The class returns to its original slot from next week onwards. Any duplicate of this week will restore the canonical schedule.</div>
         </div>}
+      </div>}
 
-        {/* Credit balances per student */}
-        {(modal.form.studentRows||[]).some(r=>r.studentId) && <div style={{marginTop:12}}>
-          <div className="repl-section-title" style={{marginBottom:6}}>Credit Balances</div>
-          {(modal.form.studentRows||[]).filter(r=>r.studentId).map((r,i)=>{
-            const bal = creditByKey && creditByKey[`${r.studentId}:${currentLt?.id}`];
-            return <div key={r.studentId||i} className="credit-row">
-              <span className="credit-row-name">{r.name || 'Student'}</span>
-              {bal
-                ? <div className="credit-controls">
-                    <span className={`credit-count ${bal.remaining_balance<=2?'credit-low':''}`}>{bal.remaining_balance} / {bal.initial_balance} credits</span>
-                    <button className="credit-btn" title="Deduct 1 credit (class attended)" onClick={()=>adjustCredit(r.studentId,currentLt.id,-1)}>−</button>
-                    <button className="credit-btn" title="Add 1 credit (credit returned)" onClick={()=>adjustCredit(r.studentId,currentLt.id,+1)}>+</button>
-                  </div>
-                : <div className="credit-init">
-                    <input className="input" style={{width:80,fontSize:12}} type="number" min="1" placeholder="Credits" value={initCreditInput[r.studentId]||''} onChange={(e)=>setInitCreditInput(prev=>({...prev,[r.studentId]:e.target.value}))} />
-                    <button className="btn btn-ghost small" onClick={()=>{ const n=initCreditInput[r.studentId]; if(n) initCredit(r.studentId,currentLt?.id,n); }}>Set initial</button>
-                  </div>
-              }
-            </div>;
-          })}
+      {/* ── ALL CLASS TYPES: Credit Balances ──────────────────────────────
+          Every lesson type is credit-based now. Each enrolled swimmer who
+          has been placed in the session shows their remaining balance for
+          this lesson type; if they don't yet have a balance row, the seed
+          UI lets you set the initial count (defaults to 4 = one lesson per
+          week × four weeks of the month). */}
+      {(modal.form.studentRows||[]).some(r=>r.studentId) && <div className="repl-section">
+        <div className="repl-section-title" style={{marginBottom:6}}>Credit Balances</div>
+        {(modal.form.studentRows||[]).filter(r=>r.studentId).map((r,i)=>{
+          const bal = creditByKey && creditByKey[`${r.studentId}:${currentLt?.id}`];
+          return <div key={r.studentId||i} className="credit-row">
+            <span className="credit-row-name">{r.name || 'Student'}</span>
+            {bal
+              ? <div className="credit-controls">
+                  <span className={`credit-count ${bal.remaining_balance<=2?'credit-low':''}`}>{bal.remaining_balance} / {bal.initial_balance} credits</span>
+                  <button className="credit-btn" title="Deduct 1 credit (class attended)" onClick={()=>adjustCredit(r.studentId,currentLt.id,-1)}>−</button>
+                  <button className="credit-btn" title="Add 1 credit (credit returned)" onClick={()=>adjustCredit(r.studentId,currentLt.id,+1)}>+</button>
+                </div>
+              : <div className="credit-init">
+                  <input className="input" style={{width:80,fontSize:12}} type="number" min="1" placeholder="Credits" value={initCreditInput[r.studentId]||4} onChange={(e)=>setInitCreditInput(prev=>({...prev,[r.studentId]:e.target.value}))} />
+                  <button className="btn btn-ghost small" onClick={()=>{ const n=initCreditInput[r.studentId]||4; if(n) initCredit(r.studentId,currentLt?.id,n); }}>Set initial</button>
+                </div>
+            }
+          </div>;
+        })}
+      </div>}
+
+      {/* ── Full Class Replacement (entire-class cancel) ────────────────
+          Visible only on existing sessions (modal.id), since cancelling a
+          new unsaved session isn't a meaningful action. Two routes — see
+          App.forwardClassToNextWeek / App.startFullClassMove for the
+          business logic. */}
+      {modal.id && <div className="cancel-class-panel">
+        <button type="button" className={`cancel-class-toggle ${cancelClassOpen?'is-open':''}`} onClick={()=>setCancelClassOpen(o=>!o)}>
+          <span>🚫 Cancel entire class for this week</span>
+          <span className="cancel-class-chev">{cancelClassOpen ? '▴' : '▾'}</span>
+        </button>
+        {cancelClassOpen && <div className="cancel-class-options">
+          <div className="cancel-class-hint">All swimmers in this session are affected. Their credits will not be consumed for this cancellation.</div>
+          <div className="cancel-class-buttons">
+            <button type="button" className="cancel-class-opt" onClick={()=>{
+              const label = `${currentLt?.name || modal.form.type} on ${DAYS_F[modal.day]} ${minuteToTime(modal.startMinute)}`;
+              forwardClassToNextWeek && forwardClassToNextWeek(modal.id, label);
+            }}>
+              <div className="cancel-class-opt-title">⏭ Forward to next week</div>
+              <div className="cancel-class-opt-sub">Cancel this week's session entirely. Swimmers attend the same slot next week as usual. Credits preserved.</div>
+            </button>
+            <button type="button" className="cancel-class-opt" onClick={()=>{
+              const label = `${DAYS_F[modal.day]} ${minuteToTime(modal.startMinute)}`;
+              const swimmerCount = (modal.form.studentRows||[]).filter(r=>r.studentId || (r.name||'').trim()).length + (modal.form.replacementRows||[]).filter(r=>r.studentId || (r.name||'').trim()).length;
+              startFullClassMove && startFullClassMove({
+                sessionId: modal.id,
+                sourceLabel: label,
+                lessonTypeName: currentLt?.name || modal.form.type,
+                weekStartDate: modal.weekStartDate,
+                originalDay: modal.day,
+                originalStartMinute: modal.startMinute,
+                swimmerCount
+              });
+            }}>
+              <div className="cancel-class-opt-title">📅 Reschedule to another slot</div>
+              <div className="cancel-class-opt-sub">Pick a day &amp; time on the weekly grid. Same swimmers, same instructor, same pool — just a different slot this week.</div>
+            </button>
+          </div>
         </div>}
       </div>}
 
