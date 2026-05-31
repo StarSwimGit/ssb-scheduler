@@ -655,13 +655,24 @@
       body[data-print-view="receipt"] #receipt-sheet *{visibility:visible}
       body[data-print-view="receipt"] #receipt-sheet{position:fixed;top:0;left:0;width:100%;padding:14mm 18mm;border:none;background:#fff;color:#000}
     }
-    /* Prominent adult-swimmer toggle at the top of the StudentEditor when
-       used in +New Account flow — primary affordance for "I'm registering
-       myself" vs "I'm a parent registering my child". */
-    .adult-self-toggle{padding:9px 12px;background:#ECFEFF;border:1px solid #67E8F9;border-radius:8px;margin-bottom:10px}
-    .adult-self-toggle .gb-check{display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-size:12px;color:#0E7490;margin:0;line-height:1.4}
-    .adult-self-toggle .gb-check input{margin-top:2px;flex-shrink:0}
-    .adult-self-toggle .gb-check span{flex:1}
+    /* Account sections in StudentEditor + ParentContactEditor — visually
+       distinct from swimmer-form-section to signal "this is account-level
+       data, separate from the swimmer details below". */
+    .account-section{padding:10px 12px;background:#F0F9FF;border:1px solid #BFDBFE;border-radius:8px;margin-bottom:10px}
+    .account-section-title{font-size:11px;text-transform:uppercase;letter-spacing:.6px;font-weight:800;color:#1E40AF;margin-bottom:8px}
+
+    /* T&C summary at account level — compact badges, one per swimmer */
+    .account-tc-summary{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:7px 11px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:10px;font-size:11px}
+    .account-tc-label{font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--text-3);font-size:10px}
+    .account-tc-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:3px 8px;border-radius:5px;border:1px solid transparent}
+    .account-tc-badge.tc-ok{background:var(--green-bg);border-color:var(--green-bd);color:var(--green-tx)}
+    .account-tc-badge.tc-pending{background:var(--amber-bg);border-color:var(--amber-bd);color:var(--amber-tx)}
+
+    /* Adult-self toggle — now a single inline checkbox row in the
+       swimmer-details zone (was a banner at the top). */
+    .adult-self-toggle{display:flex;align-items:flex-start;gap:8px;padding:9px 12px;background:#ECFEFF;border:1px solid #67E8F9;border-radius:8px;margin:2px 0 10px;cursor:pointer;font-size:12px;color:#0E7490;line-height:1.4}
+    .adult-self-toggle input{margin-top:2px;flex-shrink:0}
+    .adult-self-toggle span{flex:1}
 
     /* Archived parent visuals — dim the card, badge in header */
     .parent-card.is-archived{opacity:0.62;background:#FAFAFC}
