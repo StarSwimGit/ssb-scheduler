@@ -699,6 +699,16 @@
     .parent-swimmer-actions{display:flex;gap:4px;flex-shrink:0}
     .parent-swimmer-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:5px;flex-wrap:wrap}
 
+    /* Schedule cell — clickable link per lesson-type line. Visually a
+       text row with a subtle ↗ arrow on hover; links to the current
+       week (if the swimmer has a session there) or the earliest future
+       week with that LT scheduled. */
+    .swimmer-sched-link{display:block;width:100%;padding:2px 4px;margin-bottom:2px;background:transparent;border:1px solid transparent;border-radius:4px;text-align:left;font-size:11px;cursor:pointer;color:inherit;font-family:inherit;transition:.12s ease;position:relative}
+    .swimmer-sched-link:hover{background:#EFF6FF;border-color:#BFDBFE;color:#1E40AF}
+    .swimmer-sched-link:hover .subtle{color:#1E40AF}
+    .swimmer-sched-arrow{display:inline-block;margin-left:4px;font-size:10px;opacity:0;color:#3B82F6;transition:.12s ease;font-weight:800}
+    .swimmer-sched-link:hover .swimmer-sched-arrow{opacity:1}
+
     /* Per-LT credit chip in the read-only Swimmers directory */
     .swimmer-cred-chip{display:inline-block;font-size:10.5px;padding:1px 6px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:4px;line-height:1.4;white-space:nowrap}
     .swimmer-cred-chip strong{font-weight:800;color:var(--text)}
