@@ -404,7 +404,7 @@ function App(){
   async function loadGroups(){
     try{
       const rows = await selectRows('family_groups', '*', '&order=name.asc');
-      setFamilyGroups((rows || []).map(r => ({ id:r.id, name:r.name || '', packageId:r.package_id || null })));
+      setFamilyGroups((rows || []).map(r => ({ id:r.id, name:r.name || '', packageId:r.package_id || null, groupType: r.group_type || 'discount' })));
     } catch(e){ console.warn('Family groups not available yet (run the family groups migration):', e?.message || e); setFamilyGroups([]); }
   }
 
@@ -1132,7 +1132,7 @@ function App(){
         lesson_type: modal.form.type || '',
         lesson_type_id: lt ? lt.id : null,
         pool_id: modal.form.poolId || null,
-        family_group_id: modal.form.familyGroupId || null,
+        family_group_id: null,   // sessions are no longer bound to a group; quick-add is a one-time add action
         instructor: inst ? inst.name : '',
         // Reschedule tracking (personal classes): store original position so
         // duplicate week can restore it. Null = not rescheduled.
@@ -1511,6 +1511,7 @@ function App(){
       const body = {};
       if('name' in patch) body.name = patch.name;
       if('packageId' in patch) body.package_id = patch.packageId || null;
+      if('groupType' in patch) body.group_type = patch.groupType;
       await patchRows('family_groups', { id }, body);
       await loadGroups();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to update family group'); }
@@ -1913,11 +1914,13 @@ function App(){
       pools={activePools()}
       lessonTypeByName={lessonTypeByName}
       poolById={poolById}
+      packageById={packageById}
       students={students}
       studentById={studentById}
       weekEnrollments={weekEnrollments}
       familyGroups={familyGroups}
       membersByGroup={membersByGroup}
+      groupById={groupById}
       trialStudentIds={trialStudentIds}
         trialByLessonType={trialByLessonType}
       creditByKey={creditByKey}
@@ -3438,9 +3441,14 @@ function FamilyGroupsPanel({ groups, students, groupPackages, lessonTypes, packa
                 ? `${pkg.name}${pkg.pax!=null?` · needs ${pkg.pax} pax`:''}${pkg.amount!=null?` · RM${pkg.amount} bundle`:''}${pkg.fallback_per_pax!=null?` · RM${pkg.fallback_per_pax}/pax standard`:''}`
                 : `${pkg.name}${pkg.pax!=null?` · up to ${pkg.pax} pax`:''}${pkg.amount!=null?` · RM${pkg.amount}`:''}${(pkg.billing_mode==='credit'&&pkg.billing_count!=null)?` · ${pkg.billing_count} credits`:''}`) : 'No package linked'}</div>
             </div>
-            <div style={{display:'flex',gap:6,flexShrink:0}}>
+            <div style={{display:'flex',gap:6,flexShrink:0,flexWrap:'wrap',alignItems:'center'}}>
+              <button className={`btn small ${g.groupType==='bound'?'group-chip-bound':'btn-ghost'}`}
+                title={g.groupType==='bound' ? 'Bound group — members must attend together. Click to switch to Discount.' : 'Discount group — members share billing discount but can split up. Click to switch to Bound.'}
+                onClick={()=>updateGroup(g.id,{groupType:g.groupType==='bound'?'discount':'bound'})}>
+                {g.groupType==='bound' ? '🔗 Bound' : '👪 Discount'}
+              </button>
               <button className="btn btn-ghost small" onClick={()=>setEditId(editId===g.id?null:g.id)}>{editId===g.id?'Close':'Edit'}</button>
-              <button className="btn btn-danger small" onClick={()=>deleteGroup(g)}>Delete</button>
+              <button className="btn btn-danger small" onClick={()=>deleteGroup(g)}>Del</button>
             </div>
           </div>
 
@@ -3793,7 +3801,7 @@ ${TC_COMPANY} Administration`);
   </div>;
 }
 
-function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById, students, studentById, weekEnrollments, familyGroups, membersByGroup, trialStudentIds, trialByLessonType, creditByKey, purchasesByKey, addCreditPurchase, adjustCredit, initCredit, pendingByKey, replacementPending, markForReplacement, forwardClassToNextWeek, startFullClassMove }){
+function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById, packageById, students, studentById, weekEnrollments, familyGroups, membersByGroup, groupById, trialStudentIds, trialByLessonType, creditByKey, purchasesByKey, addCreditPurchase, adjustCredit, initCredit, pendingByKey, replacementPending, markForReplacement, forwardClassToNextWeek, startFullClassMove }){
   const [rescheduleOpen, setRescheduleOpen] = useState(false);
   const [cancelClassOpen, setCancelClassOpen] = useState(false);
   const [reschedDay, setReschedDay] = useState(0);
@@ -3848,14 +3856,72 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
 
   // Bind this session to a family group and drop ALL its members into the slots
   // at once (padded to the lesson-type ratio). groupId '' clears the binding.
-  function chooseGroup(groupId){
-    if(!groupId){ setForm({ familyGroupId: null }); return; }
-    const members = (membersByGroup && membersByGroup[groupId]) || [];
-    const cap = previewLt?.students_per_instructor ? Number(previewLt.students_per_instructor) : 0;
-    const rows = members.map(m => ({ studentId:m.id, name:m.name, age:(m.age === null || m.age === undefined ? '' : String(m.age)) }));
-    const target = Math.max(cap || 0, rows.length, 1);
-    while(rows.length < target) rows.push({ studentId:null, name:'', age:'' });
-    setForm({ familyGroupId: groupId, studentRows: rows });
+  // ── quickAddGroup: add all lesson-type-eligible members of a family
+  // group to the current session additively — does NOT replace or clear
+  // any existing students. For bound groups every member must go in
+  // together; the user is warned if the class would go over capacity.
+  // For discount groups the add is soft-warned only.
+  function quickAddGroup(group){
+    const ltId = currentLt?.id || modal?.form?.lessonTypeId;
+    const members = ((membersByGroup && membersByGroup[group.id]) || [])
+      .filter(m => !ltId || (m.lessonTypeIds || []).includes(ltId));
+    if(!members.length){
+      alert(`No members of "${group.name}" are enrolled in this lesson type.`);
+      return;
+    }
+    const currentRows = modal.form.studentRows || [];
+    const alreadyIn = new Set(currentRows.filter(r => r.studentId).map(r => r.studentId));
+    const toAdd = members.filter(m => !alreadyIn.has(m.id));
+    if(!toAdd.length){
+      alert(`All members of "${group.name}" are already in this session.`);
+      return;
+    }
+    const currentFilled = currentRows.filter(r => r.studentId || (r.name||'').trim()).length;
+    const cap = previewMax;
+    const isBound = group.groupType === 'bound';
+    if(cap > 0 && currentFilled + toAdd.length > cap){
+      const msg = isBound
+        ? `"${group.name}" is a bound group — all ${toAdd.length} member${toAdd.length===1?'':'s'} must be added together.\n\nThis would put the class over capacity (${currentFilled + toAdd.length}/${cap}). Add anyway?`
+        : `Adding ${toAdd.length} member${toAdd.length===1?'':'s'} from "${group.name}" would put the class over capacity (${currentFilled + toAdd.length}/${cap}). Add anyway?`;
+      if(!confirm(msg)) return;
+    }
+    // Fill empty slots first, then append new ones.
+    const newRows = [...currentRows];
+    const emptyIdx = [];
+    newRows.forEach((r, i) => { if(!r.studentId && !(r.name||'').trim()) emptyIdx.push(i); });
+    toAdd.forEach(m => {
+      const row = { studentId:m.id, name:m.name, age:m.age != null ? String(m.age) : '', attendance:'pending', remark:'' };
+      if(emptyIdx.length){ newRows[emptyIdx.shift()] = row; }
+      else { newRows.push(row); }
+    });
+    setModal({ ...modal, form: { ...modal.form, studentRows: newRows } });
+  }
+
+  // ── Bound-group removal guard: when the user clears a slot that holds
+  // a bound-group member, offer to remove all other members of the same
+  // group from the session too.
+  function removeRow(i){
+    const row = (modal.form.studentRows || [])[i];
+    if(row?.studentId && groupById){
+      const stu = studentById[row.studentId];
+      const grp = stu?.familyGroupId ? groupById[stu.familyGroupId] : null;
+      if(grp?.groupType === 'bound'){
+        const groupMemberIds = new Set(((membersByGroup && membersByGroup[grp.id]) || []).map(m => m.id));
+        const otherBoundInSession = (modal.form.studentRows || []).filter((r, ri) => ri !== i && r.studentId && groupMemberIds.has(r.studentId));
+        if(otherBoundInSession.length){
+          if(confirm(`"${stu.name}" is in the bound group "${grp.name}". Remove all ${otherBoundInSession.length + 1} bound group members from this session?`)){
+            const removeIds = new Set([row.studentId, ...otherBoundInSession.map(r => r.studentId)]);
+            const newRows = (modal.form.studentRows || []).map(r => removeIds.has(r.studentId) ? { studentId:null, name:'', age:'', attendance:'pending', remark:'' } : r);
+            setModal({ ...modal, form: { ...modal.form, studentRows: newRows } });
+            return;
+          }
+        }
+      }
+    }
+    // Default: just clear this one slot.
+    const newRows = [...(modal.form.studentRows || [])];
+    newRows[i] = { studentId:null, name:'', age:'', attendance:'pending', remark:'' };
+    setModal({ ...modal, form: { ...modal.form, studentRows: newRows } });
   }
 
   // Capacity preview: counts the slots that hold a swimmer, against the
@@ -3914,13 +3980,6 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
             : <span>👥 <strong>{previewStudents}</strong></span>}
         </div>
         <div className="field" style={{gridColumn:'1 / -1'}}>
-          <label>Group <span className="subtle" style={{textTransform:'none',letterSpacing:0,fontWeight:600}}>· optional</span></label>
-          <select className="select" value={modal.form.familyGroupId || ''} onChange={(e)=>chooseGroup(e.target.value)}>
-            <option value="">No group</option>
-            {(familyGroups || []).map(g => <option key={g.id} value={g.id}>{g.name}{(membersByGroup && membersByGroup[g.id]) ? ` · ${membersByGroup[g.id].length}` : ''}</option>)}
-          </select>
-        </div>
-        <div className="field" style={{gridColumn:'1 / -1'}}>
           <label>Swimmers</label>
           <div className="stu-list">
             {(modal.form.studentRows || []).map((r, i) => {
@@ -3932,26 +3991,66 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
               const ltId = currentLt?.id;
               const isPending = !!(r.studentId && ltId && pendingByKey && pendingByKey[`${r.studentId}:${ltId}:${wk}`]);
               const canMarkReplacement = !isPersonal && r.studentId && modal.id && currentLt && !isPending;
+              // ── Package label (req #6) ──────────────────────────────
+              // Show the swimmer's package for the current lesson type
+              // subtly beside their name. Looks up:
+              //   student.enrollments[ltId] → packageId → package.name
+              let pkgLabel = null;
+              if(r.studentId && packageById && currentLt?.id){
+                const stu = studentById[r.studentId];
+                const enrol = (stu?.enrollments || []).find(e => e.lessonTypeId === currentLt.id);
+                const pkg = enrol?.packageId ? packageById(enrol.packageId) : null;
+                if(pkg) pkgLabel = pkg.name;
+              }
               return <div className="stu-row" key={i}>
                 <span className="stu-num">{i+1}</span>
                 <div className="stu-fields">
                   <StudentSelect valueId={r.studentId} fallbackLabel={r.studentId ? null : (r.name ? `${r.name}${r.age ? ` (${r.age})` : ''}` : '')} studentById={studentById} candidates={candidates} onPick={(stu)=>pickStudent(i, stu)} conflict={rowConflict(r, i)} trialStudentIds={trialStudentIds}
         trialByLessonType={trialByLessonType} pendingByKey={pendingByKey} weekStartDate={wk} lessonTypeId={ltId} />
-                  {isTrial ? <span className="trial-pill" title="This swimmer is on a Trial package — one-off booking that won't carry over when duplicating weeks.">trial</span> : null}
-                  {canMarkReplacement ? <button type="button" className="repl-mark-btn" title="Move this swimmer out for replacement — they will become a candidate in other same-type classes this week" onClick={async ()=>{
+                  {pkgLabel ? <span className="stu-pkg-label" title={`Enrolled package for ${currentLt?.name}`}>{pkgLabel}</span> : null}
+                  {isTrial ? <span className="trial-pill" title="Trial package — one-off booking.">trial</span> : null}
+                  {canMarkReplacement ? <button type="button" className="repl-mark-btn" title="Move this swimmer out for replacement" onClick={async ()=>{
                     const ok = await markForReplacement({ studentId:r.studentId, sessionId:modal.id, weekStartDate:wk, lessonTypeId:ltId, lessonTypeName:currentLt.name, day:modal.day, startMinute:modal.startMinute });
-                    if(ok){ /* row is gone from DB after loadSessions; close modal so user sees fresh data */ setModal(null); }
+                    if(ok){ setModal(null); }
                   }}>→ R</button> : null}
                   {(r.studentId || (r.name || '').trim()) ? <div className="att-seg" role="group" aria-label="Attendance">
-                    <button type="button" className={`att-btn att-pending ${(r.attendance||'pending')==='pending'?'is-on':''}`} onClick={()=>setAttendance(i,'pending')} title="Not yet marked — credit untouched">⏳</button>
-                    <button type="button" className={`att-btn att-attended ${r.attendance==='attended'?'is-on':''}`} onClick={()=>setAttendance(i,'attended')} title="Attended — lesson delivered (−1 credit on save)">✓</button>
-                    <button type="button" className={`att-btn att-absent ${r.attendance==='absent'?'is-on':''}`} onClick={()=>setAttendance(i,'absent')} title="Absent — counts as a delivered lesson, no replacement entitled (−1 credit on save)">✗</button>
+                    <button type="button" className={`att-btn att-pending ${(r.attendance||'pending')==='pending'?'is-on':''}`} onClick={()=>setAttendance(i,'pending')} title="Not yet marked">⏳</button>
+                    <button type="button" className={`att-btn att-attended ${r.attendance==='attended'?'is-on':''}`} onClick={()=>setAttendance(i,'attended')} title="Attended — −1 credit on save">✓</button>
+                    <button type="button" className={`att-btn att-absent ${r.attendance==='absent'?'is-on':''}`} onClick={()=>setAttendance(i,'absent')} title="Absent — −1 credit on save">✗</button>
                   </div> : null}
-                  <input className="input stu-remark" placeholder="Remark (optional)" value={r.remark || ''} onChange={(e)=>setRemark(i, e.target.value)} />
+                  <input className="input stu-remark" placeholder="Remark" value={r.remark || ''} onChange={(e)=>setRemark(i, e.target.value)} />
+                  {(r.studentId || (r.name||'').trim()) ? <button type="button" className="stu-x" title="Clear this slot (bound-group members prompt a group-remove)" onClick={()=>removeRow(i)}>×</button> : null}
                 </div>
               </div>;
             })}
           </div>
+          {/* ── Quick Add Groups (req #4) ────────────────────────────
+              Show family-group chips below the swimmer list. Clicking
+              a chip additively adds that group's eligible members (those
+              enrolled in this lesson type) without replacing existing
+              students. Bound groups show with a 🔗 icon and enforce an
+              all-or-nothing add. */}
+          {(() => {
+            const ltId = currentLt?.id;
+            const eligibleGroups = (familyGroups || []).filter(g => {
+              const members = (membersByGroup && membersByGroup[g.id]) || [];
+              return members.some(m => !ltId || (m.lessonTypeIds || []).includes(ltId));
+            });
+            if(!eligibleGroups.length) return null;
+            return <div className="quick-add-groups">
+              <span className="quick-add-label">Quick add group:</span>
+              {eligibleGroups.map(g => {
+                const ltId = currentLt?.id;
+                const eligible = ((membersByGroup && membersByGroup[g.id]) || []).filter(m => !ltId || (m.lessonTypeIds||[]).includes(ltId));
+                const isBound = g.groupType === 'bound';
+                return <button key={g.id} type="button" className={`group-chip ${isBound?'group-chip-bound':''}`}
+                  onClick={() => quickAddGroup(g)}
+                  title={isBound ? `Bound group — all ${eligible.length} members must attend together` : `Discount group — click to add all ${eligible.length} members`}>
+                  {isBound ? '🔗' : '👪'} {g.name} · {eligible.length}
+                </button>;
+              })}
+            </div>;
+          })()}
         </div>
       </div>
 
