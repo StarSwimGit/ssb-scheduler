@@ -134,13 +134,10 @@ function IntakeForm(){
           guardian_name: gName.trim(),
           guardian_email: gEmail.trim(),
           guardian_phone: gPhone.trim(),
+          emergency_name: emergencyName,
           emergency_phone: emergencyPhone,
           emergency_relationship: emergencyRel,
           emergency_same_as_guardian: !!sameAsGuardian,
-          // emergency_name is not a column on `students` — the contact name lives
-          // alongside the swimmer's row via the relationship + phone. If the
-          // school wants it, the dedicated column can be added later; for now
-          // the relationship + phone are sufficient to call back.
           lesson_type_ids: []
         });
         const studentId = inserted?.[0]?.id;
