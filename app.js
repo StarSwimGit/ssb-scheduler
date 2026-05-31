@@ -257,6 +257,7 @@ function App(){
   const [familyGroups,setFamilyGroups] = useState([]);
   const [creditBalances,setCreditBalances] = useState([]);
   const [creditPurchases,setCreditPurchases] = useState([]);
+  const [subscriptions,setSubscriptions] = useState([]);
   const [replacementPending,setReplacementPending] = useState([]);
   const [tcAcceptances,setTcAcceptances] = useState([]);
   const [remarks,setRemarks] = useState({});
@@ -281,7 +282,7 @@ function App(){
     try{
       setLoading(true); setError('');
       await loadOptions();
-      await Promise.all([loadSessions(), loadStudents(), loadGroups(), loadCreditBalances(), loadCreditPurchases(), loadReplacementPending(), loadTcAcceptances(), loadRemarks(monthCursor)]);
+      await Promise.all([loadSessions(), loadStudents(), loadGroups(), loadCreditBalances(), loadCreditPurchases(), loadSubscriptions(), loadReplacementPending(), loadTcAcceptances(), loadRemarks(monthCursor)]);
       setStatus('Connected');
     } catch(err){ handleErr(err); }
     finally{ setLoading(false); }
@@ -482,6 +483,132 @@ function App(){
       }
       await Promise.all([loadCreditBalances(), loadCreditPurchases()]);
     } catch(err){ handleErr(err); alert(err.message || 'Failed to delete credit record'); }
+  }
+
+  // ── Subscriptions ────────────────────────────────────────────────────
+  // A subscription is one purchase event. For an individual swimmer it
+  // credits N credits to one balance. For a family group it credits N to
+  // each eligible member's balance (creating one credit_purchases row per
+  // member, all sharing the same subscription_id). Cancelling reverses by
+  // inserting negative-credit purchases — the ledger keeps the full audit
+  // trail and the running balance corrects itself.
+  async function loadSubscriptions(){
+    try{
+      const rows = await selectRows('subscriptions', '*', '&order=subscription_date.desc,created_at.desc');
+      setSubscriptions(rows || []);
+    } catch(e){ console.warn('Subscriptions not available (run subscriptions migration):', e?.message || e); setSubscriptions([]); }
+  }
+
+  // bumpBalance: idempotent helper that either creates or updates the
+  // student_credit_balances cache after a purchase is inserted.
+  async function bumpBalance(studentId, lessonTypeId, delta){
+    const key = creditKey(studentId, lessonTypeId);
+    const bal = creditByKey[key];
+    const d = Number(delta);
+    if(bal){
+      const newRemaining = Math.max(0, (Number(bal.remaining_balance) || 0) + d);
+      const newInitial = Math.max(0, (Number(bal.initial_balance) || 0) + Math.max(0, d));
+      await patchRows('student_credit_balances', { student_id: studentId, lesson_type_id: lessonTypeId }, {
+        remaining_balance: newRemaining, initial_balance: newInitial, updated_at: new Date().toISOString()
+      });
+    } else if(d > 0){
+      await insertRows('student_credit_balances', [{ student_id: studentId, lesson_type_id: lessonTypeId, initial_balance: d, remaining_balance: d }]);
+    }
+  }
+
+  // addSubscription({ subjectType, subjectId, lessonTypeId, creditsPerSwimmer, ... })
+  // For 'student': credits one swimmer. For 'family_group': credits every
+  // member enrolled in the given lesson type. Returns the subscription row.
+  async function addSubscription({ subjectType, subjectId, lessonTypeId, creditsPerSwimmer, source, notes, amountPaid, receiptNumber, subscriptionDate, packageId, quantity = 1 }){
+    try{
+      setError('');
+      const credits = Number(creditsPerSwimmer);
+      const qty = Math.max(1, Number(quantity) || 1);
+      if(!subjectId || !lessonTypeId || !credits) { alert('Subscription requires a subject, lesson type, and credits.'); return null; }
+      // Resolve affected swimmers based on subject type.
+      let affectedStudents = [];
+      if(subjectType === 'student'){
+        const stu = studentById[subjectId];
+        if(!stu) { alert('Swimmer not found.'); return null; }
+        affectedStudents = [stu];
+      } else if(subjectType === 'family_group'){
+        const members = (membersByGroup && membersByGroup[subjectId]) || [];
+        affectedStudents = members.filter(m => (m.lessonTypeIds || []).includes(lessonTypeId));
+        if(!affectedStudents.length){ alert('No members of this group are enrolled in the selected lesson type.'); return null; }
+      } else { alert('Unknown subscription subject type.'); return null; }
+      const totalCreditsPerSwimmer = credits * qty;
+      const date = subscriptionDate || toDateStr(new Date());
+      // Insert the parent subscription row.
+      const subRows = await insertRows('subscriptions', [{
+        subject_type: subjectType,
+        subject_id: subjectId,
+        lesson_type_id: lessonTypeId,
+        package_id: packageId || null,
+        credits_per_swimmer: totalCreditsPerSwimmer,
+        swimmer_count: affectedStudents.length,
+        subscription_date: date,
+        source: source || 'subscription',
+        notes: notes || null,
+        amount_paid: amountPaid != null ? Number(amountPaid) : null,
+        receipt_number: receiptNumber || null
+      }]);
+      const sub = subRows?.[0];
+      if(!sub){ alert('Failed to create subscription.'); return null; }
+      // Insert credit_purchases for each affected swimmer.
+      const purchasePayload = affectedStudents.map(s => ({
+        student_id: s.id, lesson_type_id: lessonTypeId,
+        purchase_date: date, credits_added: totalCreditsPerSwimmer,
+        source: source || 'subscription',
+        notes: notes || null,
+        subscription_id: sub.id
+      }));
+      await insertRows('credit_purchases', purchasePayload);
+      // Bump each balance.
+      for(const s of affectedStudents){
+        await bumpBalance(s.id, lessonTypeId, totalCreditsPerSwimmer);
+      }
+      await Promise.all([loadCreditBalances(), loadCreditPurchases(), loadSubscriptions()]);
+      setStatus(`Added subscription: +${totalCreditsPerSwimmer} credits to ${affectedStudents.length} swimmer${affectedStudents.length===1?'':'s'}.`);
+      return sub;
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to add subscription'); return null; }
+  }
+
+  // cancelSubscription(subscription): inserts negative-credit purchases
+  // matching each original purchase (linked by subscription_id), then
+  // marks the subscription as cancelled_at = now.
+  async function cancelSubscription(subscription, reason){
+    if(!subscription || !subscription.id) return;
+    if(subscription.cancelled_at){ alert('This subscription is already cancelled.'); return; }
+    if(!confirm(`Cancel subscription from ${subscription.subscription_date}?\n\nThis reverses the ${subscription.credits_per_swimmer} credits per swimmer for ${subscription.swimmer_count} swimmer${subscription.swimmer_count===1?'':'s'}. The original purchase records stay in the ledger; offsetting negative entries will be added.`)) return;
+    try{
+      // Fetch the original purchase rows for this subscription so we can
+      // reverse each one (handles the case where some swimmers' purchases
+      // were since edited or the row count differs from swimmer_count).
+      const originals = (creditPurchases || []).filter(p => p.subscription_id === subscription.id && Number(p.credits_added) > 0);
+      if(!originals.length){ alert('No original purchase records found for this subscription.'); return; }
+      const date = toDateStr(new Date());
+      const reversals = originals.map(orig => ({
+        student_id: orig.student_id,
+        lesson_type_id: orig.lesson_type_id,
+        purchase_date: date,
+        credits_added: -Number(orig.credits_added),
+        source: 'cancellation',
+        notes: `Cancellation of subscription from ${subscription.subscription_date}${reason ? ` — ${reason}` : ''}`,
+        subscription_id: subscription.id
+      }));
+      await insertRows('credit_purchases', reversals);
+      // Reverse each balance.
+      for(const r of reversals){
+        await bumpBalance(r.student_id, r.lesson_type_id, r.credits_added);
+      }
+      // Mark subscription cancelled.
+      await patchRows('subscriptions', { id: subscription.id }, {
+        cancelled_at: new Date().toISOString(),
+        cancelled_reason: reason || null
+      });
+      await Promise.all([loadCreditBalances(), loadCreditPurchases(), loadSubscriptions()]);
+      setStatus(`Cancelled subscription — ${reversals.length} reversal${reversals.length===1?'':'s'} recorded.`);
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to cancel subscription'); }
   }
 
   // Pending-replacement state — swimmers who were removed from their booked
@@ -1543,6 +1670,72 @@ function App(){
     } catch(err){ handleErr(err); alert(err.message || 'Failed to reorder'); }
   }
 
+  // duplicateSessionForward: clone ONE session into N future weeks at the
+  // same weekday + start_minute. Same lesson type, same pool, same
+  // instructor, same regular students (replacements excluded — they're
+  // week-scoped one-offs). Attendance resets to 'pending' on the clones.
+  // If a clone slot already has a matching session in a target week, that
+  // week is skipped silently (avoids creating parallel duplicates).
+  async function duplicateSessionForward(sessionId, weekCount){
+    const src = sessions.find(s => s.id === sessionId);
+    if(!src){ alert('Source session not found.'); return; }
+    if(src.cancelledAt){ alert('Cannot duplicate a cancelled session — restore it first.'); return; }
+    const n = Math.max(1, Math.min(52, Number(weekCount) || 1));
+    const enrolledRegular = (src.students || []).filter(s => !s.isReplacement);
+    if(!confirm(`Duplicate "${src.type}" on ${DAYS_F[src.day]} ${minuteToTime(src.startMinute)} to the next ${n} week${n===1?'':'s'}?\n\n${enrolledRegular.length} swimmer${enrolledRegular.length===1?'':'s'} will be cloned. Attendance resets to pending each week. Weeks that already have a matching session at the same slot will be skipped.`)) return;
+    let created = 0, skipped = 0;
+    try{
+      for(let w = 1; w <= n; w++){
+        const targetWeekStart = addDays(src.weekStartDate, 7 * w);
+        const exists = sessions.find(s =>
+          s.weekStartDate === targetWeekStart &&
+          s.day === src.day &&
+          s.startMinute === src.startMinute &&
+          s.lessonTypeId === src.lessonTypeId &&
+          (s.poolId || null) === (src.poolId || null) &&
+          !s.cancelledAt
+        );
+        if(exists){ skipped++; continue; }
+        const inserted = await insertRows('weekly_sessions', [{
+          week_start_date: targetWeekStart,
+          weekday: src.day + 1,
+          start_minute: src.startMinute,
+          duration_minutes: src.durationMinutes,
+          lesson_type: src.type,
+          lesson_type_id: src.lessonTypeId,
+          pool_id: src.poolId || null,
+          family_group_id: null,
+          instructor: src.legacyInstructor || null
+        }]);
+        const newId = inserted?.[0]?.id;
+        if(newId){
+          if(enrolledRegular.length){
+            await insertRows('weekly_session_students', enrolledRegular.map(s => ({
+              session_id: newId,
+              student_id: s.studentId || null,
+              student_name: s.name || '',
+              student_age: s.age != null ? Number(s.age) : null,
+              remark: s.remark || null,
+              is_replacement: false,
+              attendance_status: 'pending'
+            })));
+          }
+          if(src.instructors && src.instructors.length){
+            try{
+              await insertRows('session_instructors', src.instructors.map(i => ({
+                session_id: newId, instructor_id: i.id
+              })));
+            } catch(_){}
+          }
+          created++;
+        }
+      }
+      await loadSessions();
+      setModal(null);
+      setStatus(`Duplicated forward: ${created} week${created===1?'':'s'} created${skipped ? `, ${skipped} skipped (already had a session at that slot)` : ''}.`);
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to duplicate session forward'); }
+  }
+
   async function duplicatePreviousWeek(){
     try{
       if(!isFutureSelectedWeek){ alert('Week duplication is only available for a future week.'); return; }
@@ -1746,7 +1939,7 @@ function App(){
           <button type="button" className="tab tab-link" onClick={() => window.open('./intake.html', '_blank', 'noopener,noreferrer')} title="Open the parent intake form in a new tab — hand the tablet over and tap 'Register Another Family' when done">📝 Intake <span aria-hidden="true" style={{marginLeft:3,opacity:.6,fontSize:11}}>↗</span></button>
         </div>
         <div className="tabs tabs-right">
-          {['summary','settings'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='summary'?'📊 Summary':'⚙️ Settings'}</button>)}
+          {['summary','receipts','settings'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='summary'?'📊 Summary':v==='receipts'?'💰 Receipts':'⚙️ Settings'}</button>)}
         </div>
       </div>
     </div></div>
@@ -1847,11 +2040,16 @@ function App(){
           packages={activePackages()}
           packageById={packageById}
           groupById={groupById}
+          familyGroups={familyGroups}
+          membersByGroup={membersByGroup}
           scheduleByStudent={scheduleByStudent}
           creditByKey={creditByKey}
           purchasesByStudent={purchasesByStudent}
+          subscriptions={subscriptions}
           addCreditPurchase={addCreditPurchase}
           deleteCreditPurchase={deleteCreditPurchase}
+          addSubscription={addSubscription}
+          cancelSubscription={cancelSubscription}
           addStudent={addStudent}
           updateStudent={updateStudent}
           deleteStudent={deleteStudent}
@@ -1887,6 +2085,15 @@ function App(){
         onCreate={openCreateFor}
       />}
       {!loading && view==='summary' && <SummaryView summary={summary} pools={activePools()} />}
+      {!loading && view==='receipts' && <ReceiptsView
+        subscriptions={subscriptions}
+        students={students}
+        studentById={studentById}
+        familyGroups={familyGroups}
+        groupById={groupById}
+        lessonTypeById={lessonTypeById}
+        cancelSubscription={cancelSubscription}
+      />}
       {/* T&C view removed from the menu — parents now sign T&C inside intake.html. */}
 
       {!loading && view==='settings' && <SettingsView
@@ -1933,6 +2140,7 @@ function App(){
       markForReplacement={markForReplacement}
       forwardClassToNextWeek={forwardClassToNextWeek}
       startFullClassMove={startFullClassMove}
+      duplicateSessionForward={duplicateSessionForward}
     /> : null}
   </div>;
 }
@@ -3265,7 +3473,13 @@ function StudentEditor({ row, lessonTypes, packages, onSave }){
 // the denormalised cache that the schedule reads. Adding a purchase
 // bumps the balance; deleting one reverses it.
 // ============================================================================
-function CreditHistoryPanel({ swimmer, lessonTypes, lessonTypeById, purchases, creditByKey, addCreditPurchase, deleteCreditPurchase, onClose }){
+function CreditHistoryPanel({ swimmer, lessonTypes, lessonTypeById, purchases, subscriptions, creditByKey, groupById, membersByGroup, addCreditPurchase, deleteCreditPurchase, addSubscription, cancelSubscription, onClose }){
+  // Group context: who is this swimmer's family group, and is it bound?
+  // Bound-group members have credit operations locked to the group level
+  // (the Family Groups panel handles add/cancel for all members at once).
+  const group = swimmer.familyGroupId && groupById ? groupById[swimmer.familyGroupId] : null;
+  const isBoundMember = !!(group && group.groupType === 'bound');
+  const isUnboundGroupMember = !!(group && group.groupType !== 'bound');
   const swimmerLts = (swimmer.lessonTypeIds || []).map(id => lessonTypeById(id)).filter(Boolean);
   const defaultLtId = swimmerLts[0]?.id || lessonTypes[0]?.id || '';
   const [purchaseDate, setPurchaseDate] = useState(toDateStr(new Date()));
@@ -3362,12 +3576,31 @@ function CreditHistoryPanel({ swimmer, lessonTypes, lessonTypeById, purchases, c
       </div>
     </div>
 
+    {/* Group context banner */}
+    {group ? <div className={`credit-group-banner ${isBoundMember?'credit-group-banner-bound':''}`}>
+      {isBoundMember
+        ? <>🔗 <strong>{group.name}</strong> · bound group — all subscription changes happen at the group level. Individual purchase records are kept for the audit trail but no manual +/− adjustments are made here.</>
+        : <>👪 <strong>{group.name}</strong> · discount group — subscriptions can be added at the group level (adds to all members) and balances can diverge per-swimmer based on attendance.</>}
+    </div> : null}
+
     {/* Per-lesson-type ledgers */}
     {displayLts.length === 0 && <div className="credit-panel-empty">No lesson-type enrolments yet. Add one in Edit, then record a purchase here.</div>}
     {displayLts.map(lt => {
       const bal = creditByKey[`${swimmer.id}:${lt.id}`];
       const list = purchasesByLt[lt.id] || [];
       const totalPurchased = list.reduce((sum,p) => sum + Number(p.credits_added || 0), 0);
+      // Subscriptions affecting this swimmer for this LT — either as
+      // direct subject (student type) or as member of their family group
+      // (group type).
+      const subs = (subscriptions || []).filter(s =>
+        s.lesson_type_id === lt.id &&
+        ((s.subject_type === 'student' && s.subject_id === swimmer.id) ||
+         (s.subject_type === 'family_group' && swimmer.familyGroupId && s.subject_id === swimmer.familyGroupId))
+      ).slice().sort((a,b) => (b.subscription_date||'').localeCompare(a.subscription_date||''));
+      // Subscription-quick-add is shown for individuals and unbound group
+      // members (the latter triggers a group-wide subscription). Bound
+      // group members must use the Family Groups panel.
+      const canQuickSub = !isBoundMember && addSubscription;
       return <div key={lt.id} className="credit-lt-block">
         <div className="credit-lt-head">
           <span className="credit-lt-name" style={{background:lt.bg_color,color:lt.text_color,borderColor:lt.border_color}}>{lt.name}</span>
@@ -3380,17 +3613,48 @@ function CreditHistoryPanel({ swimmer, lessonTypes, lessonTypeById, purchases, c
             {list.length > 0 && <span className="credit-lt-aggregate"> · {totalPurchased > 0 ? '+' : ''}{totalPurchased} credits across {list.length} record{list.length===1?'':'s'}</span>}
           </span>
         </div>
+
+        {canQuickSub && <div className="credit-sub-quick">
+          <span className="credit-sub-quick-label">Quick subscription:</span>
+          {[1, 2, 3].map(qty => <button key={qty} className="btn btn-ghost small" title={`Add ${qty}× ${credits || 4}-credit subscription${isUnboundGroupMember ? ` to every member of ${group.name}` : ''}`}
+            onClick={()=>addSubscription({
+              subjectType: isUnboundGroupMember ? 'family_group' : 'student',
+              subjectId: isUnboundGroupMember ? swimmer.familyGroupId : swimmer.id,
+              lessonTypeId: lt.id,
+              creditsPerSwimmer: 4,
+              quantity: qty,
+              source: 'subscription',
+              notes: `Quick add (${qty}× 4-credit subscription)`
+            })}>
+            +{qty * 4}
+          </button>)}
+          {isUnboundGroupMember && <span className="subtle small" style={{fontSize:10}}>· applies to whole group</span>}
+        </div>}
+
+        {subs.length > 0 && <div className="credit-sub-list">
+          <div className="credit-sub-list-title">Subscription log</div>
+          {subs.map(s => <div key={s.id} className={`credit-sub-row ${s.cancelled_at?'is-cancelled':''}`}>
+            <span className="credit-sub-date">{fmtDate(s.subscription_date)}</span>
+            <span className="credit-sub-amount">+{s.credits_per_swimmer} × {s.swimmer_count}</span>
+            <span className="credit-sub-subject">{s.subject_type === 'family_group' ? `👪 ${group?.name || 'group'}` : '👤 individual'}</span>
+            <span className="credit-sub-meta subtle">{s.source}{s.amount_paid != null ? ` · RM${s.amount_paid}` : ''}{s.receipt_number ? ` · ${s.receipt_number}` : ''}</span>
+            {s.cancelled_at
+              ? <span className="credit-sub-cancelled-tag">Cancelled</span>
+              : cancelSubscription ? <button className="btn btn-ghost small" title="Cancel this subscription (reverses credits, keeps the record)" onClick={()=>cancelSubscription(s)}>Cancel</button> : null}
+          </div>)}
+        </div>}
+
         {list.length === 0
           ? <div className="credit-empty">No purchases recorded for this lesson type.</div>
           : <table className="credit-ledger">
               <thead><tr><th style={{width:120}}>Date</th><th style={{width:90}}>Credits</th><th style={{width:130}}>Source</th><th>Notes</th><th style={{width:36}}></th></tr></thead>
               <tbody>
-                {list.map(p => <tr key={p.id}>
+                {list.map(p => <tr key={p.id} className={p.subscription_id?'is-from-sub':''}>
                   <td style={{fontWeight:600}}>{fmtDate(p.purchase_date)}</td>
                   <td><span className={`credit-delta ${Number(p.credits_added) < 0 ? 'credit-delta-neg' : 'credit-delta-pos'}`}>{Number(p.credits_added) > 0 ? '+' : ''}{p.credits_added}</span></td>
                   <td>{sourceLabel(p.source)}</td>
                   <td className="subtle">{p.notes || '—'}</td>
-                  <td><button className="btn btn-danger small" title="Delete this purchase record" onClick={()=>deleteCreditPurchase(p)}>×</button></td>
+                  <td>{!isBoundMember && <button className="btn btn-danger small" title="Delete this purchase record" onClick={()=>deleteCreditPurchase(p)}>×</button>}</td>
                 </tr>)}
               </tbody>
             </table>
@@ -3399,6 +3663,138 @@ function CreditHistoryPanel({ swimmer, lessonTypes, lessonTypeById, purchases, c
     })}
   </div>;
 }
+
+// ============================================================================
+// ReceiptsView — consolidated subscription / receipt log. Lists every
+// subscription in date order with filters by status (active / cancelled /
+// all), with a one-click cancel and a printable receipt per row.
+// ============================================================================
+function ReceiptsView({ subscriptions, students, studentById, familyGroups, groupById, lessonTypeById, cancelSubscription }){
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [searchQ, setSearchQ] = useState('');
+  const [printSub, setPrintSub] = useState(null);
+  const list = (subscriptions || [])
+    .filter(s => statusFilter === 'all' ? true : statusFilter === 'active' ? !s.cancelled_at : !!s.cancelled_at)
+    .filter(s => {
+      if(!searchQ.trim()) return true;
+      const q = searchQ.toLowerCase();
+      const subjectName = s.subject_type === 'student' ? (studentById[s.subject_id]?.name || '') : (groupById?.[s.subject_id]?.name || '');
+      const lt = lessonTypeById ? lessonTypeById(s.lesson_type_id)?.name || '' : '';
+      return (subjectName + ' ' + lt + ' ' + (s.receipt_number || '') + ' ' + (s.notes || '')).toLowerCase().includes(q);
+    });
+  // Aggregate totals (active only)
+  const activeOnly = (subscriptions || []).filter(s => !s.cancelled_at);
+  const totalRevenue = activeOnly.reduce((sum, s) => sum + (Number(s.amount_paid) || 0), 0);
+  const totalCreditsIssued = activeOnly.reduce((sum, s) => sum + (Number(s.credits_per_swimmer) * Number(s.swimmer_count) || 0), 0);
+  function fmtDate(d){ if(!d) return ''; try{ return new Date(d).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}); } catch(_){ return d; } }
+  function subjectName(s){
+    return s.subject_type === 'student' ? (studentById[s.subject_id]?.name || '— deleted swimmer —') : (groupById?.[s.subject_id]?.name || '— deleted group —');
+  }
+  function ltName(s){ return lessonTypeById ? lessonTypeById(s.lesson_type_id)?.name || '—' : '—'; }
+
+  return <>
+    <div className="card" style={{marginBottom:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap',marginBottom:10}}>
+        <div>
+          <div style={{fontSize:18,fontWeight:800}}>💰 Receipts &amp; Subscriptions</div>
+          <div className="small subtle" style={{marginTop:3}}>Every subscription added or cancelled, in chronological order. Click a row to print a receipt.</div>
+        </div>
+        <div style={{display:'flex',gap:14,alignItems:'flex-end',flexWrap:'wrap'}}>
+          <div><div className="small subtle">Active revenue</div><div style={{fontSize:22,fontWeight:800,color:'var(--green-tx)'}}>RM{totalRevenue.toFixed(2)}</div></div>
+          <div><div className="small subtle">Credits issued (active)</div><div style={{fontSize:22,fontWeight:800,color:'var(--teal)'}}>{totalCreditsIssued}</div></div>
+        </div>
+      </div>
+      <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+        <div className="tabs" style={{gap:2,padding:2}}>
+          {['all','active','cancelled'].map(v => <button key={v} className={`tab ${statusFilter===v?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setStatusFilter(v)}>{v==='all'?'All':v==='active'?'Active':'Cancelled'}</button>)}
+        </div>
+        <input className="input" style={{flex:1,minWidth:200,maxWidth:360}} placeholder="Search by swimmer, group, lesson type, receipt #, notes…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
+        <span className="small subtle">{list.length} of {(subscriptions||[]).length}</span>
+      </div>
+    </div>
+    <div className="card" style={{padding:0,overflow:'hidden'}}>
+      <div className="table-wrap" style={{border:'none',borderRadius:0,maxHeight:'70vh'}}>
+        <table>
+          <thead><tr>
+            <th style={{width:90}}>Date</th>
+            <th>Subject</th>
+            <th style={{width:130}}>Lesson Type</th>
+            <th style={{width:90}}>Credits</th>
+            <th style={{width:100}}>Source</th>
+            <th style={{width:100}}>Amount</th>
+            <th style={{width:110}}>Receipt #</th>
+            <th style={{width:90}}>Status</th>
+            <th style={{width:160,textAlign:'right'}}></th>
+          </tr></thead>
+          <tbody>
+            {list.length === 0 && <tr><td colSpan={9} className="empty">No subscriptions match.</td></tr>}
+            {list.map(s => <tr key={s.id} style={s.cancelled_at?{opacity:0.65}:undefined}>
+              <td style={{whiteSpace:'nowrap',fontWeight:600}}>{fmtDate(s.subscription_date)}</td>
+              <td>
+                <div style={{fontWeight:700}}>{s.subject_type === 'family_group' ? '👪 ' : '👤 '}{subjectName(s)}</div>
+                {s.notes ? <div className="subtle" style={{fontSize:11}}>{s.notes}</div> : null}
+              </td>
+              <td>{ltName(s)}</td>
+              <td><span style={{color:'var(--teal)',fontWeight:700}}>+{s.credits_per_swimmer}</span> × {s.swimmer_count}</td>
+              <td className="subtle">{s.source || '—'}</td>
+              <td>{s.amount_paid != null ? `RM${Number(s.amount_paid).toFixed(2)}` : <span className="subtle">—</span>}</td>
+              <td>{s.receipt_number || <span className="subtle">—</span>}</td>
+              <td>{s.cancelled_at ? <span className="pill" style={{background:'var(--red-bg)',color:'var(--red-tx)',borderColor:'var(--red-bd)'}}>Cancelled</span> : <span className="pill" style={{background:'var(--green-bg)',color:'var(--green-tx)',borderColor:'var(--green-bd)'}}>Active</span>}</td>
+              <td style={{textAlign:'right',whiteSpace:'nowrap'}}>
+                <button className="btn btn-ghost small" onClick={()=>setPrintSub(s)}>🖨 Receipt</button>
+                {!s.cancelled_at && cancelSubscription ? <button className="btn btn-danger small" style={{marginLeft:4}} onClick={()=>cancelSubscription(s)}>Cancel</button> : null}
+              </td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {printSub ? <ReceiptModal subscription={printSub} subjectName={subjectName(printSub)} ltName={ltName(printSub)} onClose={()=>setPrintSub(null)} /> : null}
+  </>;
+}
+
+// Receipt printable popover — simple, prints to A6/A5 cleanly.
+function ReceiptModal({ subscription, subjectName, ltName, onClose }){
+  function doPrint(){
+    document.body.setAttribute('data-print-view', 'receipt');
+    window.print();
+    setTimeout(()=>document.body.removeAttribute('data-print-view'), 300);
+  }
+  const totalCredits = Number(subscription.credits_per_swimmer) * Number(subscription.swimmer_count);
+  return <div className="modal-backdrop"><div className="modal-card" style={{maxWidth:520}}>
+    <div className="modal-head">
+      <div style={{fontSize:14,fontWeight:800}}>Receipt Preview</div>
+      <button className="btn btn-ghost small" onClick={onClose}>✕</button>
+    </div>
+    <div className="modal-body">
+      <div className="receipt-sheet" id="receipt-sheet">
+        <div className="receipt-head">
+          <div className="receipt-brand">SSB · Star Swim Sdn Bhd</div>
+          <div className="receipt-meta">Receipt</div>
+        </div>
+        <table className="receipt-table">
+          <tbody>
+            <tr><th>Date</th><td>{subscription.subscription_date}</td></tr>
+            <tr><th>Receipt #</th><td>{subscription.receipt_number || '—'}</td></tr>
+            <tr><th>For</th><td>{subjectName}</td></tr>
+            <tr><th>Lesson Type</th><td>{ltName}</td></tr>
+            <tr><th>Credits</th><td>+{subscription.credits_per_swimmer} × {subscription.swimmer_count} swimmer{subscription.swimmer_count===1?'':'s'} = <strong>{totalCredits}</strong> credits</td></tr>
+            <tr><th>Source</th><td>{subscription.source || '—'}</td></tr>
+            {subscription.notes ? <tr><th>Notes</th><td>{subscription.notes}</td></tr> : null}
+            <tr><th>Amount</th><td><strong>{subscription.amount_paid != null ? `RM ${Number(subscription.amount_paid).toFixed(2)}` : '—'}</strong></td></tr>
+            {subscription.cancelled_at ? <tr><th>Status</th><td style={{color:'var(--red-tx)'}}>CANCELLED on {String(subscription.cancelled_at).slice(0,10)}</td></tr> : null}
+          </tbody>
+        </table>
+        <div className="receipt-foot">Thank you.</div>
+      </div>
+    </div>
+    <div className="modal-foot">
+      <button className="btn btn-ghost small" onClick={onClose}>Close</button>
+      <button className="btn btn-primary" onClick={doPrint}>🖨 Print</button>
+    </div>
+  </div></div>;
+}
+
 
 function FamilyGroupsPanel({ groups, students, groupPackages, lessonTypes, packageById, membersByGroup, scheduleByStudent, addGroup, updateGroup, deleteGroup, setStudentGroup }){
   const [name, setName] = useState('');
@@ -3481,7 +3877,7 @@ function FamilyGroupsPanel({ groups, students, groupPackages, lessonTypes, packa
   </div>;
 }
 
-function StudentsView({ students, lessonTypes, lessonTypeById, packages, packageById, groupById, scheduleByStudent, creditByKey, purchasesByStudent, addCreditPurchase, deleteCreditPurchase, addStudent, updateStudent, deleteStudent }){
+function StudentsView({ students, lessonTypes, lessonTypeById, packages, packageById, groupById, familyGroups, membersByGroup, scheduleByStudent, creditByKey, purchasesByStudent, subscriptions, addCreditPurchase, deleteCreditPurchase, addSubscription, cancelSubscription, addStudent, updateStudent, deleteStudent }){
   const [name, setName] = useState('');
   const [dob, setDob] = useState('');
   const [gender, setGender] = useState(null);
@@ -3654,7 +4050,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
               <td style={{whiteSpace:'nowrap'}}><div style={{display:'flex',gap:4,justifyContent:'flex-end',flexWrap:'nowrap'}}><button className="btn btn-ghost small" onClick={()=>setCreditId(creditId===s.id?null:s.id)} title="View / manage credit purchases">💳</button><button className="btn btn-ghost small" onClick={()=>setEditId(editId===s.id?null:s.id)}>{editId===s.id?'Close':'Edit'}</button><button className="btn btn-danger small" onClick={()=>deleteStudent(s)}>Del</button></div></td>
             </tr>
             {editId===s.id?<tr><td colSpan={COLS} style={{padding:0}}><StudentEditor row={s} lessonTypes={lessonTypes} packages={packages} onSave={(patch)=>{updateStudent(s.id,patch);setEditId(null);}}/></td></tr>:null}
-            {creditId===s.id?<tr><td colSpan={COLS} style={{padding:0}}><CreditHistoryPanel swimmer={s} lessonTypes={lessonTypes} lessonTypeById={lessonTypeById} purchases={(purchasesByStudent||{})[s.id]||[]} creditByKey={creditByKey} addCreditPurchase={addCreditPurchase} deleteCreditPurchase={deleteCreditPurchase} onClose={()=>setCreditId(null)} /></td></tr>:null}
+            {creditId===s.id?<tr><td colSpan={COLS} style={{padding:0}}><CreditHistoryPanel swimmer={s} lessonTypes={lessonTypes} lessonTypeById={lessonTypeById} purchases={(purchasesByStudent||{})[s.id]||[]} subscriptions={subscriptions||[]} creditByKey={creditByKey} groupById={groupById} membersByGroup={membersByGroup} addCreditPurchase={addCreditPurchase} deleteCreditPurchase={deleteCreditPurchase} addSubscription={addSubscription} cancelSubscription={cancelSubscription} onClose={()=>setCreditId(null)} /></td></tr>:null}
           </React.Fragment>;
         }):<tr><td colSpan={COLS} className="empty">No swimmers registered yet.</td></tr>}
         </tbody></table>
@@ -3801,9 +4197,10 @@ ${TC_COMPANY} Administration`);
   </div>;
 }
 
-function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById, packageById, students, studentById, weekEnrollments, familyGroups, membersByGroup, groupById, trialStudentIds, trialByLessonType, creditByKey, purchasesByKey, addCreditPurchase, adjustCredit, initCredit, pendingByKey, replacementPending, markForReplacement, forwardClassToNextWeek, startFullClassMove }){
+function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, openAddAtTime, instructors, lessonTypes, pools, lessonTypeByName, poolById, packageById, students, studentById, weekEnrollments, familyGroups, membersByGroup, groupById, trialStudentIds, trialByLessonType, creditByKey, purchasesByKey, addCreditPurchase, adjustCredit, initCredit, pendingByKey, replacementPending, markForReplacement, forwardClassToNextWeek, startFullClassMove, duplicateSessionForward }){
   const [rescheduleOpen, setRescheduleOpen] = useState(false);
   const [cancelClassOpen, setCancelClassOpen] = useState(false);
+  const [dupOpen, setDupOpen] = useState(false);
   const [reschedDay, setReschedDay] = useState(0);
   const [reschedMinute, setReschedMinute] = useState(480);
   const [initCreditInput, setInitCreditInput] = useState({});
@@ -4254,6 +4651,31 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
               <div className="cancel-class-opt-title">📅 Reschedule to another slot</div>
               <div className="cancel-class-opt-sub">Pick a day &amp; time on the weekly grid. Same swimmers, same instructor, same pool — just a different slot this week.</div>
             </button>
+          </div>
+        </div>}
+      </div>}
+
+      {/* ── Duplicate Forward — clone this session into N future weeks ──
+          at the same slot. The session-wide complement to the existing
+          week-wide "Duplicate Previous Week". Same swimmers, instructor,
+          pool. Attendance resets per clone. Skips weeks that already
+          have a matching session at the same slot. */}
+      {modal.id && duplicateSessionForward && <div className="cancel-class-panel">
+        <button type="button" className={`cancel-class-toggle ${dupOpen?'is-open':''}`} onClick={()=>setDupOpen(o=>!o)} style={{background:'#EFF6FF',borderColor:'#BFDBFE',color:'#1E40AF'}}>
+          <span>⏩ Duplicate this session to future weeks</span>
+          <span className="cancel-class-chev" style={{color:'#1E40AF'}}>{dupOpen ? '▴' : '▾'}</span>
+        </button>
+        {dupOpen && <div className="cancel-class-options" style={{background:'#EFF6FF',borderColor:'#BFDBFE'}}>
+          <div className="cancel-class-hint" style={{color:'#1E40AF'}}>Clones this session into the next N weeks at the same day &amp; time, with the same swimmers, instructor, and pool. Existing matching sessions at those slots will be skipped.</div>
+          <div className="dup-buttons">
+            {[1, 2, 3, 4, 8, 12].map(n => <button key={n} type="button" className="dup-btn" onClick={()=>duplicateSessionForward(modal.id, n)}>
+              {n === 1 ? 'Next week' : `Next ${n} weeks`}
+            </button>)}
+            <button type="button" className="dup-btn" onClick={()=>{
+              const v = prompt('How many weeks ahead to duplicate? (1–52)', '4');
+              const n = Math.max(1, Math.min(52, parseInt(v, 10) || 0));
+              if(n > 0) duplicateSessionForward(modal.id, n);
+            }}>Custom…</button>
           </div>
         </div>}
       </div>}
