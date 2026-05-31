@@ -3849,6 +3849,24 @@ function CreditHistoryPanel({ swimmer, lessonTypes, lessonTypeById, purchases, s
 // all), with a one-click cancel and a printable receipt per row.
 // ============================================================================
 // ============================================================================
+// Swimmer accent palette — six tasteful pastel-derived colours that cycle
+// per swimmer-index inside an account. Lets the user visually scan "this
+// is Lee Wei's row vs Lee Mei's row" without reading the name. Each
+// entry pairs a saturated accent (used for the left-bar + name colour)
+// with a darker text tone for the swimmer name. Hand-picked to fit the
+// app's existing lesson-type palette DNA.
+// ============================================================================
+const SWIMMER_ACCENTS = [
+  { accent:'#06B6D4', text:'#0E7490' },   // cyan
+  { accent:'#8B5CF6', text:'#5B21B6' },   // violet
+  { accent:'#F43F5E', text:'#9F1239' },   // rose
+  { accent:'#F59E0B', text:'#92400E' },   // amber
+  { accent:'#10B981', text:'#065F46' },   // emerald
+  { accent:'#3B82F6', text:'#1E40AF' }    // blue
+];
+function swimmerAccent(idx){ return SWIMMER_ACCENTS[idx % SWIMMER_ACCENTS.length]; }
+
+// ============================================================================
 // ParentsView — the de facto administration page. Every operation that
 // concerns a parent or their child(ren) happens here:
 //   • Create a new parent (which seeds them with their first swimmer)
@@ -4088,14 +4106,15 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
           />}
 
           {/* Swimmers */}
-          {pg.swimmers.map(sw => {
+          {pg.swimmers.map((sw, swi) => {
             const grp = sw.familyGroupId && groupById ? groupById[sw.familyGroupId] : null;
             const isBound = !!(grp && grp.groupType === 'bound');
             const isEditingSwimmer = editingSwimmerId === sw.id;
-            return <div key={sw.id} className="parent-swimmer-row">
+            const acc = swimmerAccent(swi);
+            return <div key={sw.id} className="parent-swimmer-section" style={{borderLeftColor:acc.accent}}>
               <div className="parent-swimmer-head">
                 <div className="parent-swimmer-name">
-                  👤 <strong>{sw.name}</strong>
+                  <span style={{color:acc.accent,fontSize:14}}>●</span> <strong style={{color:acc.text}}>{sw.name}</strong>
                   {sw.age != null ? <span className="subtle"> · {sw.age}y</span> : null}
                   {sw.gender ? <span className="subtle"> · {sw.gender==='female'?'♀':'♂'}</span> : null}
                   {grp ? <span className="subtle"> · {isBound ? '🔗' : '👪'} {grp.name}</span> : null}
