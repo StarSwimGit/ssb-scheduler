@@ -393,6 +393,7 @@ function App(){
           guardianEmail: r.guardian_email || '',
           guardianPhone: r.guardian_phone || '',
           emergencyPhone: r.emergency_phone || '',
+          emergencyName: r.emergency_name || '',
           emergencyRelationship: r.emergency_relationship || '',
           emergencySameAsGuardian: !!r.emergency_same_as_guardian,
           tcAcceptedAt: r.tc_accepted_at || null,
@@ -1545,7 +1546,7 @@ function App(){
   }
 
   // ───── Swimmer registry CRUD ──────────────────────────────────────────────
-  async function addStudent({ name, dateOfBirth, gender, enrollments, guardianName, guardianEmail, guardianPhone, emergencyPhone, emergencyRelationship, emergencySameAsGuardian }){
+  async function addStudent({ name, dateOfBirth, gender, enrollments, guardianName, guardianEmail, guardianPhone, emergencyName, emergencyPhone, emergencyRelationship, emergencySameAsGuardian }){
     try{
       setError('');
       const validEnrollments = (enrollments || []).filter(e => e.lessonTypeId);
@@ -1563,6 +1564,7 @@ function App(){
         package_id: primaryPackageId, package: primaryPkg ? primaryPkg.name : null,
         lesson_type_ids: lessonTypeIds, is_active: true,
         guardian_name: guardianName || null, guardian_email: guardianEmail || null, guardian_phone: guardianPhone || null,
+        emergency_name: sameAsG ? (guardianName || null) : (emergencyName || null),
         emergency_phone: sameAsG ? (guardianPhone || null) : (emergencyPhone || null),
         emergency_relationship: sameAsG ? 'Parent / Guardian' : (emergencyRelationship || null),
         emergency_same_as_guardian: sameAsG
@@ -1603,6 +1605,7 @@ function App(){
       if('guardianPhone' in patch) body.guardian_phone = patch.guardianPhone || null;
       if('emergencySameAsGuardian' in patch) body.emergency_same_as_guardian = !!patch.emergencySameAsGuardian;
       if('emergencyPhone' in patch) body.emergency_phone = patch.emergencyPhone || null;
+      if('emergencyName' in patch) body.emergency_name = patch.emergencyName || null;
       if('emergencyRelationship' in patch) body.emergency_relationship = patch.emergencyRelationship || null;
       if('isActive' in patch) body.is_active = !!patch.isActive;
       // Enrollments: mirror onto legacy columns for backward compat, then
@@ -1945,6 +1948,7 @@ function App(){
           // the first swimmer in this account; ParentContactEditor edits
           // propagate the new value to every child below.
           emergencyPhone: s.emergencyPhone || '',
+          emergencyName: s.emergencyName || '',
           emergencyRelationship: s.emergencyRelationship || '',
           emergencySameAsGuardian: !!s.emergencySameAsGuardian,
           swimmers: []
@@ -3517,27 +3521,56 @@ function StudentEditor({ row, lessonTypes, packages, onSave, hideAccountSections
   const [emergencyRel, setEmergencyRel] = useState(row.emergencyRelationship || '');
   // Adult-self defaults to true on edits where the swimmer's name matches
   // the guardian name (legacy data import heuristic), but mostly it's
+  const [emergencyName, setEmergencyName] = useState(row.emergencyName || '');
   // user-toggled on the +New Account flow.
   const [adultSelf, setAdultSelf] = useState(!!(row.name && row.guardianName && row.name === row.guardianName));
-  function handleSameAsGuardian(v){ setSameAsGuardian(v); if(v){ setEmergencyPhone(guardianPhone); setEmergencyRel('Parent / Guardian'); } }
-  function handleAdultSelf(v){ setAdultSelf(v); if(v) setGuardianName(name); }
+  function handleSameAsGuardian(v){
+    setSameAsGuardian(v);
+    if(v){
+      setEmergencyName(guardianName);
+      setEmergencyPhone(guardianPhone);
+      setEmergencyRel('Account Holder');
+    }
+  }
+  // Adult-self: account holder name == swimmer name. Pre-fills swimmer
+  // name from the (already typed) account holder name when toggled on,
+  // and keeps them in sync while the toggle is active.
+  function handleAdultSelf(v){
+    setAdultSelf(v);
+    if(v){
+      if(guardianName) setName(guardianName);
+      else if(name) setGuardianName(name);
+    }
+  }
   const computedAge = dob ? ageFromDob(dob) : null;
 
   return <div className="lesson-edit">
-    {/* Adult-self toggle — shown prominently at the top when this editor
-        is creating/editing the account holder themselves. Hidden in
-        nested-swimmer-under-account mode (parent contact already known). */}
-    {!hideAccountSections && <div className="adult-self-toggle">
-      <label className="gb-check">
-        <input type="checkbox" checked={adultSelf} onChange={e=>handleAdultSelf(e.target.checked)} />
-        <span><strong>Adult swimmer is the account holder</strong> — toggle on if the swimmer is an adult registering themselves; the name field will auto-fill as the account holder name.</span>
-      </label>
-    </div>}
+    {/* Account Holder + Emergency Contact (only in +New Account flow) */}
+    {!hideAccountSections && <>
+      <div className="account-section">
+        <div className="account-section-title">Parent / Guardian (Account Holder)</div>
+        <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
+          <div className="field"><label>Parent Name</label><input className="input" value={guardianName} onChange={e=>{ setGuardianName(e.target.value); if(adultSelf) setName(e.target.value); if(sameAsGuardian) setEmergencyName(e.target.value); }} placeholder="Full name" /></div>
+          <div className="field"><label>Email</label><input className="input" type="email" value={guardianEmail} onChange={e=>setGuardianEmail(e.target.value)} placeholder="email@example.com" /></div>
+          <div className="field"><label>Phone</label><input className="input" type="tel" value={guardianPhone} onChange={e=>{ setGuardianPhone(e.target.value); if(sameAsGuardian) setEmergencyPhone(e.target.value); }} placeholder="+60 1X-XXXXXXX" /></div>
+        </div>
+      </div>
+      <div className="account-section">
+        <div className="account-section-title">Emergency Contact</div>
+        <label className="gb-check" style={{marginBottom:7,display:'inline-flex',gap:6,alignItems:'center'}}><input type="checkbox" checked={sameAsGuardian} onChange={e=>handleSameAsGuardian(e.target.checked)} /> Same as account holder above</label>
+        <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
+          <div className="field"><label>Emergency Contact Name</label><input className="input" value={sameAsGuardian?guardianName:emergencyName} onChange={e=>setEmergencyName(e.target.value)} disabled={sameAsGuardian} placeholder="Full name" /></div>
+          <div className="field"><label>Phone</label><input className="input" type="tel" value={sameAsGuardian?guardianPhone:emergencyPhone} onChange={e=>setEmergencyPhone(e.target.value)} disabled={sameAsGuardian} placeholder="+60 1X-XXXXXXX" /></div>
+          <div className="field"><label>Relationship</label><input className="input" value={sameAsGuardian?'Account Holder':emergencyRel} onChange={e=>setEmergencyRel(e.target.value)} disabled={sameAsGuardian} placeholder="e.g. Mother, Father, Spouse, Sibling" /></div>
+        </div>
+      </div>
+    </>}
 
+    {/* Swimmer Details — kept simple: name, DOB, gender, then lessons */}
     <div className="student-form-section">
       <div className="student-form-section-title">Swimmer Details</div>
-      <div className="form-grid" style={{gridTemplateColumns:'1.3fr auto 84px auto'}}>
-        <div className="field"><label>Name</label><input className="input" value={name} onChange={e=>{ setName(e.target.value); if(adultSelf) setGuardianName(e.target.value); }} /></div>
+      <div className="form-grid" style={{gridTemplateColumns:'1.3fr 130px 60px auto'}}>
+        <div className="field"><label>Name</label><input className="input" value={name} onChange={e=>{ setName(e.target.value); if(adultSelf) setGuardianName(e.target.value); }} disabled={adultSelf && !!guardianName} /></div>
         <div className="field"><label>Date of Birth</label><input className="input" type="date" value={dob} max={todayStr()} onChange={e=>setDob(e.target.value)} /></div>
         <div className="field"><label>Age</label><div className={`age-display ${computedAge==null?'is-empty':''}`} aria-label="Auto-calculated age">{ageDisplay(computedAge)}</div></div>
         <div className="field"><label>Gender</label>
@@ -3549,37 +3582,28 @@ function StudentEditor({ row, lessonTypes, packages, onSave, hideAccountSections
       <div className="student-form-section-title">Lessons</div>
       <LessonsEditor enrollments={enrollments} setEnrollments={setEnrollments} lessonTypes={lessonTypes} packages={packages} />
     </div>
-    {!hideAccountSections && <div className="student-form-section">
-      <div className="student-form-section-title">{adultSelf ? 'Account Holder (Self)' : 'Account Holder / Guardian'} &amp; Emergency Contact</div>
-      <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
-        <div className="field"><label>{adultSelf ? 'Name (auto-filled)' : 'Account Holder Name'}</label><input className="input" value={guardianName} onChange={e=>setGuardianName(e.target.value)} placeholder="Full name" disabled={adultSelf} /></div>
-        <div className="field"><label>Email</label><input className="input" type="email" value={guardianEmail} onChange={e=>setGuardianEmail(e.target.value)} placeholder="email@example.com" /></div>
-        <div className="field"><label>Phone</label><input className="input" type="tel" value={guardianPhone} onChange={e=>{ setGuardianPhone(e.target.value); if(sameAsGuardian) setEmergencyPhone(e.target.value); }} placeholder="+60 1X-XXXXXXX" /></div>
-      </div>
-      <label className="gb-check" style={{marginTop:8,marginBottom:6,display:'inline-flex',gap:7,alignItems:'center'}}><input type="checkbox" checked={sameAsGuardian} onChange={e=>handleSameAsGuardian(e.target.checked)} /> Emergency contact same as {adultSelf ? 'account holder (self)' : 'account holder'}</label>
-      <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr'}}>
-        <div className="field"><label>Emergency Phone</label><input className="input" type="tel" value={sameAsGuardian?guardianPhone:emergencyPhone} onChange={e=>setEmergencyPhone(e.target.value)} disabled={sameAsGuardian} placeholder="+60 1X-XXXXXXX" /></div>
-        <div className="field"><label>Relationship</label><input className="input" value={sameAsGuardian?(adultSelf?'Self':'Parent / Guardian'):emergencyRel} onChange={e=>setEmergencyRel(e.target.value)} disabled={sameAsGuardian} placeholder="e.g. Mother, Father, Spouse" /></div>
-      </div>
-    </div>}
-    {row.tcAcceptedAt && <div className="tc-status-row tc-accepted">
-      <span>✅ T&amp;C Accepted</span>
-      <span className="small subtle">ID: {row.tcAcceptanceId} · {new Date(row.tcAcceptedAt).toLocaleDateString(undefined,{dateStyle:'medium'})}</span>
-    </div>}
-    {!row.tcAcceptedAt && <div className="tc-status-row tc-pending">⚠ Terms &amp; Conditions not yet accepted — go to the T&amp;C tab to send for signature.</div>}
+    {/* Adult-self toggle — sits within the swimmer-details zone since it
+        affects swimmer naming. Hidden in nested mode where the account
+        relationship is already established. */}
+    {!hideAccountSections && <label className="adult-self-toggle gb-check">
+      <input type="checkbox" checked={adultSelf} onChange={e=>handleAdultSelf(e.target.checked)} />
+      <span>Adult swimmer — I am my own guardian <span className="subtle small">(pre-fill swimmer name with account holder name)</span></span>
+    </label>}
+
     <div style={{display:'flex',justifyContent:'flex-end',marginTop:10}}><button className="btn btn-primary" onClick={()=>{
       const v = name.trim(); if(!v) return;
-      // When in hide-account-sections mode (editing a swimmer nested
-      // under an account), don't include guardian/emergency in the patch
-      // — those are owned at the account level and propagated separately.
+      // In nested mode (editing a swimmer under an existing account),
+      // the patch omits guardian/emergency — those are owned at the
+      // account level and propagated separately by ParentContactEditor.
       const patch = { name:v, dateOfBirth: dob || null, gender, enrollments };
       if(!hideAccountSections){
         patch.guardianName = guardianName;
         patch.guardianEmail = guardianEmail;
         patch.guardianPhone = guardianPhone;
         patch.emergencySameAsGuardian = sameAsGuardian;
+        patch.emergencyName = sameAsGuardian ? guardianName : emergencyName;
         patch.emergencyPhone = sameAsGuardian ? guardianPhone : emergencyPhone;
-        patch.emergencyRelationship = sameAsGuardian ? (adultSelf ? 'Self' : 'Parent / Guardian') : emergencyRel;
+        patch.emergencyRelationship = sameAsGuardian ? 'Account Holder' : emergencyRel;
       }
       onSave(patch);
     }}>Save Swimmer</button></div>
@@ -3874,6 +3898,7 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
         guardianName: patch.guardianName,
         guardianEmail: patch.guardianEmail,
         guardianPhone: patch.guardianPhone,
+        emergencyName: patch.emergencySameAsGuardian ? patch.guardianName : patch.emergencyName,
         emergencyPhone: patch.emergencySameAsGuardian ? patch.guardianPhone : patch.emergencyPhone,
         emergencyRelationship: patch.emergencySameAsGuardian ? 'Account Holder' : patch.emergencyRelationship,
         emergencySameAsGuardian: !!patch.emergencySameAsGuardian
@@ -3970,7 +3995,7 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
               {pg.email && pg.phone ? <span> · </span> : null}
               {pg.phone ? <span>📞 {pg.phone}</span> : null}
               {!pg.email && !pg.phone ? <span>(no contact recorded)</span> : null}
-              {pg.emergencyPhone && !pg.emergencySameAsGuardian ? <span> · 🚨 {pg.emergencyPhone}{pg.emergencyRelationship ? ` (${pg.emergencyRelationship})` : ''}</span> : null}
+              {(pg.emergencyName || pg.emergencyPhone) && !pg.emergencySameAsGuardian ? <span> · 🚨 {pg.emergencyName || pg.emergencyPhone}{pg.emergencyName && pg.emergencyPhone ? ` ${pg.emergencyPhone}` : ''}{pg.emergencyRelationship ? ` (${pg.emergencyRelationship})` : ''}</span> : null}
               {parentGroupsInPlay.length > 0 && <span> · {parentGroupsInPlay.map(g => <span key={g.id} className="parent-group-tag">{g.groupType==='bound'?'🔗':'👪'} {g.name}</span>)}</span>}
             </div>
           </div>
@@ -3995,6 +4020,18 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
             </div>
           </div>}
 
+          {/* T&C summary at the account level — each swimmer's status as
+              a compact row of badges. Click takes you to the T&C tab for
+              the swimmer flow. Lives next to the contact since it's an
+              identity / compliance fact about each swimmer in the account. */}
+          {pg.key !== '__unassigned__' && <div className="account-tc-summary">
+            <span className="account-tc-label">Terms &amp; Conditions:</span>
+            {pg.swimmers.map(sw => sw.tcAcceptedAt
+              ? <span key={sw.id} className="account-tc-badge tc-ok" title={`Accepted ${new Date(sw.tcAcceptedAt).toLocaleDateString()} · ID ${sw.tcAcceptanceId}`}>✅ {sw.name}</span>
+              : <span key={sw.id} className="account-tc-badge tc-pending" title="Not yet accepted — visit the T&C flow for this swimmer">⚠ {sw.name}</span>
+            )}
+          </div>}
+
           {/* Detailed purchase / subscription form with auto-pricing */}
           {purchaseKey === pg.key && <RecordPurchaseForm
             pg={pg}
@@ -4017,17 +4054,16 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
           {isAddingSwimmer && <div className="parent-add-swimmer">
             <div className="parent-sub-log-title">+ New swimmer under {pg.name}</div>
             <StudentEditor
-              row={{ guardianName:pg.name, guardianEmail:pg.email, guardianPhone:pg.phone, emergencyPhone:pg.emergencyPhone, emergencyRelationship:pg.emergencyRelationship, emergencySameAsGuardian:pg.emergencySameAsGuardian }}
+              row={{ guardianName:pg.name, guardianEmail:pg.email, guardianPhone:pg.phone, emergencyName:pg.emergencyName, emergencyPhone:pg.emergencyPhone, emergencyRelationship:pg.emergencyRelationship, emergencySameAsGuardian:pg.emergencySameAsGuardian }}
               lessonTypes={lessonTypes} packages={packages}
               hideAccountSections={true}
               onSave={async (patch)=>{
-                // Inject the parent's contact fields so the new student row
-                // is consistent with all siblings under this account.
                 await addStudent({
                   ...patch,
                   guardianName: pg.name,
                   guardianEmail: pg.email,
                   guardianPhone: pg.phone,
+                  emergencyName: pg.emergencyName,
                   emergencyPhone: pg.emergencyPhone,
                   emergencyRelationship: pg.emergencyRelationship,
                   emergencySameAsGuardian: pg.emergencySameAsGuardian
@@ -4400,32 +4436,49 @@ function RecordPurchaseForm({ pg, lessonTypes, lessonTypeById, packages, package
   </div>;
 }
 
-// Inline editor for an account's contact info + emergency contact —
-// both propagate to every child swimmer when saved.
+// Inline editor for an account's contact info + emergency contact.
+// Two visually distinct sections — Account Holder (parent or self) on
+// top, Emergency Contact below — both propagate to every child swimmer
+// when saved. Emergency contact now carries name + phone + relationship
+// (name was previously missing).
 function ParentContactEditor({ pg, onSave, onCancel }){
   const [name, setName] = useState(pg.name === '— Unassigned —' || pg.name === '— No name —' ? '' : pg.name);
   const [email, setEmail] = useState(pg.email || '');
   const [phone, setPhone] = useState(pg.phone || '');
   const [emergencySame, setEmergencySame] = useState(!!pg.emergencySameAsGuardian);
+  const [emergencyName, setEmergencyName] = useState(pg.emergencyName || '');
   const [emergencyPhone, setEmergencyPhone] = useState(pg.emergencyPhone || '');
   const [emergencyRel, setEmergencyRel] = useState(pg.emergencyRelationship || '');
   return <div className="parent-contact-edit">
-    <div className="parent-sub-log-title">Edit account contact &amp; emergency (applies to all {pg.swimmers.length} swimmer{pg.swimmers.length===1?'':'s'})</div>
-    <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
-      <div className="field"><label>Account Holder Name</label><input className="input" value={name} onChange={e=>setName(e.target.value)} /></div>
-      <div className="field"><label>Email</label><input className="input" type="email" value={email} onChange={e=>setEmail(e.target.value)} /></div>
-      <div className="field"><label>Phone</label><input className="input" type="tel" value={phone} onChange={e=>setPhone(e.target.value)} /></div>
+    <div className="parent-sub-log-title">Edit account &amp; emergency contact (applies to all {pg.swimmers.length} swimmer{pg.swimmers.length===1?'':'s'})</div>
+
+    {/* Account Holder section */}
+    <div className="account-section">
+      <div className="account-section-title">Parent / Guardian (Account Holder)</div>
+      <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
+        <div className="field"><label>Parent Name</label><input className="input" value={name} onChange={e=>setName(e.target.value)} placeholder="Full name" /></div>
+        <div className="field"><label>Email</label><input className="input" type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="email@example.com" /></div>
+        <div className="field"><label>Phone</label><input className="input" type="tel" value={phone} onChange={e=>setPhone(e.target.value)} placeholder="+60 1X-XXXXXXX" /></div>
+      </div>
     </div>
-    <label className="gb-check" style={{marginTop:8,marginBottom:6,display:'inline-flex',gap:6,alignItems:'center'}}><input type="checkbox" checked={emergencySame} onChange={e=>setEmergencySame(e.target.checked)} /> Emergency contact same as account holder</label>
-    <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr'}}>
-      <div className="field"><label>Emergency Phone</label><input className="input" type="tel" value={emergencySame?phone:emergencyPhone} onChange={e=>setEmergencyPhone(e.target.value)} disabled={emergencySame} placeholder="+60 1X-XXXXXXX" /></div>
-      <div className="field"><label>Relationship</label><input className="input" value={emergencySame?'Account Holder':emergencyRel} onChange={e=>setEmergencyRel(e.target.value)} disabled={emergencySame} placeholder="e.g. Mother, Father, Spouse, Sibling" /></div>
+
+    {/* Emergency Contact section */}
+    <div className="account-section">
+      <div className="account-section-title">Emergency Contact</div>
+      <label className="gb-check" style={{marginBottom:7,display:'inline-flex',gap:6,alignItems:'center'}}><input type="checkbox" checked={emergencySame} onChange={e=>setEmergencySame(e.target.checked)} /> Same as account holder above</label>
+      <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
+        <div className="field"><label>Emergency Contact Name</label><input className="input" value={emergencySame ? name : emergencyName} onChange={e=>setEmergencyName(e.target.value)} disabled={emergencySame} placeholder="Full name" /></div>
+        <div className="field"><label>Phone</label><input className="input" type="tel" value={emergencySame?phone:emergencyPhone} onChange={e=>setEmergencyPhone(e.target.value)} disabled={emergencySame} placeholder="+60 1X-XXXXXXX" /></div>
+        <div className="field"><label>Relationship</label><input className="input" value={emergencySame?'Account Holder':emergencyRel} onChange={e=>setEmergencyRel(e.target.value)} disabled={emergencySame} placeholder="e.g. Mother, Father, Spouse, Sibling" /></div>
+      </div>
     </div>
+
     <div style={{display:'flex',gap:6,justifyContent:'flex-end',marginTop:10}}>
       <button className="btn btn-ghost small" onClick={onCancel}>Cancel</button>
       <button className="btn btn-primary small" onClick={()=>onSave({
         guardianName:name, guardianEmail:email, guardianPhone:phone,
         emergencySameAsGuardian: emergencySame,
+        emergencyName: emergencySame ? name : emergencyName,
         emergencyPhone: emergencySame ? phone : emergencyPhone,
         emergencyRelationship: emergencySame ? 'Account Holder' : emergencyRel
       })}>Save</button>
