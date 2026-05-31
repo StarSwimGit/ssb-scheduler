@@ -501,6 +501,35 @@ function App(){
 
   // bumpBalance: idempotent helper that either creates or updates the
   // student_credit_balances cache after a purchase is inserted.
+  // adjustBalanceTo: hard-set the remaining balance for (student, lt) to a
+  // target number by inserting a single credit_purchase row whose
+  // credits_added equals the required delta. Audit-friendly (source
+  // 'manual', notes default to "Manual adjustment to N"), reverses the
+  // problem where a legacy direct-seeded balance can't be cancelled
+  // because it has no purchase or subscription record to undo.
+  async function adjustBalanceTo(studentId, lessonTypeId, targetBalance, notes){
+    try{
+      setError('');
+      const key = creditKey(studentId, lessonTypeId);
+      const bal = creditByKey[key];
+      const current = bal ? Number(bal.remaining_balance) || 0 : 0;
+      const target = Math.max(0, Number(targetBalance) || 0);
+      const delta = target - current;
+      if(delta === 0){ alert(`Balance is already ${target}.`); return; }
+      await insertRows('credit_purchases', [{
+        student_id: studentId,
+        lesson_type_id: lessonTypeId,
+        purchase_date: toDateStr(new Date()),
+        credits_added: delta,
+        source: 'manual',
+        notes: notes || `Manual adjustment: ${current} → ${target}`
+      }]);
+      await bumpBalance(studentId, lessonTypeId, delta);
+      await Promise.all([loadCreditBalances(), loadCreditPurchases()]);
+      setStatus(`Adjusted balance: ${current} → ${target} (Δ ${delta > 0 ? '+' : ''}${delta}).`);
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to adjust balance'); }
+  }
+
   async function bumpBalance(studentId, lessonTypeId, delta){
     const key = creditKey(studentId, lessonTypeId);
     const bal = creditByKey[key];
@@ -1893,6 +1922,37 @@ function App(){
   const groupById = useMemo(() => { const m = {}; familyGroups.forEach(g => m[g.id] = g); return m; }, [familyGroups]);
   const membersByGroup = useMemo(() => { const m = {}; students.forEach(s => { if(s.familyGroupId){ (m[s.familyGroupId] = m[s.familyGroupId] || []).push(s); } }); return m; }, [students]);
 
+  // parentGroups: nest swimmers under their guardian (parent) account.
+  // No explicit parents table — we cluster on guardian_email (most
+  // unique), falling back to guardian_phone, then guardian_name. A
+  // swimmer with no guardian info at all lands in a single "Unassigned"
+  // pseudo-parent so they're still findable.
+  const parentGroups = useMemo(() => {
+    const m = {};
+    students.forEach(s => {
+      const emailKey = (s.guardianEmail || '').toLowerCase().trim();
+      const phoneKey = (s.guardianPhone || '').replace(/\s+/g,'').trim();
+      const nameKey = (s.guardianName || '').toLowerCase().trim();
+      const key = emailKey ? `e:${emailKey}` : phoneKey ? `p:${phoneKey}` : nameKey ? `n:${nameKey}` : '__unassigned__';
+      if(!m[key]){
+        m[key] = {
+          key,
+          name: s.guardianName || (key === '__unassigned__' ? '— Unassigned —' : '— No name —'),
+          email: s.guardianEmail || '',
+          phone: s.guardianPhone || '',
+          swimmers: []
+        };
+      }
+      m[key].swimmers.push(s);
+    });
+    return Object.values(m).sort((a,b) => {
+      // Unassigned last; then alphabetical by name.
+      if(a.key === '__unassigned__') return 1;
+      if(b.key === '__unassigned__') return -1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [students]);
+
   // Which sessions (in the selected week) each swimmer is already in — drives the
   // double-booking warning in the enrollment modal.
   const weekEnrollments = useMemo(() => {
@@ -1934,7 +1994,7 @@ function App(){
       </div>
       <div className="header-tabs">
         <div className="tabs">
-          {['day','week','month','students','enroll'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='week'?'📅 Weekly':v==='day'?'📋 Daily':v==='month'?'🗓️ Monthly':v==='students'?'👥 Swimmers':'🎯 Enroll'}</button>)}
+          {['day','week','month','parents','students','enroll'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='week'?'📅 Weekly':v==='day'?'📋 Daily':v==='month'?'🗓️ Monthly':v==='parents'?'👨‍👩‍👧 Parents':v==='students'?'👥 Swimmers':'🎯 Enroll'}</button>)}
           {/* Intake is special — it opens the parent-facing intake.html in a new tab/window rather than switching view in this app. Placed inside the left tabs group, immediately before the Summary/Settings group. */}
           <button type="button" className="tab tab-link" onClick={() => window.open('./intake.html', '_blank', 'noopener,noreferrer')} title="Open the parent intake form in a new tab — hand the tablet over and tap 'Register Another Family' when done">📝 Intake <span aria-hidden="true" style={{marginLeft:3,opacity:.6,fontSize:11}}>↗</span></button>
         </div>
@@ -2032,6 +2092,18 @@ function App(){
         selectedItems={selectedItems}
       />}
 
+      {!loading && view==='parents' && <ParentsView
+        parentGroups={parentGroups}
+        lessonTypes={activeLessonTypes()}
+        lessonTypeById={lessonTypeById}
+        creditByKey={creditByKey}
+        subscriptions={subscriptions}
+        groupById={groupById}
+        addSubscription={addSubscription}
+        cancelSubscription={cancelSubscription}
+        adjustBalanceTo={adjustBalanceTo}
+      />}
+
       {!loading && view==='students' && <>
         <StudentsView
           students={students}
@@ -2050,6 +2122,7 @@ function App(){
           deleteCreditPurchase={deleteCreditPurchase}
           addSubscription={addSubscription}
           cancelSubscription={cancelSubscription}
+          adjustBalanceTo={adjustBalanceTo}
           addStudent={addStudent}
           updateStudent={updateStudent}
           deleteStudent={deleteStudent}
@@ -3473,7 +3546,35 @@ function StudentEditor({ row, lessonTypes, packages, onSave }){
 // the denormalised cache that the schedule reads. Adding a purchase
 // bumps the balance; deleting one reverses it.
 // ============================================================================
-function CreditHistoryPanel({ swimmer, lessonTypes, lessonTypeById, purchases, subscriptions, creditByKey, groupById, membersByGroup, addCreditPurchase, deleteCreditPurchase, addSubscription, cancelSubscription, onClose }){
+// ============================================================================
+// BalanceAdjuster — small inline "Set balance to N" widget. Writes a
+// manual credit_purchase for the delta between current and target so the
+// running balance moves there cleanly and the adjustment is logged.
+// Solves the legacy-balance problem where a directly-seeded
+// student_credit_balances row has no purchase or subscription to undo.
+// ============================================================================
+function BalanceAdjuster({ currentBalance, onApply }){
+  const [open, setOpen] = useState(false);
+  const [val, setVal] = useState(String(currentBalance));
+  function submit(){
+    const target = Math.max(0, parseInt(val, 10) || 0);
+    if(target === currentBalance){ setOpen(false); return; }
+    if(!confirm(`Set balance to ${target}? (Currently ${currentBalance}.)\n\nThis will record a manual adjustment of ${target - currentBalance > 0 ? '+' : ''}${target - currentBalance} credits.`)) return;
+    onApply(target, null);
+    setOpen(false);
+  }
+  if(!open){
+    return <button className="btn btn-ghost small" title="Manually set balance to a specific value" onClick={()=>{ setVal(String(currentBalance)); setOpen(true); }}>⚖ Adjust</button>;
+  }
+  return <span className="balance-adjust-form">
+    <span className="balance-adjust-label">Set to:</span>
+    <input className="input" type="number" min="0" value={val} onChange={e=>setVal(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter') submit(); if(e.key==='Escape') setOpen(false); }} style={{width:60,padding:'3px 6px',fontSize:11}} autoFocus />
+    <button className="btn btn-primary small" onClick={submit}>Apply</button>
+    <button className="btn btn-ghost small" onClick={()=>setOpen(false)}>Cancel</button>
+  </span>;
+}
+
+function CreditHistoryPanel({ swimmer, lessonTypes, lessonTypeById, purchases, subscriptions, creditByKey, groupById, membersByGroup, addCreditPurchase, deleteCreditPurchase, addSubscription, cancelSubscription, adjustBalanceTo, onClose }){
   // Group context: who is this swimmer's family group, and is it bound?
   // Bound-group members have credit operations locked to the group level
   // (the Family Groups panel handles add/cancel for all members at once).
@@ -3612,6 +3713,12 @@ function CreditHistoryPanel({ swimmer, lessonTypes, lessonTypeById, purchases, s
               : <em className="subtle">No balance row yet</em>}
             {list.length > 0 && <span className="credit-lt-aggregate"> · {totalPurchased > 0 ? '+' : ''}{totalPurchased} credits across {list.length} record{list.length===1?'':'s'}</span>}
           </span>
+          {/* Manual adjust — direct override that writes a manual purchase
+              row for the delta. Use to correct legacy balances that have
+              no purchase/subscription record to cancel against. */}
+          {adjustBalanceTo && !isBoundMember && <BalanceAdjuster
+            currentBalance={bal ? Number(bal.remaining_balance) || 0 : 0}
+            onApply={(target, notes) => adjustBalanceTo(swimmer.id, lt.id, target, notes)} />}
         </div>
 
         {canQuickSub && <div className="credit-sub-quick">
@@ -3669,6 +3776,156 @@ function CreditHistoryPanel({ swimmer, lessonTypes, lessonTypeById, purchases, s
 // subscription in date order with filters by status (active / cancelled /
 // all), with a one-click cancel and a printable receipt per row.
 // ============================================================================
+// ============================================================================
+// ParentsView — billing-focused dashboard. Nests swimmers under their
+// guardian/parent so when a parent pays we can immediately see their
+// kid(s) and adjust credits. Grouped by guardian email (most unique),
+// falling back to phone or name. Per-swimmer credit balances are shown
+// for every lesson type they're enrolled in, with quick subscription
+// buttons (+4 / +8 / +12) and a "⚖ Adjust" tool to hard-set the balance
+// — the same tools that exist in the swimmer credit panel, but
+// surfaced here at the level the user actually thinks about (the
+// parent who handed over the money).
+// ============================================================================
+function ParentsView({ parentGroups, lessonTypes, lessonTypeById, creditByKey, subscriptions, groupById, addSubscription, cancelSubscription, adjustBalanceTo }){
+  const [searchQ, setSearchQ] = useState('');
+  const [expandedKey, setExpandedKey] = useState(null);
+  const filtered = (parentGroups || []).filter(pg => {
+    if(!searchQ.trim()) return true;
+    const q = searchQ.toLowerCase();
+    if((pg.name || '').toLowerCase().includes(q)) return true;
+    if((pg.email || '').toLowerCase().includes(q)) return true;
+    if((pg.phone || '').toLowerCase().includes(q)) return true;
+    return pg.swimmers.some(s => (s.name || '').toLowerCase().includes(q));
+  });
+  // Aggregate stats: total parents, total swimmers, total active credits across all
+  const totalSwimmers = (parentGroups || []).reduce((sum, p) => sum + p.swimmers.length, 0);
+  const totalActiveCredits = Object.values(creditByKey || {}).reduce((sum, b) => sum + (Number(b.remaining_balance) || 0), 0);
+
+  return <>
+    <div className="card" style={{marginBottom:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap',marginBottom:10}}>
+        <div>
+          <div style={{fontSize:18,fontWeight:800}}>👨‍👩‍👧 Parents</div>
+          <div className="small subtle" style={{marginTop:3}}>Swimmers grouped by guardian — the view to use when a parent pays. Manage credits, log subscriptions, fix legacy balances all in one place.</div>
+        </div>
+        <div style={{display:'flex',gap:14,alignItems:'flex-end',flexWrap:'wrap'}}>
+          <div><div className="small subtle">Parent accounts</div><div style={{fontSize:22,fontWeight:800,color:'var(--primary)'}}>{(parentGroups||[]).length}</div></div>
+          <div><div className="small subtle">Swimmers</div><div style={{fontSize:22,fontWeight:800,color:'var(--text)'}}>{totalSwimmers}</div></div>
+          <div><div className="small subtle">Active credits</div><div style={{fontSize:22,fontWeight:800,color:'var(--teal)'}}>{totalActiveCredits}</div></div>
+        </div>
+      </div>
+      <input className="input" style={{maxWidth:420}} placeholder="Search by parent name, email, phone, or swimmer name…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
+    </div>
+    {filtered.length === 0 && <div className="card empty" style={{padding:30}}>No parents match.</div>}
+    {filtered.map(pg => {
+      const isExpanded = expandedKey === pg.key;
+      // Per-parent totals across all swimmers + lesson types
+      const swimmerCount = pg.swimmers.length;
+      const parentActiveCredits = pg.swimmers.reduce((sum, s) => {
+        return sum + (s.lessonTypeIds || []).reduce((s2, ltId) => {
+          const b = creditByKey[`${s.id}:${ltId}`];
+          return s2 + (b ? Number(b.remaining_balance) || 0 : 0);
+        }, 0);
+      }, 0);
+      const parentSubs = (subscriptions || []).filter(s => {
+        if(s.subject_type === 'student' && pg.swimmers.some(sw => sw.id === s.subject_id)) return true;
+        if(s.subject_type === 'family_group' && pg.swimmers.some(sw => sw.familyGroupId === s.subject_id)) return true;
+        return false;
+      });
+      return <div key={pg.key} className="parent-card">
+        <div className="parent-head" onClick={()=>setExpandedKey(isExpanded?null:pg.key)}>
+          <div className="parent-head-main">
+            <div className="parent-name">{pg.name}</div>
+            <div className="parent-contact subtle small">
+              {pg.email ? <span>📧 {pg.email}</span> : null}
+              {pg.email && pg.phone ? <span> · </span> : null}
+              {pg.phone ? <span>📞 {pg.phone}</span> : null}
+              {!pg.email && !pg.phone ? <span>(no contact recorded)</span> : null}
+            </div>
+          </div>
+          <div className="parent-head-stats">
+            <span className="parent-stat"><strong>{swimmerCount}</strong> swimmer{swimmerCount===1?'':'s'}</span>
+            <span className="parent-stat"><strong className={parentActiveCredits<=2?'credit-low':''}>{parentActiveCredits}</strong> credits total</span>
+            {parentSubs.length > 0 && <span className="parent-stat subtle">{parentSubs.length} sub{parentSubs.length===1?'':'s'}</span>}
+            <span className="parent-chev">{isExpanded ? '▴' : '▾'}</span>
+          </div>
+        </div>
+        {isExpanded && <div className="parent-body">
+          {pg.swimmers.map(sw => {
+            const grp = sw.familyGroupId && groupById ? groupById[sw.familyGroupId] : null;
+            const isBound = !!(grp && grp.groupType === 'bound');
+            return <div key={sw.id} className="parent-swimmer-row">
+              <div className="parent-swimmer-head">
+                <div className="parent-swimmer-name">
+                  👤 <strong>{sw.name}</strong>
+                  {sw.age != null ? <span className="subtle"> · {sw.age}y</span> : null}
+                  {grp ? <span className="subtle"> · {isBound ? '🔗' : '👪'} {grp.name}</span> : null}
+                </div>
+              </div>
+              {(sw.lessonTypeIds || []).length === 0
+                ? <div className="parent-swimmer-empty subtle small">No lesson type enrolments.</div>
+                : <div className="parent-lt-list">
+                    {(sw.lessonTypeIds || []).map(ltId => {
+                      const lt = lessonTypeById ? lessonTypeById(ltId) : null;
+                      if(!lt) return null;
+                      const bal = creditByKey[`${sw.id}:${ltId}`];
+                      const remaining = bal ? Number(bal.remaining_balance) || 0 : 0;
+                      const initial = bal ? Number(bal.initial_balance) || 0 : 0;
+                      return <div key={ltId} className="parent-lt-row">
+                        <span className="parent-lt-name" style={{background:lt.bg_color,color:lt.text_color,borderColor:lt.border_color}}>{lt.name}</span>
+                        <span className="parent-lt-balance">
+                          {bal
+                            ? <><strong className={remaining<=2?'credit-low':''}>{remaining}</strong> / {initial} credits</>
+                            : <em className="subtle">no balance yet</em>}
+                        </span>
+                        {!isBound && addSubscription && <div className="parent-lt-actions">
+                          <button className="btn btn-ghost small" title="Add 1× 4-credit subscription" onClick={()=>addSubscription({
+                            subjectType: (grp && grp.groupType !== 'bound') ? 'family_group' : 'student',
+                            subjectId: (grp && grp.groupType !== 'bound') ? grp.id : sw.id,
+                            lessonTypeId: ltId, creditsPerSwimmer: 4, quantity: 1,
+                            source: 'subscription', notes: 'Quick subscription (parent view)'
+                          })}>+4</button>
+                          <button className="btn btn-ghost small" title="Add 2× 4-credit subscription" onClick={()=>addSubscription({
+                            subjectType: (grp && grp.groupType !== 'bound') ? 'family_group' : 'student',
+                            subjectId: (grp && grp.groupType !== 'bound') ? grp.id : sw.id,
+                            lessonTypeId: ltId, creditsPerSwimmer: 4, quantity: 2,
+                            source: 'subscription', notes: 'Quick subscription (parent view, 2×)'
+                          })}>+8</button>
+                          {adjustBalanceTo && <BalanceAdjuster
+                            currentBalance={remaining}
+                            onApply={(target, notes) => adjustBalanceTo(sw.id, ltId, target, notes)} />}
+                        </div>}
+                        {isBound && <div className="parent-lt-actions"><span className="subtle small">🔗 bound — manage at group level</span></div>}
+                      </div>;
+                    })}
+                  </div>
+              }
+            </div>;
+          })}
+          {/* Subscription log for this parent (across all their swimmers) */}
+          {parentSubs.length > 0 && <div className="parent-sub-log">
+            <div className="parent-sub-log-title">Subscription log ({parentSubs.length})</div>
+            <div className="parent-sub-log-list">
+              {parentSubs.slice().sort((a,b)=>(b.subscription_date||'').localeCompare(a.subscription_date||'')).map(s => {
+                const lt = lessonTypeById ? lessonTypeById(s.lesson_type_id) : null;
+                return <div key={s.id} className={`credit-sub-row ${s.cancelled_at?'is-cancelled':''}`}>
+                  <span className="credit-sub-date">{s.subscription_date}</span>
+                  <span className="credit-sub-amount">+{s.credits_per_swimmer} × {s.swimmer_count}</span>
+                  <span className="credit-sub-subject">{lt?.name || '—'}</span>
+                  <span className="credit-sub-meta subtle">{s.source}{s.amount_paid != null ? ` · RM${s.amount_paid}` : ''}</span>
+                  {s.cancelled_at ? <span className="credit-sub-cancelled-tag">Cancelled</span>
+                    : cancelSubscription ? <button className="btn btn-ghost small" onClick={()=>cancelSubscription(s)}>Cancel</button> : null}
+                </div>;
+              })}
+            </div>
+          </div>}
+        </div>}
+      </div>;
+    })}
+  </>;
+}
+
 function ReceiptsView({ subscriptions, students, studentById, familyGroups, groupById, lessonTypeById, cancelSubscription }){
   const [statusFilter, setStatusFilter] = useState('all');
   const [searchQ, setSearchQ] = useState('');
@@ -3877,7 +4134,7 @@ function FamilyGroupsPanel({ groups, students, groupPackages, lessonTypes, packa
   </div>;
 }
 
-function StudentsView({ students, lessonTypes, lessonTypeById, packages, packageById, groupById, familyGroups, membersByGroup, scheduleByStudent, creditByKey, purchasesByStudent, subscriptions, addCreditPurchase, deleteCreditPurchase, addSubscription, cancelSubscription, addStudent, updateStudent, deleteStudent }){
+function StudentsView({ students, lessonTypes, lessonTypeById, packages, packageById, groupById, familyGroups, membersByGroup, scheduleByStudent, creditByKey, purchasesByStudent, subscriptions, addCreditPurchase, deleteCreditPurchase, addSubscription, cancelSubscription, adjustBalanceTo, addStudent, updateStudent, deleteStudent }){
   const [name, setName] = useState('');
   const [dob, setDob] = useState('');
   const [gender, setGender] = useState(null);
@@ -4050,7 +4307,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
               <td style={{whiteSpace:'nowrap'}}><div style={{display:'flex',gap:4,justifyContent:'flex-end',flexWrap:'nowrap'}}><button className="btn btn-ghost small" onClick={()=>setCreditId(creditId===s.id?null:s.id)} title="View / manage credit purchases">💳</button><button className="btn btn-ghost small" onClick={()=>setEditId(editId===s.id?null:s.id)}>{editId===s.id?'Close':'Edit'}</button><button className="btn btn-danger small" onClick={()=>deleteStudent(s)}>Del</button></div></td>
             </tr>
             {editId===s.id?<tr><td colSpan={COLS} style={{padding:0}}><StudentEditor row={s} lessonTypes={lessonTypes} packages={packages} onSave={(patch)=>{updateStudent(s.id,patch);setEditId(null);}}/></td></tr>:null}
-            {creditId===s.id?<tr><td colSpan={COLS} style={{padding:0}}><CreditHistoryPanel swimmer={s} lessonTypes={lessonTypes} lessonTypeById={lessonTypeById} purchases={(purchasesByStudent||{})[s.id]||[]} subscriptions={subscriptions||[]} creditByKey={creditByKey} groupById={groupById} membersByGroup={membersByGroup} addCreditPurchase={addCreditPurchase} deleteCreditPurchase={deleteCreditPurchase} addSubscription={addSubscription} cancelSubscription={cancelSubscription} onClose={()=>setCreditId(null)} /></td></tr>:null}
+            {creditId===s.id?<tr><td colSpan={COLS} style={{padding:0}}><CreditHistoryPanel swimmer={s} lessonTypes={lessonTypes} lessonTypeById={lessonTypeById} purchases={(purchasesByStudent||{})[s.id]||[]} subscriptions={subscriptions||[]} creditByKey={creditByKey} groupById={groupById} membersByGroup={membersByGroup} addCreditPurchase={addCreditPurchase} deleteCreditPurchase={deleteCreditPurchase} addSubscription={addSubscription} cancelSubscription={cancelSubscription} adjustBalanceTo={adjustBalanceTo} onClose={()=>setCreditId(null)} /></td></tr>:null}
           </React.Fragment>;
         }):<tr><td colSpan={COLS} className="empty">No swimmers registered yet.</td></tr>}
         </tbody></table>
