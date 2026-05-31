@@ -1941,6 +1941,12 @@ function App(){
           name: s.guardianName || (key === '__unassigned__' ? '— Unassigned —' : '— No name —'),
           email: s.guardianEmail || '',
           phone: s.guardianPhone || '',
+          // Emergency contact lives at the account level — surface it from
+          // the first swimmer in this account; ParentContactEditor edits
+          // propagate the new value to every child below.
+          emergencyPhone: s.emergencyPhone || '',
+          emergencyRelationship: s.emergencyRelationship || '',
+          emergencySameAsGuardian: !!s.emergencySameAsGuardian,
           swimmers: []
         };
       }
@@ -2001,7 +2007,7 @@ function App(){
       </div>
       <div className="header-tabs">
         <div className="tabs">
-          {['day','week','month','parents','students','enroll'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='week'?'📅 Weekly':v==='day'?'📋 Daily':v==='month'?'🗓️ Monthly':v==='parents'?'👨‍👩‍👧 Parents':v==='students'?'👥 Swimmers':'🎯 Enroll'}</button>)}
+          {['day','week','month','accounts','students','enroll'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='week'?'📅 Weekly':v==='day'?'📋 Daily':v==='month'?'🗓️ Monthly':v==='accounts'?'👤 Accounts':v==='students'?'👥 Swimmers':'🎯 Enroll'}</button>)}
           {/* Intake is special — it opens the parent-facing intake.html in a new tab/window rather than switching view in this app. Placed inside the left tabs group, immediately before the Summary/Settings group. */}
           <button type="button" className="tab tab-link" onClick={() => window.open('./intake.html', '_blank', 'noopener,noreferrer')} title="Open the parent intake form in a new tab — hand the tablet over and tap 'Register Another Family' when done">📝 Intake <span aria-hidden="true" style={{marginLeft:3,opacity:.6,fontSize:11}}>↗</span></button>
         </div>
@@ -2099,7 +2105,7 @@ function App(){
         selectedItems={selectedItems}
       />}
 
-      {!loading && view==='parents' && <ParentsView
+      {!loading && view==='accounts' && <ParentsView
         parentGroups={parentGroups}
         lessonTypes={activeLessonTypes()}
         lessonTypeById={lessonTypeById}
@@ -3492,7 +3498,7 @@ function LessonsEditor({ enrollments, setEnrollments, lessonTypes, packages }){
   </>;
 }
 
-function StudentEditor({ row, lessonTypes, packages, onSave }){
+function StudentEditor({ row, lessonTypes, packages, onSave, hideAccountSections }){
   const [name, setName] = useState(row.name || '');
   const [dob, setDob] = useState(row.dob || '');
   const [gender, setGender] = useState(row.gender || null);
@@ -3509,12 +3515,25 @@ function StudentEditor({ row, lessonTypes, packages, onSave }){
   const [sameAsGuardian, setSameAsGuardian] = useState(!!row.emergencySameAsGuardian);
   const [emergencyPhone, setEmergencyPhone] = useState(row.emergencyPhone || '');
   const [emergencyRel, setEmergencyRel] = useState(row.emergencyRelationship || '');
-  const [adultSelf, setAdultSelf] = useState(false);
+  // Adult-self defaults to true on edits where the swimmer's name matches
+  // the guardian name (legacy data import heuristic), but mostly it's
+  // user-toggled on the +New Account flow.
+  const [adultSelf, setAdultSelf] = useState(!!(row.name && row.guardianName && row.name === row.guardianName));
   function handleSameAsGuardian(v){ setSameAsGuardian(v); if(v){ setEmergencyPhone(guardianPhone); setEmergencyRel('Parent / Guardian'); } }
   function handleAdultSelf(v){ setAdultSelf(v); if(v) setGuardianName(name); }
   const computedAge = dob ? ageFromDob(dob) : null;
 
   return <div className="lesson-edit">
+    {/* Adult-self toggle — shown prominently at the top when this editor
+        is creating/editing the account holder themselves. Hidden in
+        nested-swimmer-under-account mode (parent contact already known). */}
+    {!hideAccountSections && <div className="adult-self-toggle">
+      <label className="gb-check">
+        <input type="checkbox" checked={adultSelf} onChange={e=>handleAdultSelf(e.target.checked)} />
+        <span><strong>Adult swimmer is the account holder</strong> — toggle on if the swimmer is an adult registering themselves; the name field will auto-fill as the account holder name.</span>
+      </label>
+    </div>}
+
     <div className="student-form-section">
       <div className="student-form-section-title">Swimmer Details</div>
       <div className="form-grid" style={{gridTemplateColumns:'1.3fr auto 84px auto'}}>
@@ -3530,23 +3549,19 @@ function StudentEditor({ row, lessonTypes, packages, onSave }){
       <div className="student-form-section-title">Lessons</div>
       <LessonsEditor enrollments={enrollments} setEnrollments={setEnrollments} lessonTypes={lessonTypes} packages={packages} />
     </div>
-    <div className="student-form-section">
-      <div className="student-form-section-title">Parent / Guardian</div>
-      <label className="gb-check" style={{marginBottom:8}}><input type="checkbox" checked={adultSelf} onChange={e=>handleAdultSelf(e.target.checked)} /> Adult swimmer — I am my own guardian (pre-fill with my name)</label>
+    {!hideAccountSections && <div className="student-form-section">
+      <div className="student-form-section-title">{adultSelf ? 'Account Holder (Self)' : 'Account Holder / Guardian'} &amp; Emergency Contact</div>
       <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
-        <div className="field"><label>Guardian Name</label><input className="input" value={guardianName} onChange={e=>setGuardianName(e.target.value)} placeholder="Full name" /></div>
+        <div className="field"><label>{adultSelf ? 'Name (auto-filled)' : 'Account Holder Name'}</label><input className="input" value={guardianName} onChange={e=>setGuardianName(e.target.value)} placeholder="Full name" disabled={adultSelf} /></div>
         <div className="field"><label>Email</label><input className="input" type="email" value={guardianEmail} onChange={e=>setGuardianEmail(e.target.value)} placeholder="email@example.com" /></div>
         <div className="field"><label>Phone</label><input className="input" type="tel" value={guardianPhone} onChange={e=>{ setGuardianPhone(e.target.value); if(sameAsGuardian) setEmergencyPhone(e.target.value); }} placeholder="+60 1X-XXXXXXX" /></div>
       </div>
-    </div>
-    <div className="student-form-section">
-      <div className="student-form-section-title">Emergency Contact</div>
-      <label className="gb-check" style={{marginBottom:8}}><input type="checkbox" checked={sameAsGuardian} onChange={e=>handleSameAsGuardian(e.target.checked)} /> Same as Parent / Guardian</label>
+      <label className="gb-check" style={{marginTop:8,marginBottom:6,display:'inline-flex',gap:7,alignItems:'center'}}><input type="checkbox" checked={sameAsGuardian} onChange={e=>handleSameAsGuardian(e.target.checked)} /> Emergency contact same as {adultSelf ? 'account holder (self)' : 'account holder'}</label>
       <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr'}}>
-        <div className="field"><label>Phone</label><input className="input" type="tel" value={sameAsGuardian?guardianPhone:emergencyPhone} onChange={e=>setEmergencyPhone(e.target.value)} disabled={sameAsGuardian} placeholder="+60 1X-XXXXXXX" /></div>
-        <div className="field"><label>Relationship</label><input className="input" value={sameAsGuardian?'Parent / Guardian':emergencyRel} onChange={e=>setEmergencyRel(e.target.value)} disabled={sameAsGuardian} placeholder="e.g. Mother, Father, Spouse" /></div>
+        <div className="field"><label>Emergency Phone</label><input className="input" type="tel" value={sameAsGuardian?guardianPhone:emergencyPhone} onChange={e=>setEmergencyPhone(e.target.value)} disabled={sameAsGuardian} placeholder="+60 1X-XXXXXXX" /></div>
+        <div className="field"><label>Relationship</label><input className="input" value={sameAsGuardian?(adultSelf?'Self':'Parent / Guardian'):emergencyRel} onChange={e=>setEmergencyRel(e.target.value)} disabled={sameAsGuardian} placeholder="e.g. Mother, Father, Spouse" /></div>
       </div>
-    </div>
+    </div>}
     {row.tcAcceptedAt && <div className="tc-status-row tc-accepted">
       <span>✅ T&amp;C Accepted</span>
       <span className="small subtle">ID: {row.tcAcceptanceId} · {new Date(row.tcAcceptedAt).toLocaleDateString(undefined,{dateStyle:'medium'})}</span>
@@ -3554,7 +3569,19 @@ function StudentEditor({ row, lessonTypes, packages, onSave }){
     {!row.tcAcceptedAt && <div className="tc-status-row tc-pending">⚠ Terms &amp; Conditions not yet accepted — go to the T&amp;C tab to send for signature.</div>}
     <div style={{display:'flex',justifyContent:'flex-end',marginTop:10}}><button className="btn btn-primary" onClick={()=>{
       const v = name.trim(); if(!v) return;
-      onSave({ name:v, dateOfBirth: dob || null, gender, enrollments, guardianName, guardianEmail, guardianPhone, emergencySameAsGuardian:sameAsGuardian, emergencyPhone: sameAsGuardian?guardianPhone:emergencyPhone, emergencyRelationship: sameAsGuardian?'Parent / Guardian':emergencyRel });
+      // When in hide-account-sections mode (editing a swimmer nested
+      // under an account), don't include guardian/emergency in the patch
+      // — those are owned at the account level and propagated separately.
+      const patch = { name:v, dateOfBirth: dob || null, gender, enrollments };
+      if(!hideAccountSections){
+        patch.guardianName = guardianName;
+        patch.guardianEmail = guardianEmail;
+        patch.guardianPhone = guardianPhone;
+        patch.emergencySameAsGuardian = sameAsGuardian;
+        patch.emergencyPhone = sameAsGuardian ? guardianPhone : emergencyPhone;
+        patch.emergencyRelationship = sameAsGuardian ? (adultSelf ? 'Self' : 'Parent / Guardian') : emergencyRel;
+      }
+      onSave(patch);
     }}>Save Swimmer</button></div>
   </div>;
 }
@@ -3838,13 +3865,18 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
   const totalSwimmers = (parentGroups || []).reduce((sum, p) => sum + p.swimmers.length, 0);
   const totalActiveCredits = Object.values(creditByKey || {}).reduce((sum, b) => sum + (Number(b.remaining_balance) || 0), 0);
 
-  // Propagate parent-level contact edits to every child's guardian_* fields.
+  // Propagate parent-level contact + emergency edits to every child's
+  // guardian_*/emergency_* fields so the account is the single source of
+  // truth for who to call.
   async function saveParentContact(pg, patch){
     for(const s of pg.swimmers){
       await updateStudent(s.id, {
         guardianName: patch.guardianName,
         guardianEmail: patch.guardianEmail,
-        guardianPhone: patch.guardianPhone
+        guardianPhone: patch.guardianPhone,
+        emergencyPhone: patch.emergencySameAsGuardian ? patch.guardianPhone : patch.emergencyPhone,
+        emergencyRelationship: patch.emergencySameAsGuardian ? 'Account Holder' : patch.emergencyRelationship,
+        emergencySameAsGuardian: !!patch.emergencySameAsGuardian
       });
     }
     setContactEditKey(null);
@@ -3865,23 +3897,23 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
     <div className="card" style={{marginBottom:12}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap',marginBottom:10}}>
         <div>
-          <div style={{fontSize:18,fontWeight:800}}>👨‍👩‍👧 Parents — Administration</div>
-          <div className="small subtle" style={{marginTop:3}}>Every parent and child detail is managed here. Click a parent to expand, then edit contact, add or edit swimmers, manage family groups, and adjust credits.</div>
+          <div style={{fontSize:18,fontWeight:800}}>👤 Accounts — Administration</div>
+          <div className="small subtle" style={{marginTop:3}}>An account is either a parent registering one or more children, or an adult swimmer registering themselves. Click an account to expand, then edit contact, add or edit swimmers, manage family groups, and adjust credits.</div>
         </div>
         <div style={{display:'flex',gap:14,alignItems:'flex-end',flexWrap:'wrap'}}>
-          <div><div className="small subtle">Parent accounts</div><div style={{fontSize:22,fontWeight:800,color:'var(--primary)'}}>{(parentGroups||[]).length}</div></div>
+          <div><div className="small subtle">Accounts</div><div style={{fontSize:22,fontWeight:800,color:'var(--primary)'}}>{(parentGroups||[]).length}</div></div>
           <div><div className="small subtle">Swimmers</div><div style={{fontSize:22,fontWeight:800,color:'var(--text)'}}>{totalSwimmers}</div></div>
           <div><div className="small subtle">Active credits</div><div style={{fontSize:22,fontWeight:800,color:'var(--teal)'}}>{totalActiveCredits}</div></div>
         </div>
       </div>
       <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-        <input className="input" style={{flex:1,minWidth:240,maxWidth:420}} placeholder="Search by parent name, email, phone, or swimmer name…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
+        <input className="input" style={{flex:1,minWidth:240,maxWidth:420}} placeholder="Search by account name, email, phone, or swimmer name…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
         <div className="tabs" style={{gap:2,padding:2}}>
           <button className={`tab ${statusFilter==='active'?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setStatusFilter('active')}>Active ({activeCount})</button>
           <button className={`tab ${statusFilter==='archived'?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setStatusFilter('archived')}>Archived ({archivedCount})</button>
           <button className={`tab ${statusFilter==='all'?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setStatusFilter('all')}>All</button>
         </div>
-        <button className="btn btn-primary small" onClick={()=>setCreatingParent(true)}>+ New Parent</button>
+        <button className="btn btn-primary small" onClick={()=>setCreatingParent(true)}>+ New Account</button>
       </div>
     </div>
 
@@ -3890,8 +3922,8 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
     {creatingParent && <div className="parent-card" style={{borderColor:'var(--primary)',background:'#F0F9FF'}}>
       <div className="parent-head" style={{cursor:'default'}}>
         <div className="parent-head-main">
-          <div className="parent-name">+ New Parent &amp; First Swimmer</div>
-          <div className="parent-contact subtle small">Fill in the swimmer's details below. The parent's contact info will register a new parent account.</div>
+          <div className="parent-name">+ New Account &amp; First Swimmer</div>
+          <div className="parent-contact subtle small">If the swimmer is an adult registering themselves, toggle <strong>"Adult swimmer is the account holder"</strong> at the top of the form below — the account holder name auto-fills from the swimmer name. Otherwise, fill the account holder details normally for a parent registering a child.</div>
         </div>
         <button className="btn btn-ghost small" onClick={()=>setCreatingParent(false)}>Cancel</button>
       </div>
@@ -3903,7 +3935,7 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
       </div>
     </div>}
 
-    {filtered.length === 0 && !creatingParent && <div className="card empty" style={{padding:30}}>No parents match.</div>}
+    {filtered.length === 0 && !creatingParent && <div className="card empty" style={{padding:30}}>No accounts match.</div>}
 
     {filtered.map(pg => {
       const isExpanded = expandedKey === pg.key;
@@ -3938,6 +3970,7 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
               {pg.email && pg.phone ? <span> · </span> : null}
               {pg.phone ? <span>📞 {pg.phone}</span> : null}
               {!pg.email && !pg.phone ? <span>(no contact recorded)</span> : null}
+              {pg.emergencyPhone && !pg.emergencySameAsGuardian ? <span> · 🚨 {pg.emergencyPhone}{pg.emergencyRelationship ? ` (${pg.emergencyRelationship})` : ''}</span> : null}
               {parentGroupsInPlay.length > 0 && <span> · {parentGroupsInPlay.map(g => <span key={g.id} className="parent-group-tag">{g.groupType==='bound'?'🔗':'👪'} {g.name}</span>)}</span>}
             </div>
           </div>
@@ -3978,13 +4011,29 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
           {/* Contact editor */}
           {isEditingContact && <ParentContactEditor pg={pg} onSave={(patch)=>saveParentContact(pg, patch)} onCancel={()=>setContactEditKey(null)} />}
 
-          {/* New-swimmer editor pre-filled with parent's contact info */}
+          {/* New-swimmer editor (account holder already known, so hide
+              account/guardian/emergency sections — those propagate from
+              the parent record automatically). */}
           {isAddingSwimmer && <div className="parent-add-swimmer">
             <div className="parent-sub-log-title">+ New swimmer under {pg.name}</div>
             <StudentEditor
-              row={{ guardianName:pg.name, guardianEmail:pg.email, guardianPhone:pg.phone }}
+              row={{ guardianName:pg.name, guardianEmail:pg.email, guardianPhone:pg.phone, emergencyPhone:pg.emergencyPhone, emergencyRelationship:pg.emergencyRelationship, emergencySameAsGuardian:pg.emergencySameAsGuardian }}
               lessonTypes={lessonTypes} packages={packages}
-              onSave={async (patch)=>{ await addStudent(patch); setAddingSwimmerFor(null); }}
+              hideAccountSections={true}
+              onSave={async (patch)=>{
+                // Inject the parent's contact fields so the new student row
+                // is consistent with all siblings under this account.
+                await addStudent({
+                  ...patch,
+                  guardianName: pg.name,
+                  guardianEmail: pg.email,
+                  guardianPhone: pg.phone,
+                  emergencyPhone: pg.emergencyPhone,
+                  emergencyRelationship: pg.emergencyRelationship,
+                  emergencySameAsGuardian: pg.emergencySameAsGuardian
+                });
+                setAddingSwimmerFor(null);
+              }}
             />
           </div>}
 
@@ -4021,9 +4070,11 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
                 </div>
               </div>
 
-              {/* Inline swimmer editor — full StudentEditor for all fields */}
+              {/* Inline swimmer editor — account/guardian/emergency are
+                  hidden because those are owned at the account level. */}
               {isEditingSwimmer && <div style={{margin:'8px 0'}}><StudentEditor
                 row={sw} lessonTypes={lessonTypes} packages={packages}
+                hideAccountSections={true}
                 onSave={async (patch)=>{ await updateStudent(sw.id, patch); setEditingSwimmerId(null); }}
               /></div>}
 
@@ -4349,21 +4400,35 @@ function RecordPurchaseForm({ pg, lessonTypes, lessonTypeById, packages, package
   </div>;
 }
 
-// Inline editor for a parent's contact info — propagates to every child.
+// Inline editor for an account's contact info + emergency contact —
+// both propagate to every child swimmer when saved.
 function ParentContactEditor({ pg, onSave, onCancel }){
   const [name, setName] = useState(pg.name === '— Unassigned —' || pg.name === '— No name —' ? '' : pg.name);
   const [email, setEmail] = useState(pg.email || '');
   const [phone, setPhone] = useState(pg.phone || '');
+  const [emergencySame, setEmergencySame] = useState(!!pg.emergencySameAsGuardian);
+  const [emergencyPhone, setEmergencyPhone] = useState(pg.emergencyPhone || '');
+  const [emergencyRel, setEmergencyRel] = useState(pg.emergencyRelationship || '');
   return <div className="parent-contact-edit">
-    <div className="parent-sub-log-title">Edit contact (applies to all {pg.swimmers.length} swimmer{pg.swimmers.length===1?'':'s'})</div>
+    <div className="parent-sub-log-title">Edit account contact &amp; emergency (applies to all {pg.swimmers.length} swimmer{pg.swimmers.length===1?'':'s'})</div>
     <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
-      <div className="field"><label>Parent Name</label><input className="input" value={name} onChange={e=>setName(e.target.value)} /></div>
+      <div className="field"><label>Account Holder Name</label><input className="input" value={name} onChange={e=>setName(e.target.value)} /></div>
       <div className="field"><label>Email</label><input className="input" type="email" value={email} onChange={e=>setEmail(e.target.value)} /></div>
       <div className="field"><label>Phone</label><input className="input" type="tel" value={phone} onChange={e=>setPhone(e.target.value)} /></div>
     </div>
-    <div style={{display:'flex',gap:6,justifyContent:'flex-end',marginTop:8}}>
+    <label className="gb-check" style={{marginTop:8,marginBottom:6,display:'inline-flex',gap:6,alignItems:'center'}}><input type="checkbox" checked={emergencySame} onChange={e=>setEmergencySame(e.target.checked)} /> Emergency contact same as account holder</label>
+    <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr'}}>
+      <div className="field"><label>Emergency Phone</label><input className="input" type="tel" value={emergencySame?phone:emergencyPhone} onChange={e=>setEmergencyPhone(e.target.value)} disabled={emergencySame} placeholder="+60 1X-XXXXXXX" /></div>
+      <div className="field"><label>Relationship</label><input className="input" value={emergencySame?'Account Holder':emergencyRel} onChange={e=>setEmergencyRel(e.target.value)} disabled={emergencySame} placeholder="e.g. Mother, Father, Spouse, Sibling" /></div>
+    </div>
+    <div style={{display:'flex',gap:6,justifyContent:'flex-end',marginTop:10}}>
       <button className="btn btn-ghost small" onClick={onCancel}>Cancel</button>
-      <button className="btn btn-primary small" onClick={()=>onSave({ guardianName:name, guardianEmail:email, guardianPhone:phone })}>Save Contact</button>
+      <button className="btn btn-primary small" onClick={()=>onSave({
+        guardianName:name, guardianEmail:email, guardianPhone:phone,
+        emergencySameAsGuardian: emergencySame,
+        emergencyPhone: emergencySame ? phone : emergencyPhone,
+        emergencyRelationship: emergencySame ? 'Account Holder' : emergencyRel
+      })}>Save</button>
     </div>
   </div>;
 }
@@ -4746,7 +4811,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
         <div className="intake-banner-icon" aria-hidden="true">🏊</div>
         <div className="intake-banner-text">
           <div className="intake-banner-title">Parent Intake Form</div>
-          <div className="intake-banner-sub">Open a clean registration page on this tablet for parents to fill in their own details. Submitted swimmers appear here automatically. To add a swimmer manually or to edit any details, use the 👨‍👩‍👧 Parents tab.</div>
+          <div className="intake-banner-sub">Open a clean registration page on this tablet for parents to fill in their own details. Submitted swimmers appear here automatically. To add a swimmer manually or to edit any details, use the 👤 Accounts tab.</div>
         </div>
         <button type="button" className="btn btn-primary intake-banner-btn" onClick={()=>window.open('./intake.html', '_blank', 'noopener,noreferrer')} title="Opens the parent intake form in a new tab — hand the tablet over and tap 'Register Another Family' when done">
           Open Form <span aria-hidden="true" style={{marginLeft:6}}>↗</span>
@@ -4759,7 +4824,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
         <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
           <div style={{fontSize:16,fontWeight:800}}>Swimmer Directory <span className="subtle" style={{fontWeight:600,fontSize:13}}>· {students.length}</span></div>
           <div className="sort-tabs">{[['name','Name'],['type','Lesson Type'],['package','Package']].map(([k,lbl])=><button key={k} className={`sort-tab ${sortBy===k?'active':''}`} onClick={()=>setSortBy(k)}>{lbl}</button>)}</div>
-          <span className="subtle small" style={{marginLeft:6}}>Read-only · edit details in 👨‍👩‍👧 Parents</span>
+          <span className="subtle small" style={{marginLeft:6}}>Read-only · edit details in 👤 Accounts</span>
         </div>
         <input className="input" style={{maxWidth:220}} placeholder="Search swimmers…" value={q} onChange={e=>setQ(e.target.value)} />
       </div>
