@@ -655,6 +655,25 @@
       body[data-print-view="receipt"] #receipt-sheet *{visibility:visible}
       body[data-print-view="receipt"] #receipt-sheet{position:fixed;top:0;left:0;width:100%;padding:14mm 18mm;border:none;background:#fff;color:#000}
     }
+    /* Archived parent visuals — dim the card, badge in header */
+    .parent-card.is-archived{opacity:0.62;background:#FAFAFC}
+    .parent-card.is-archived .parent-name{color:var(--text-2)}
+    .parent-archived-badge{display:inline-block;font-size:9.5px;font-weight:800;background:var(--surface-3);color:var(--text-2);border:1px solid var(--border-2);border-radius:4px;padding:2px 7px;margin-left:8px;text-transform:uppercase;letter-spacing:.4px;vertical-align:middle}
+
+    /* RecordPurchaseForm */
+    .record-purchase-form{padding:11px 13px;background:#fff;border:1px solid var(--border-2);border-radius:8px;margin-bottom:10px}
+    .record-purchase-swimmers{display:flex;flex-direction:column;gap:4px;padding:8px 10px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:6px}
+    .record-purchase-swimmer{display:inline-flex;gap:6px;align-items:center;font-size:12px;cursor:pointer}
+    .record-purchase-swimmer input{margin:0}
+    .record-purchase-hint{padding:7px 10px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:6px;margin-top:8px;font-size:11px;color:#92400E;display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+    .record-purchase-pax-chip{display:inline-block;font-size:10.5px;font-weight:700;background:#fff;border:1px solid var(--border-2);border-radius:4px;padding:2px 7px}
+    .record-purchase-pricing{padding:9px 12px;background:#F0F9FF;border:1px solid #BFDBFE;border-radius:6px;margin-top:8px}
+    .record-purchase-pricing.is-discount{background:#ECFDF5;border-color:#86EFAC}
+    .record-purchase-total{font-size:16px;color:#1E40AF;font-weight:800}
+    .record-purchase-pricing.is-discount .record-purchase-total{color:#065F46}
+    .record-purchase-note{margin-top:2px;font-size:11px;line-height:1.4}
+    .record-purchase-subject{font-style:italic}
+
     /* BalanceAdjuster — inline "set balance to N" widget */
     .balance-adjust-form{display:inline-flex;align-items:center;gap:4px}
     .balance-adjust-label{font-size:10.5px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px}
