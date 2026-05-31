@@ -661,12 +661,9 @@
     .account-section{padding:10px 12px;background:#F0F9FF;border:1px solid #BFDBFE;border-radius:8px;margin-bottom:10px}
     .account-section-title{font-size:11px;text-transform:uppercase;letter-spacing:.6px;font-weight:800;color:#1E40AF;margin-bottom:8px}
 
-    /* T&C summary at account level — compact badges, one per swimmer */
-    .account-tc-summary{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:7px 11px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:10px;font-size:11px}
-    .account-tc-label{font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--text-3);font-size:10px}
-    .account-tc-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:3px 8px;border-radius:5px;border:1px solid transparent}
-    .account-tc-badge.tc-ok{background:var(--green-bg);border-color:var(--green-bd);color:var(--green-tx)}
-    .account-tc-badge.tc-pending{background:var(--amber-bg);border-color:var(--amber-bd);color:var(--amber-tx)}
+    /* T&C summary at account level — compact badges, one per swimmer. New
+       flat-strip variant lives in the Accounts block below; this older
+       boxed variant was superseded. */
 
     /* Adult-self toggle — now a single inline checkbox row in the
        swimmer-details zone (was a banner at the top). */
@@ -697,45 +694,81 @@
     .balance-adjust-form{display:inline-flex;align-items:center;gap:4px}
     .balance-adjust-label{font-size:10.5px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px}
 
-    /* Parents view — billing-focused dashboard. */
-    .parent-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:10px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,0.03)}
-    .parent-head{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:11px 14px;cursor:pointer;transition:.12s ease}
-    .parent-head:hover{background:var(--surface-2)}
+    /* ════════════════════════════════════════════════════════════════
+       Accounts page — visual hierarchy
+       ────────────────────────────────────────────────────────────────
+       Two visible levels only:
+         (1) the account card (outer container)
+         (2) the swimmer section (left accent bar, no inner box)
+       LT rows and admin elements sit flat inside (2) — dashed dividers
+       instead of nested boxes. The body uses a faint teal tint that
+       ties back to the brand cyan in the logo + header. Action panels
+       (Edit Contact, Add Swimmer, Group Manager, Record Purchase) keep
+       a single shared light-blue style so they read as siblings, not
+       a stack of unrelated mini-cards. */
+
+    .parent-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:12px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,.04)}
+    .parent-card:hover{box-shadow:0 2px 8px rgba(15,23,42,.06)}
+    .parent-head{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:12px 16px;cursor:pointer;transition:.12s ease}
+    .parent-head:hover{background:#F8FAFC}
     .parent-head-main{flex:1;min-width:0}
-    .parent-name{font-size:14px;font-weight:800;color:var(--text)}
-    .parent-contact{margin-top:2px;font-size:11.5px}
+    .parent-name{font-size:14.5px;font-weight:800;color:var(--text)}
+    .parent-contact{margin-top:3px;font-size:11.5px;line-height:1.5}
     .parent-head-stats{display:flex;gap:14px;align-items:center;flex-wrap:wrap;flex-shrink:0}
     .parent-stat{font-size:12px;color:var(--text-2)}
     .parent-stat strong{color:var(--text);font-weight:800;font-size:13px}
     .parent-chev{font-size:14px;color:var(--text-3);margin-left:4px}
-    .parent-body{border-top:1px solid var(--border);background:#FAFAFC;padding:10px 14px 12px}
-    .parent-swimmer-row{background:#fff;border:1px solid var(--border);border-radius:8px;padding:8px 11px;margin-bottom:7px}
-    .parent-swimmer-row:last-child{margin-bottom:0}
-    .parent-swimmer-head{margin-bottom:5px}
-    .parent-swimmer-name{font-size:13px}
-    .parent-swimmer-empty{padding:5px 0}
-    .parent-lt-list{display:flex;flex-direction:column;gap:5px}
-    .parent-lt-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:4px 6px;background:var(--surface-2);border-radius:6px;font-size:12px}
+
+    /* Body — single light teal-tinted surface; no second-level box. */
+    .parent-body{border-top:1px solid var(--border);background:#F6FBFC;padding:12px 16px 14px}
+
+    /* Admin toolbar — pill-shaped, flush against the body bg. */
+    .parent-admin-toolbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:7px 10px;background:var(--surface);border:1px solid var(--border-2);border-radius:8px;margin-bottom:10px}
+
+    /* Action panels (edit/add/group/purchase) — unified light style so
+       they feel like one type of UI, not four different cards. */
+    .parent-contact-edit,.parent-add-swimmer,.parent-group-panel,.record-purchase-form{padding:11px 13px;background:var(--surface);border:1px solid #BFDBFE;border-left:3px solid var(--primary);border-radius:6px;margin-bottom:10px}
+
+    .parent-group-block{padding:8px 10px;background:#F8FAFC;border:1px solid var(--border-2);border-radius:6px;margin-bottom:6px}
+    .parent-group-members{display:flex;gap:8px;flex-wrap:wrap}
+    .parent-group-member{display:inline-flex;gap:5px;align-items:center;font-size:12px;cursor:pointer;padding:3px 7px;background:var(--surface);border:1px solid var(--border-2);border-radius:5px}
+    .parent-group-member input{margin:0}
+    .parent-group-create{padding:8px 10px;background:#F0F9FF;border:1px solid #BFDBFE;border-radius:6px}
+    .parent-group-tag{display:inline-block;font-size:10px;font-weight:700;background:var(--surface-3);border:1px solid var(--border-2);border-radius:4px;padding:1px 6px;margin-left:5px}
+
+    /* Swimmer section — the key visual change. A 4px colored left bar
+       cycles through SWIMMER_ACCENTS so each swimmer has a stable
+       identity color. No box, no border, no fill — just the bar + the
+       coloured name. Dashed separator between consecutive swimmers. */
+    .parent-swimmer-section{position:relative;padding:9px 4px 7px 14px;border-left:4px solid var(--border-2);margin:0;background:transparent;border-radius:0 4px 4px 0}
+    .parent-swimmer-section + .parent-swimmer-section{margin-top:6px;border-top:1px dashed var(--border-2);padding-top:11px}
+    .parent-swimmer-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:5px;flex-wrap:wrap}
+    .parent-swimmer-name{font-size:13.5px}
+    .parent-swimmer-name strong{font-weight:800}
+    .parent-swimmer-actions{display:flex;gap:4px;flex-shrink:0}
+    .parent-swimmer-empty{padding:4px 0}
+
+    /* LT row — flat row, dashed bottom divider, no contained box. */
+    .parent-lt-list{display:flex;flex-direction:column;margin-top:3px}
+    .parent-lt-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:5px 4px 5px 2px;background:transparent;border:none;border-radius:0;border-bottom:1px dashed var(--border-2);font-size:12px}
+    .parent-lt-list .parent-lt-row:last-child{border-bottom:none}
     .parent-lt-name{display:inline-block;padding:2px 8px;border:1px solid;border-radius:5px;font-size:10.5px;font-weight:800}
     .parent-lt-balance{flex:1;color:var(--text-2);min-width:120px}
     .parent-lt-balance strong{color:var(--text);font-weight:800}
     .parent-lt-balance .credit-low{color:var(--red-tx)}
     .parent-lt-actions{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+
+    /* T&C strip — single horizontal line, no contained box look. */
+    .account-tc-summary{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 10px;background:transparent;border:none;border-bottom:1px dashed var(--border-2);margin:-4px -2px 9px;font-size:11px}
+    .account-tc-label{font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--text-3);font-size:10px}
+    .account-tc-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:2px 7px;border-radius:5px;border:1px solid transparent}
+    .account-tc-badge.tc-ok{background:var(--green-bg);border-color:var(--green-bd);color:var(--green-tx)}
+    .account-tc-badge.tc-pending{background:var(--amber-bg);border-color:var(--amber-bd);color:var(--amber-tx)}
+
+    /* Subscription log — compact, flat rows. */
     .parent-sub-log{margin-top:10px;padding-top:8px;border-top:1px dashed var(--border-2)}
     .parent-sub-log-title{font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
     .parent-sub-log-list{display:flex;flex-direction:column;gap:3px}
-
-    /* Parent admin toolbar (Edit Contact / Add Swimmer / Manage Group) */
-    .parent-admin-toolbar{display:flex;gap:6px;flex-wrap:wrap;padding:8px 11px;background:#fff;border:1px solid var(--border-2);border-radius:8px;margin-bottom:10px}
-    .parent-contact-edit,.parent-add-swimmer,.parent-group-panel{padding:11px 13px;background:#fff;border:1px solid var(--border-2);border-radius:8px;margin-bottom:10px}
-    .parent-group-block{padding:8px 10px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:6px;margin-bottom:7px}
-    .parent-group-members{display:flex;gap:10px;flex-wrap:wrap}
-    .parent-group-member{display:inline-flex;gap:5px;align-items:center;font-size:12px;cursor:pointer;padding:3px 7px;background:#fff;border:1px solid var(--border-2);border-radius:5px}
-    .parent-group-member input{margin:0}
-    .parent-group-create{padding:8px 10px;background:#F0F9FF;border:1px solid #BFDBFE;border-radius:6px}
-    .parent-group-tag{display:inline-block;font-size:10px;font-weight:700;background:var(--surface-3);border:1px solid var(--border-2);border-radius:4px;padding:1px 6px;margin-left:5px}
-    .parent-swimmer-actions{display:flex;gap:4px;flex-shrink:0}
-    .parent-swimmer-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:5px;flex-wrap:wrap}
 
     /* Schedule cell — clickable link per lesson-type line. Visually a
        text row with a subtle ↗ arrow on hover; links to the current
