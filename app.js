@@ -1604,6 +1604,7 @@ function App(){
       if('emergencySameAsGuardian' in patch) body.emergency_same_as_guardian = !!patch.emergencySameAsGuardian;
       if('emergencyPhone' in patch) body.emergency_phone = patch.emergencyPhone || null;
       if('emergencyRelationship' in patch) body.emergency_relationship = patch.emergencyRelationship || null;
+      if('isActive' in patch) body.is_active = !!patch.isActive;
       // Enrollments: mirror onto legacy columns for backward compat, then
       // sync the student_enrollments table (delete-all then insert).
       if('enrollments' in patch){
@@ -1945,8 +1946,14 @@ function App(){
       }
       m[key].swimmers.push(s);
     });
+    // Parent status is derived from swimmer-level is_active: a parent is
+    // "Active" if any of their swimmers is active, "Archived" only when
+    // every swimmer is inactive. Toggling at parent level propagates to
+    // all children so the state is always coherent.
+    Object.values(m).forEach(pg => {
+      pg.isActive = pg.swimmers.some(s => s.isActive !== false);
+    });
     return Object.values(m).sort((a,b) => {
-      // Unassigned last; then alphabetical by name.
       if(a.key === '__unassigned__') return 1;
       if(b.key === '__unassigned__') return -1;
       return a.name.localeCompare(b.name);
@@ -3803,21 +3810,31 @@ function CreditHistoryPanel({ swimmer, lessonTypes, lessonTypeById, purchases, s
 // ============================================================================
 function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, packageById, familyGroups, groupById, membersByGroup, creditByKey, subscriptions, addStudent, updateStudent, deleteStudent, addGroup, updateGroup, deleteGroup, setStudentGroup, addSubscription, cancelSubscription, adjustBalanceTo, setView }){
   const [searchQ, setSearchQ] = useState('');
+  const [statusFilter, setStatusFilter] = useState('active');   // 'active' | 'archived' | 'all'
   const [expandedKey, setExpandedKey] = useState(null);
   const [contactEditKey, setContactEditKey] = useState(null);   // parent key whose contact is being edited
   const [addingSwimmerFor, setAddingSwimmerFor] = useState(null); // parent key for which we're adding a new swimmer
   const [editingSwimmerId, setEditingSwimmerId] = useState(null); // swimmer id being edited inline
   const [groupPanelKey, setGroupPanelKey] = useState(null);     // parent key whose group management is open
+  const [purchaseKey, setPurchaseKey] = useState(null);         // parent key whose purchase form is open
   const [creatingParent, setCreatingParent] = useState(false);  // new-parent flow
 
-  const filtered = (parentGroups || []).filter(pg => {
-    if(!searchQ.trim()) return true;
-    const q = searchQ.toLowerCase();
-    if((pg.name || '').toLowerCase().includes(q)) return true;
-    if((pg.email || '').toLowerCase().includes(q)) return true;
-    if((pg.phone || '').toLowerCase().includes(q)) return true;
-    return pg.swimmers.some(s => (s.name || '').toLowerCase().includes(q));
-  });
+  const filtered = (parentGroups || [])
+    .filter(pg => {
+      if(statusFilter === 'active' && !pg.isActive) return false;
+      if(statusFilter === 'archived' && pg.isActive) return false;
+      return true;
+    })
+    .filter(pg => {
+      if(!searchQ.trim()) return true;
+      const q = searchQ.toLowerCase();
+      if((pg.name || '').toLowerCase().includes(q)) return true;
+      if((pg.email || '').toLowerCase().includes(q)) return true;
+      if((pg.phone || '').toLowerCase().includes(q)) return true;
+      return pg.swimmers.some(s => (s.name || '').toLowerCase().includes(q));
+    });
+  const activeCount = (parentGroups || []).filter(p => p.isActive).length;
+  const archivedCount = (parentGroups || []).filter(p => !p.isActive).length;
   const totalSwimmers = (parentGroups || []).reduce((sum, p) => sum + p.swimmers.length, 0);
   const totalActiveCredits = Object.values(creditByKey || {}).reduce((sum, b) => sum + (Number(b.remaining_balance) || 0), 0);
 
@@ -3831,6 +3848,17 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
       });
     }
     setContactEditKey(null);
+  }
+
+  // Archive/restore parent — flips is_active on every child. Status is
+  // derived (any active swimmer ⇒ active parent), so toggling all of
+  // them together keeps the derived state coherent.
+  async function setParentArchived(pg, archived){
+    const verb = archived ? 'archive' : 'restore';
+    if(!confirm(`${archived ? 'Archive' : 'Restore'} parent "${pg.name}" and all ${pg.swimmers.length} of their swimmer${pg.swimmers.length===1?'':'s'}?`)) return;
+    for(const s of pg.swimmers){
+      await updateStudent(s.id, { isActive: !archived });
+    }
   }
 
   return <>
@@ -3848,6 +3876,11 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
       </div>
       <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
         <input className="input" style={{flex:1,minWidth:240,maxWidth:420}} placeholder="Search by parent name, email, phone, or swimmer name…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
+        <div className="tabs" style={{gap:2,padding:2}}>
+          <button className={`tab ${statusFilter==='active'?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setStatusFilter('active')}>Active ({activeCount})</button>
+          <button className={`tab ${statusFilter==='archived'?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setStatusFilter('archived')}>Archived ({archivedCount})</button>
+          <button className={`tab ${statusFilter==='all'?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setStatusFilter('all')}>All</button>
+        </div>
         <button className="btn btn-primary small" onClick={()=>setCreatingParent(true)}>+ New Parent</button>
       </div>
     </div>
@@ -3893,10 +3926,13 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
       const parentGroupsInPlay = [...new Set(pg.swimmers.map(s => s.familyGroupId).filter(Boolean))]
         .map(gid => groupById?.[gid]).filter(Boolean);
 
-      return <div key={pg.key} className="parent-card">
+      return <div key={pg.key} className={`parent-card ${!pg.isActive?'is-archived':''}`}>
         <div className="parent-head" onClick={(e)=>{ if(e.target.closest('button,input,select')) return; setExpandedKey(isExpanded?null:pg.key); }}>
           <div className="parent-head-main">
-            <div className="parent-name">{pg.name}</div>
+            <div className="parent-name">
+              {pg.name}
+              {!pg.isActive && <span className="parent-archived-badge" title="All swimmers under this parent are archived">📦 Archived</span>}
+            </div>
             <div className="parent-contact subtle small">
               {pg.email ? <span>📧 {pg.email}</span> : null}
               {pg.email && pg.phone ? <span> · </span> : null}
@@ -3918,7 +3954,26 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
             <button className="btn btn-ghost small" onClick={()=>setContactEditKey(isEditingContact?null:pg.key)}>{isEditingContact?'Close':'✎ Edit Contact'}</button>
             <button className="btn btn-ghost small" onClick={()=>setAddingSwimmerFor(isAddingSwimmer?null:pg.key)}>{isAddingSwimmer?'Close':'+ Add Swimmer'}</button>
             {swimmerCount >= 2 && <button className="btn btn-ghost small" onClick={()=>setGroupPanelKey(isManagingGroup?null:pg.key)}>{isManagingGroup?'Close':'👪 Manage Group'}</button>}
+            {addSubscription && <button className="btn btn-primary small" onClick={()=>setPurchaseKey(purchaseKey===pg.key?null:pg.key)}>{purchaseKey===pg.key?'Close':'💳 Record Purchase'}</button>}
+            <div style={{marginLeft:'auto'}}>
+              <button className={`btn small ${pg.isActive?'btn-ghost':'btn-primary'}`} onClick={()=>setParentArchived(pg, pg.isActive)} title={pg.isActive ? 'Archive this parent and all their swimmers' : 'Restore this parent and all their swimmers'}>
+                {pg.isActive ? '📦 Archive' : '✓ Restore'}
+              </button>
+            </div>
           </div>}
+
+          {/* Detailed purchase / subscription form with auto-pricing */}
+          {purchaseKey === pg.key && <RecordPurchaseForm
+            pg={pg}
+            lessonTypes={lessonTypes}
+            lessonTypeById={lessonTypeById}
+            packages={packages}
+            packageById={packageById}
+            groupById={groupById}
+            membersByGroup={membersByGroup}
+            addSubscription={addSubscription}
+            onClose={()=>setPurchaseKey(null)}
+          />}
 
           {/* Contact editor */}
           {isEditingContact && <ParentContactEditor pg={pg} onSave={(patch)=>saveParentContact(pg, patch)} onCancel={()=>setContactEditKey(null)} />}
@@ -4037,6 +4092,261 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
       </div>;
     })}
   </>;
+}
+
+// ============================================================================
+// RecordPurchaseForm — full credit purchase / subscription recording form.
+// Restores the detailed entry path (date, lesson type, credits, amount,
+// receipt #, source, notes) that used to live in CreditHistoryPanel,
+// surfaced now at the parent admin level where billing actually happens.
+//
+// Pricing auto-calculates from the chosen package + selected swimmers:
+//   • Group package (is_group=true) where selected count == pkg.pax:
+//       total = amount × quantity  (bundle / family discount applies)
+//   • Group package where selected count != pkg.pax:
+//       total = fallback_per_pax × count × quantity  (no discount)
+//   • Non-group package (per-swimmer):
+//       total = amount × count × quantity
+//
+// Subject routing for the resulting subscription:
+//   • If selected swimmers === all members of one unbound family group:
+//       subject = family_group  (one subscription, N purchase rows)
+//   • Else if a single swimmer is selected:
+//       subject = student  (one subscription, one purchase row)
+//   • Else: a per-swimmer subscription is fired for each selected swimmer
+//       (linked by shared receipt # for consolidated reporting)
+// ============================================================================
+function RecordPurchaseForm({ pg, lessonTypes, lessonTypeById, packages, packageById, groupById, membersByGroup, addSubscription, onClose }){
+  // Eligible lesson types: those any of the parent's swimmers are enrolled in
+  const eligibleLts = (lessonTypes || []).filter(lt =>
+    pg.swimmers.some(s => (s.lessonTypeIds || []).includes(lt.id))
+  );
+  const [ltId, setLtId] = useState(eligibleLts[0]?.id || '');
+
+  // Eligible swimmers for this LT (under this parent)
+  const eligibleSwimmers = pg.swimmers.filter(s => (s.lessonTypeIds || []).includes(ltId));
+  const [selectedSwimmerIds, setSelectedSwimmerIds] = useState(new Set());
+
+  // Reset swimmer selection when LT changes — default to all eligible
+  useEffect(() => {
+    setSelectedSwimmerIds(new Set(eligibleSwimmers.map(s => s.id)));
+  }, [ltId]);
+
+  // Packages for this lesson type
+  const eligiblePackages = (packages || []).filter(p => p.lesson_type_id === ltId && p.is_active !== false);
+  // Pre-select package: pick the one already on the first selected swimmer's
+  // enrollment for this LT, falling back to the first eligible package.
+  const defaultPkgId = (() => {
+    const firstSwimmer = eligibleSwimmers.find(s => selectedSwimmerIds.has(s.id)) || eligibleSwimmers[0];
+    const enrol = firstSwimmer?.enrollments?.find(e => e.lessonTypeId === ltId);
+    return enrol?.packageId || eligiblePackages[0]?.id || '';
+  })();
+  const [pkgId, setPkgId] = useState(defaultPkgId);
+  useEffect(() => { setPkgId(defaultPkgId); }, [defaultPkgId]);
+
+  const [credits, setCredits] = useState(4);
+  const [quantity, setQuantity] = useState(1);
+  const [date, setDate] = useState(toDateStr(new Date()));
+  const [amountPaid, setAmountPaid] = useState('');
+  const [receiptNumber, setReceiptNumber] = useState('');
+  const [source, setSource] = useState('topup');
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const selectedPkg = pkgId ? packageById(pkgId) : null;
+
+  // When package changes, default credits to the package's billing_count
+  useEffect(() => {
+    if(selectedPkg && selectedPkg.billing_mode === 'credit' && selectedPkg.billing_count){
+      setCredits(Number(selectedPkg.billing_count));
+    }
+  }, [pkgId]);
+
+  // Auto-pricing: depends on package shape + selected swimmer count
+  const selectedCount = selectedSwimmerIds.size;
+  const { unitPrice, totalPrice, pricingNote, qualifiesForBundle } = useMemo(() => {
+    if(!selectedPkg || !selectedCount) return { unitPrice:0, totalPrice:0, pricingNote:'Select a package', qualifiesForBundle:false };
+    const amount = Number(selectedPkg.amount) || 0;
+    const fallback = Number(selectedPkg.fallback_per_pax) || 0;
+    const pax = Number(selectedPkg.pax) || 0;
+    if(selectedPkg.is_group){
+      if(pax && selectedCount === pax){
+        const tp = amount * Number(quantity || 1);
+        return { unitPrice:amount, totalPrice:tp, pricingNote:`Bundle: RM${amount.toFixed(2)} for ${pax} swimmers (family discount)`, qualifiesForBundle:true };
+      } else {
+        const tp = fallback * selectedCount * Number(quantity || 1);
+        return { unitPrice:fallback, totalPrice:tp, pricingNote:`Off-bundle: RM${fallback.toFixed(2)} × ${selectedCount} swimmer${selectedCount===1?'':'s'} (needs exactly ${pax} pax to qualify for the discount)`, qualifiesForBundle:false };
+      }
+    } else {
+      const tp = amount * selectedCount * Number(quantity || 1);
+      return { unitPrice:amount, totalPrice:tp, pricingNote:`Individual: RM${amount.toFixed(2)} × ${selectedCount} swimmer${selectedCount===1?'':'s'}`, qualifiesForBundle:false };
+    }
+  }, [selectedPkg, selectedCount, quantity]);
+
+  // Auto-fill amount paid from the computed total when the form updates
+  useEffect(() => {
+    setAmountPaid(totalPrice ? totalPrice.toFixed(2) : '');
+  }, [totalPrice]);
+
+  // Surface family pax group options that exist for this LT — gives the user
+  // a hint when there's a Fam3/Fam4/Fam5 package they could be using.
+  const familyPaxOptions = eligiblePackages.filter(p => p.is_group && p.pax);
+
+  // Determine subject routing
+  const selectedSwimmers = eligibleSwimmers.filter(s => selectedSwimmerIds.has(s.id));
+  // Are all selected swimmers in the same unbound family group, AND do they
+  // collectively make up all members of that group?
+  const sharedGroupId = selectedSwimmers.length ? selectedSwimmers[0].familyGroupId : null;
+  const allShareGroup = !!sharedGroupId && selectedSwimmers.every(s => s.familyGroupId === sharedGroupId);
+  const sharedGroup = allShareGroup && groupById ? groupById[sharedGroupId] : null;
+  const groupIsUnbound = sharedGroup && sharedGroup.groupType !== 'bound';
+  const groupMembersInLt = sharedGroup ? ((membersByGroup?.[sharedGroupId] || []).filter(m => (m.lessonTypeIds||[]).includes(ltId))) : [];
+  const routesAsGroup = allShareGroup && groupIsUnbound && selectedSwimmers.length === groupMembersInLt.length;
+  const subjectLabel = routesAsGroup
+    ? `👪 Family group "${sharedGroup.name}" (all ${selectedSwimmers.length} members)`
+    : selectedSwimmers.length === 1
+      ? `👤 ${selectedSwimmers[0].name}`
+      : selectedSwimmers.length > 1
+        ? `👤 ${selectedSwimmers.length} individual subscriptions (one per swimmer)`
+        : 'No swimmers selected';
+
+  function toggleSwimmer(id){
+    const next = new Set(selectedSwimmerIds);
+    if(next.has(id)) next.delete(id); else next.add(id);
+    setSelectedSwimmerIds(next);
+  }
+  function selectAll(){ setSelectedSwimmerIds(new Set(eligibleSwimmers.map(s => s.id))); }
+  function selectNone(){ setSelectedSwimmerIds(new Set()); }
+
+  async function submit(){
+    if(!ltId){ alert('Select a lesson type.'); return; }
+    if(!selectedSwimmers.length){ alert('Select at least one swimmer.'); return; }
+    if(!Number(credits)){ alert('Credits per swimmer must be > 0.'); return; }
+    try{
+      setBusy(true);
+      const baseOpts = {
+        lessonTypeId: ltId,
+        creditsPerSwimmer: Number(credits),
+        quantity: Number(quantity) || 1,
+        source,
+        notes: notes || `Recorded purchase (${pg.name})`,
+        amountPaid: amountPaid ? Number(amountPaid) : null,
+        receiptNumber: receiptNumber || null,
+        subscriptionDate: date,
+        packageId: pkgId || null
+      };
+      if(routesAsGroup){
+        await addSubscription({ ...baseOpts, subjectType:'family_group', subjectId: sharedGroupId });
+      } else {
+        // Fire one subscription per swimmer, sharing the receipt number
+        // so they're consolidated visually in the Receipts log.
+        for(const s of selectedSwimmers){
+          await addSubscription({ ...baseOpts, subjectType:'student', subjectId: s.id });
+        }
+      }
+      onClose();
+    } catch(err){
+      alert(err.message || 'Failed to record purchase.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <div className="record-purchase-form">
+    <div className="parent-sub-log-title">💳 Record purchase / subscription</div>
+    <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr'}}>
+      <div className="field"><label>Lesson Type</label>
+        <select className="select" value={ltId} onChange={e=>setLtId(e.target.value)}>
+          {eligibleLts.length === 0 && <option value="">No swimmer is enrolled in any lesson type</option>}
+          {eligibleLts.map(lt => <option key={lt.id} value={lt.id}>{lt.name}</option>)}
+        </select>
+      </div>
+      <div className="field"><label>Package</label>
+        <select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}>
+          {eligiblePackages.length === 0 && <option value="">No packages for this lesson type</option>}
+          {eligiblePackages.map(p => <option key={p.id} value={p.id}>
+            {p.name}{p.is_group ? ` · Family ${p.pax}` : ''}{p.amount != null ? ` · RM${p.amount}` : ''}{p.billing_mode==='credit' && p.billing_count ? ` · ${p.billing_count}cr` : ''}
+          </option>)}
+        </select>
+      </div>
+    </div>
+
+    <div className="field" style={{marginTop:8}}>
+      <label>Swimmers <span className="subtle" style={{textTransform:'none',letterSpacing:0,fontWeight:600,fontSize:10}}>· {selectedCount} of {eligibleSwimmers.length} selected</span></label>
+      <div className="record-purchase-swimmers">
+        {eligibleSwimmers.length === 0
+          ? <div className="subtle small">No swimmer under {pg.name} is enrolled in the selected lesson type.</div>
+          : <>
+              {eligibleSwimmers.map(s => <label key={s.id} className="record-purchase-swimmer">
+                <input type="checkbox" checked={selectedSwimmerIds.has(s.id)} onChange={()=>toggleSwimmer(s.id)} /> {s.name}
+                {s.familyGroupId && groupById?.[s.familyGroupId] && <span className="subtle small" style={{marginLeft:4}}> · {groupById[s.familyGroupId].groupType==='bound'?'🔗':'👪'} {groupById[s.familyGroupId].name}</span>}
+              </label>)}
+              <div style={{display:'flex',gap:4,marginTop:4}}>
+                <button type="button" className="btn btn-ghost small" onClick={selectAll}>All</button>
+                <button type="button" className="btn btn-ghost small" onClick={selectNone}>None</button>
+              </div>
+            </>}
+      </div>
+    </div>
+
+    {/* Family-pax hint — surfaces alternative discounted packages */}
+    {familyPaxOptions.length > 0 && <div className="record-purchase-hint">
+      <strong>Family pax options for this lesson type:</strong>
+      {familyPaxOptions.map(p => <span key={p.id} className="record-purchase-pax-chip" style={p.id === pkgId ? {background:'#DBEAFE',borderColor:'#3B82F6',color:'#1E40AF'} : null}>
+        {p.name} · {p.pax} pax · RM{p.amount}{selectedCount === p.pax ? ' ← matches!' : ''}
+      </span>)}
+    </div>}
+
+    {/* Pricing summary — the auto-calculated total */}
+    <div className={`record-purchase-pricing ${qualifiesForBundle?'is-discount':''}`}>
+      <div className="record-purchase-total">
+        Total: <strong>RM{totalPrice.toFixed(2)}</strong>
+        {Number(quantity) > 1 && <span className="subtle small"> · {quantity}× cycle</span>}
+      </div>
+      <div className="record-purchase-note subtle small">{pricingNote}</div>
+      <div className="record-purchase-subject subtle small" style={{marginTop:3}}>Will record as: {subjectLabel}</div>
+    </div>
+
+    <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr',marginTop:8}}>
+      <div className="field"><label>Credits per swimmer</label>
+        <input className="input" type="number" min="1" value={credits} onChange={e=>setCredits(e.target.value)} />
+      </div>
+      <div className="field"><label>Quantity (cycles)</label>
+        <input className="input" type="number" min="1" value={quantity} onChange={e=>setQuantity(e.target.value)} />
+      </div>
+      <div className="field"><label>Date</label>
+        <input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)} />
+      </div>
+    </div>
+
+    <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr',marginTop:8}}>
+      <div className="field"><label>Amount paid (RM)</label>
+        <input className="input" type="number" step="0.01" value={amountPaid} onChange={e=>setAmountPaid(e.target.value)} placeholder="Auto-calculated" />
+      </div>
+      <div className="field"><label>Receipt #</label>
+        <input className="input" value={receiptNumber} onChange={e=>setReceiptNumber(e.target.value)} placeholder="e.g. INV-001234" />
+      </div>
+      <div className="field"><label>Source</label>
+        <select className="select" value={source} onChange={e=>setSource(e.target.value)}>
+          <option value="topup">Top-up</option>
+          <option value="signup">Sign-up</option>
+          <option value="subscription">Subscription</option>
+          <option value="gift">Gift</option>
+          <option value="manual">Manual</option>
+        </select>
+      </div>
+    </div>
+
+    <div className="field" style={{marginTop:8}}>
+      <label>Notes (optional)</label>
+      <textarea className="textarea" rows={2} value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Reference, payment method, anything to remember…" />
+    </div>
+
+    <div style={{display:'flex',justifyContent:'flex-end',gap:6,marginTop:10}}>
+      <button className="btn btn-ghost small" onClick={onClose}>Cancel</button>
+      <button className="btn btn-primary" onClick={submit} disabled={busy || !ltId || !selectedSwimmers.length || !Number(credits)}>{busy ? 'Saving…' : 'Record Purchase'}</button>
+    </div>
+  </div>;
 }
 
 // Inline editor for a parent's contact info — propagates to every child.
