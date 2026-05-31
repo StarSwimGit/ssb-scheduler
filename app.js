@@ -2127,6 +2127,8 @@ function App(){
           familyGroups={familyGroups}
           membersByGroup={membersByGroup}
           scheduleByStudent={scheduleByStudent}
+          sessions={sessions}
+          jumpToWeek={(weekStartDate, dayIndex)=>{ const d = fromDateStr(weekStartDate); d.setDate(d.getDate() + (dayIndex || 0)); setSelectedDate(toDateStr(d)); setView('week'); }}
           creditByKey={creditByKey}
           purchasesByStudent={purchasesByStudent}
           subscriptions={subscriptions}
@@ -4328,7 +4330,7 @@ function FamilyGroupsPanel({ groups, students, groupPackages, lessonTypes, packa
   </div>;
 }
 
-function StudentsView({ students, lessonTypes, lessonTypeById, packages, packageById, groupById, familyGroups, membersByGroup, scheduleByStudent, creditByKey, purchasesByStudent, subscriptions, addCreditPurchase, deleteCreditPurchase, addSubscription, cancelSubscription, adjustBalanceTo, addStudent, updateStudent, deleteStudent }){
+function StudentsView({ students, lessonTypes, lessonTypeById, packages, packageById, groupById, familyGroups, membersByGroup, scheduleByStudent, sessions, jumpToWeek, creditByKey, purchasesByStudent, subscriptions, addCreditPurchase, deleteCreditPurchase, addSubscription, cancelSubscription, adjustBalanceTo, addStudent, updateStudent, deleteStudent }){
   const [name, setName] = useState('');
   const [dob, setDob] = useState('');
   const [gender, setGender] = useState(null);
@@ -4345,6 +4347,35 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
   const [q, setQ] = useState('');
   const [sortBy, setSortBy] = useState('name');
   const [formExpanded, setFormExpanded] = useState(false);
+
+  // nextScheduledByStudentLt: for each (studentId, lessonTypeId) and for
+  // each (day, startMinute) slot the swimmer recurs in, find the earliest
+  // weekStartDate (≥ current week) when an actual session exists for that
+  // slot in that lesson type with that swimmer enrolled. Used to make each
+  // Schedule cell entry a clickable link that jumps the Weekly view to
+  // exactly the right week — current week if a session exists there,
+  // otherwise the next upcoming scheduled week (handles forwards,
+  // duplicates-into-future, etc.).
+  const nextScheduledByStudentLt = useMemo(() => {
+    const todayWs = weekStartStr(todayStr());
+    const out = {};   // studentId → lessonTypeId → weekStartDate
+    (sessions || []).forEach(s => {
+      if(s.cancelledAt) return;                       // skip ghosts
+      if(!s.weekStartDate || s.weekStartDate < todayWs) return;
+      (s.students || []).forEach(st => {
+        const sid = st.studentId; if(!sid) return;
+        if(!out[sid]) out[sid] = {};
+        const prev = out[sid][s.lessonTypeId];
+        if(!prev || s.weekStartDate < prev) out[sid][s.lessonTypeId] = s.weekStartDate;
+      });
+    });
+    return out;
+  }, [sessions]);
+  function nextWeekFor(studentId, lessonTypeName){
+    const ltId = (lessonTypes.find(lt => lt.name === lessonTypeName) || {}).id;
+    if(!ltId) return null;
+    return (nextScheduledByStudentLt[studentId] || {})[ltId] || null;
+  }
 
   function colorsForId(id){ const t = lessonTypeById(id); return t ? { bg:t.bg_color, bd:t.border_color, tx:t.text_color, name:t.name } : { bg:'#eee', bd:'#ccc', tx:'#333', name:'(removed)' }; }
   function packageLabel(s){
@@ -4428,9 +4459,9 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
           <th style={{width:32}}>Age</th>
           <th style={{width:'13%'}}>Parent</th>
           <th style={{width:'10%'}}>Emergency</th>
-          <th style={{width:'14%'}}>Lesson Type</th>
-          <th style={{width:'12%'}}>Package</th>
-          <th style={{width:'13%'}}>Credits</th>
+          <th style={{width:'10%'}}>Lesson Type</th>
+          <th style={{width:'17%'}}>Package</th>
+          <th style={{width:'9%'}}>Credits</th>
           <th style={{width:'5%'}}>T&amp;C</th>
           <th>Schedule</th>
         </tr></thead>
@@ -4464,7 +4495,16 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
                 ? <div style={{display:'flex',flexDirection:'column',gap:2}}>{ltCredits.map(({lt, rem}) => lt ? <span key={lt.id} className="swimmer-cred-chip"><span className="subtle" style={{fontSize:9}}>{lt.name.split(' ').slice(0,2).join(' ')}:</span> <strong className={rem!=null && rem<=2?'credit-low':''}>{rem!=null ? rem : '—'}</strong></span> : null)}</div>
                 : <span className="subtle">—</span>}</td>
               <td>{tcOk?<span className="tc-badge-ok" title={`Accepted ${new Date(s.tcAcceptedAt).toLocaleDateString()} · ID: ${s.tcAcceptanceId}`}>✅</span>:<span className="tc-badge-pending" title="Terms & Conditions not yet accepted">⚠</span>}</td>
-              <td style={{fontSize:11}}>{sched?sched.map((g,gi)=><div key={gi} style={{marginBottom:2}}><span style={{fontWeight:700}}>{g.type}:</span> <span className="subtle">{g.times.join(', ')}</span></div>):<span className="subtle">Not scheduled</span>}</td>
+              <td style={{fontSize:11}}>{sched?sched.map((g,gi)=>{
+                const targetWeek = jumpToWeek ? nextWeekFor(s.id, g.type) : null;
+                const handleJump = (e) => { e.stopPropagation(); if(targetWeek) jumpToWeek(targetWeek, 0); };
+                return targetWeek
+                  ? <button key={gi} type="button" className="swimmer-sched-link" onClick={handleJump} title={`Jump to week of ${targetWeek}`}>
+                      <span style={{fontWeight:700}}>{g.type}:</span> <span className="subtle">{g.times.join(', ')}</span>
+                      <span className="swimmer-sched-arrow" aria-hidden="true">↗</span>
+                    </button>
+                  : <div key={gi} style={{marginBottom:2}}><span style={{fontWeight:700}}>{g.type}:</span> <span className="subtle">{g.times.join(', ')}</span></div>;
+              }):<span className="subtle">Not scheduled</span>}</td>
             </tr>
           </React.Fragment>;
         }):<tr><td colSpan={COLS} className="empty">No swimmers registered yet.</td></tr>}
