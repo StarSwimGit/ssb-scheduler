@@ -687,6 +687,23 @@
     .parent-sub-log-title{font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
     .parent-sub-log-list{display:flex;flex-direction:column;gap:3px}
 
+    /* Parent admin toolbar (Edit Contact / Add Swimmer / Manage Group) */
+    .parent-admin-toolbar{display:flex;gap:6px;flex-wrap:wrap;padding:8px 11px;background:#fff;border:1px solid var(--border-2);border-radius:8px;margin-bottom:10px}
+    .parent-contact-edit,.parent-add-swimmer,.parent-group-panel{padding:11px 13px;background:#fff;border:1px solid var(--border-2);border-radius:8px;margin-bottom:10px}
+    .parent-group-block{padding:8px 10px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:6px;margin-bottom:7px}
+    .parent-group-members{display:flex;gap:10px;flex-wrap:wrap}
+    .parent-group-member{display:inline-flex;gap:5px;align-items:center;font-size:12px;cursor:pointer;padding:3px 7px;background:#fff;border:1px solid var(--border-2);border-radius:5px}
+    .parent-group-member input{margin:0}
+    .parent-group-create{padding:8px 10px;background:#F0F9FF;border:1px solid #BFDBFE;border-radius:6px}
+    .parent-group-tag{display:inline-block;font-size:10px;font-weight:700;background:var(--surface-3);border:1px solid var(--border-2);border-radius:4px;padding:1px 6px;margin-left:5px}
+    .parent-swimmer-actions{display:flex;gap:4px;flex-shrink:0}
+    .parent-swimmer-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:5px;flex-wrap:wrap}
+
+    /* Per-LT credit chip in the read-only Swimmers directory */
+    .swimmer-cred-chip{display:inline-block;font-size:10.5px;padding:1px 6px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:4px;line-height:1.4;white-space:nowrap}
+    .swimmer-cred-chip strong{font-weight:800;color:var(--text)}
+    .swimmer-cred-chip strong.credit-low{color:var(--red-tx)}
+
     /* Trial annotation — drawn from the swimmer's package (any package whose
        name contains "trial"). Pill in the modal slot, subtle mark in cards. */
     .trial-pill{display:inline-flex;align-items:center;height:22px;padding:0 7px;font-size:9.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;background:#FEE2E2;color:#B91C1C;border:1px solid #FCA5A5;border-radius:5px;white-space:nowrap;align-self:center;flex:0 0 auto}
