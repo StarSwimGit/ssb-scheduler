@@ -655,6 +655,14 @@
       body[data-print-view="receipt"] #receipt-sheet *{visibility:visible}
       body[data-print-view="receipt"] #receipt-sheet{position:fixed;top:0;left:0;width:100%;padding:14mm 18mm;border:none;background:#fff;color:#000}
     }
+    /* Prominent adult-swimmer toggle at the top of the StudentEditor when
+       used in +New Account flow — primary affordance for "I'm registering
+       myself" vs "I'm a parent registering my child". */
+    .adult-self-toggle{padding:9px 12px;background:#ECFEFF;border:1px solid #67E8F9;border-radius:8px;margin-bottom:10px}
+    .adult-self-toggle .gb-check{display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-size:12px;color:#0E7490;margin:0;line-height:1.4}
+    .adult-self-toggle .gb-check input{margin-top:2px;flex-shrink:0}
+    .adult-self-toggle .gb-check span{flex:1}
+
     /* Archived parent visuals — dim the card, badge in header */
     .parent-card.is-archived{opacity:0.62;background:#FAFAFC}
     .parent-card.is-archived .parent-name{color:var(--text-2)}
