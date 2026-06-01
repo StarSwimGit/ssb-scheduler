@@ -5,12 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SSB Registration Form</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&display=swap" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
   <style>
     /* ── Screen preview ── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0 }
     body {
-      font-family: Outfit, Arial, sans-serif;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      font-feature-settings: "liga", "kern", "cv11"; /* cv11=alternate l with curved tail for clearer I/l distinction */
       background: #d0d7e2;
       padding: 28px 16px 48px;
       display: flex; flex-direction: column; align-items: center; gap: 16px;
@@ -47,7 +48,7 @@
       border-bottom: 2.5px solid #000;
       padding-bottom: 7px; margin-bottom: 12px;
     }
-    .hd-name { font-size: 18px; font-weight: 800; letter-spacing: -.3px }
+    .hd-name { font-size: 18px; font-weight: 700; letter-spacing: -.3px }
     .hd-form { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: #555 }
 
     /* Section */
@@ -68,7 +69,7 @@
     .f.w36 { flex: 0 0 40px }
     .lbl {
       font-size: 9px; text-transform: uppercase; letter-spacing: .7px;
-      font-weight: 700; color: #555; margin-bottom: 3px; white-space: nowrap;
+      font-weight: 600; color: #555; margin-bottom: 3px; white-space: nowrap;
     }
     .lbl .req { color: #000 }
     .line {
@@ -89,7 +90,7 @@
       font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;
       margin-bottom: 1px; display: flex; align-items: center; gap: 6px;
     }
-    .sw-num { font-size: 13px; font-weight: 800 }
+    .sw-num { font-size: 13px; font-weight: 700 }
     .sw-label { color: #444 }
 
     /* Lesson type checkboxes */
@@ -124,7 +125,7 @@
     // This means clicking "Print PDF version" in the intake form opens this
     // window and the print dialog appears immediately — no extra click needed.
     window.addEventListener('load', () => {
-      // Small delay so the logo image and Outfit font render before print.
+      // Small delay so the logo image and Inter font render before print.
       setTimeout(() => window.print(), 700);
     });
     // Close this helper window automatically after the user dismisses print.
@@ -191,7 +192,7 @@
     <div class="sw-head"><span class="sw-num">1</span><span class="sw-label">Swimmer One</span></div>
     <label class="ck" style="display:inline-flex;margin-bottom:6px;font-size:9px">
       <span class="box" style="margin-top:1px;flex-shrink:0"></span>
-      <span style="margin-left:5px;color:#444">Adult swimmer registering myself — I am the swimmer (name &amp; DOB same as Parent / Guardian above; complete gender only)</span>
+      <span style="margin-left:5px;color:#444">Adult swimmer registering myself — I am the swimmer (full name same as Parent / Guardian above; complete <strong>Date of Birth and Gender</strong> below)</span>
     </label>
     <div class="row">
       <div class="f grow"><div class="lbl">Swimmer's Full Name <span class="req">*</span></div><div class="line line-tall"></div></div>
