@@ -258,6 +258,7 @@ function App(){
   const [creditBalances,setCreditBalances] = useState([]);
   const [creditPurchases,setCreditPurchases] = useState([]);
   const [subscriptions,setSubscriptions] = useState([]);
+  const [codes,setCodes] = useState([]);
   const [replacementPending,setReplacementPending] = useState([]);
   const [tcAcceptances,setTcAcceptances] = useState([]);
   const [remarks,setRemarks] = useState({});
@@ -282,7 +283,7 @@ function App(){
     try{
       setLoading(true); setError('');
       await loadOptions();
-      await Promise.all([loadSessions(), loadStudents(), loadGroups(), loadCreditBalances(), loadCreditPurchases(), loadSubscriptions(), loadReplacementPending(), loadTcAcceptances(), loadRemarks(monthCursor)]);
+      await Promise.all([loadSessions(), loadStudents(), loadGroups(), loadCreditBalances(), loadCreditPurchases(), loadSubscriptions(), loadCodes(), loadReplacementPending(), loadTcAcceptances(), loadRemarks(monthCursor)]);
       setStatus('Connected');
     } catch(err){ handleErr(err); }
     finally{ setLoading(false); }
@@ -498,6 +499,80 @@ function App(){
       const rows = await selectRows('subscriptions', '*', '&order=subscription_date.desc,created_at.desc');
       setSubscriptions(rows || []);
     } catch(e){ console.warn('Subscriptions not available (run subscriptions migration):', e?.message || e); setSubscriptions([]); }
+  }
+
+  // ============================================================================
+  // Referral & Discount Codes — one unified codes table handles both kinds.
+  // Industry standard (Stripe Coupons / Shopify Discounts): a single record
+  // can be either an owner-attached referral or a business-issued promo,
+  // with shared validity/usage/scope semantics so the future invoice module
+  // applies them through one lookup.
+  // ============================================================================
+  async function loadCodes(){
+    try{
+      const rows = await selectRows('scheduler_codes', '*', '&order=created_at.desc');
+      setCodes(rows || []);
+    } catch(e){ console.warn('Codes table not available (run codes migration):', e?.message || e); setCodes([]); }
+  }
+  async function addCode(input){
+    // Normalises the form payload into the storage-shape, then inserts.
+    // Returns the inserted row so the caller can immediately render it.
+    try{
+      setError('');
+      const row = {
+        code: (input.code || '').trim().toUpperCase(),
+        code_type: input.codeType || 'discount',
+        owner_student_id: input.ownerStudentId || null,
+        discount_type: input.discountType || null,
+        discount_value: input.discountValue != null && input.discountValue !== '' ? Number(input.discountValue) : null,
+        referrer_reward_type: input.referrerRewardType || null,
+        referrer_reward_value: input.referrerRewardValue != null && input.referrerRewardValue !== '' ? Number(input.referrerRewardValue) : null,
+        valid_from: input.validFrom || null,
+        valid_until: input.validUntil || null,
+        max_uses: input.maxUses != null && input.maxUses !== '' ? Number(input.maxUses) : null,
+        max_uses_per_customer: input.maxUsesPerCustomer != null && input.maxUsesPerCustomer !== '' ? Number(input.maxUsesPerCustomer) : 1,
+        applies_to: input.appliesTo || 'all',
+        applicable_package_ids: input.applicablePackageIds || null,
+        minimum_amount: input.minimumAmount != null && input.minimumAmount !== '' ? Number(input.minimumAmount) : null,
+        is_active: input.isActive !== false,
+        notes: input.notes || null
+      };
+      if(!row.code) throw new Error('Code string is required');
+      const ins = await insertRows('scheduler_codes', row);
+      await loadCodes();
+      return ins?.[0] || null;
+    } catch(e){ setError(`addCode: ${e?.message || e}`); throw e; }
+  }
+  async function updateCode(id, patch){
+    try{
+      setError('');
+      const body = {};
+      if('code' in patch) body.code = (patch.code || '').trim().toUpperCase();
+      if('codeType' in patch) body.code_type = patch.codeType;
+      if('ownerStudentId' in patch) body.owner_student_id = patch.ownerStudentId || null;
+      if('discountType' in patch) body.discount_type = patch.discountType || null;
+      if('discountValue' in patch) body.discount_value = patch.discountValue != null && patch.discountValue !== '' ? Number(patch.discountValue) : null;
+      if('referrerRewardType' in patch) body.referrer_reward_type = patch.referrerRewardType || null;
+      if('referrerRewardValue' in patch) body.referrer_reward_value = patch.referrerRewardValue != null && patch.referrerRewardValue !== '' ? Number(patch.referrerRewardValue) : null;
+      if('validFrom' in patch) body.valid_from = patch.validFrom || null;
+      if('validUntil' in patch) body.valid_until = patch.validUntil || null;
+      if('maxUses' in patch) body.max_uses = patch.maxUses != null && patch.maxUses !== '' ? Number(patch.maxUses) : null;
+      if('maxUsesPerCustomer' in patch) body.max_uses_per_customer = patch.maxUsesPerCustomer != null && patch.maxUsesPerCustomer !== '' ? Number(patch.maxUsesPerCustomer) : 1;
+      if('appliesTo' in patch) body.applies_to = patch.appliesTo;
+      if('applicablePackageIds' in patch) body.applicable_package_ids = patch.applicablePackageIds || null;
+      if('minimumAmount' in patch) body.minimum_amount = patch.minimumAmount != null && patch.minimumAmount !== '' ? Number(patch.minimumAmount) : null;
+      if('isActive' in patch) body.is_active = !!patch.isActive;
+      if('notes' in patch) body.notes = patch.notes || null;
+      await patchRows('scheduler_codes', `id=eq.${id}`, body);
+      await loadCodes();
+    } catch(e){ setError(`updateCode: ${e?.message || e}`); throw e; }
+  }
+  async function deleteCode(id){
+    try{
+      setError('');
+      await deleteRows('scheduler_codes', `id=eq.${id}`);
+      await loadCodes();
+    } catch(e){ setError(`deleteCode: ${e?.message || e}`); throw e; }
   }
 
   // bumpBalance: idempotent helper that either creates or updates the
@@ -2213,6 +2288,12 @@ function App(){
         saveLessonType={saveLessonType}
         deleteLessonType={deleteLessonType}
         lessonTypeCounts={lessonTypeCounts}
+        codes={codes}
+        students={students}
+        packages={options.packages}
+        addCode={addCode}
+        updateCode={updateCode}
+        deleteCode={deleteCode}
       />}
     </div>
 
@@ -2800,7 +2881,7 @@ function PackageEditor({ row, onSave, onCancel }){
   </div>;
 }
 
-function SettingsView({ options, status, addOption, toggleOption, deleteOption, deleteInstructor, patchOption, reorderOption, moveOption, saveLessonType, deleteLessonType, lessonTypeCounts }){
+function SettingsView({ options, status, addOption, toggleOption, deleteOption, deleteInstructor, patchOption, reorderOption, moveOption, saveLessonType, deleteLessonType, lessonTypeCounts, codes, students, packages, addCode, updateCode, deleteCode }){
   const dragRef = React.useRef({ canDrag:false });
   const [drag, setDrag] = useState({ key:null, idx:null });
   const [over, setOver] = useState(null);
@@ -3037,7 +3118,312 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
         </div>)}</div>
       </div>;
     })()}
+
+    {/* Referral & Discount Codes — managed at the bottom of Settings. */}
+    {addCode && <CodesPanel codes={codes||[]} students={students||[]} packages={packages||[]} addCode={addCode} updateCode={updateCode} deleteCode={deleteCode} />}
   </>;
+}
+
+// ============================================================================
+// CodesPanel — Referral & Discount code management. Two filter pills toggle
+// between the two kinds, then a single table-style list with inline create/edit.
+// The same row schema serves both kinds; the editor adapts its fields to
+// the selected code_type. Pure record-keeping for now — redemption logic
+// will live in the future invoice module.
+// ============================================================================
+function CodesPanel({ codes, students, packages, addCode, updateCode, deleteCode }){
+  const [filter, setFilter] = useState('all');         // all | referral | discount | active | expired
+  const [editingId, setEditingId] = useState(null);
+  const [creating, setCreating] = useState(false);
+
+  const today = todayStr();
+  const filtered = (codes || []).filter(c => {
+    if(filter === 'all') return true;
+    if(filter === 'referral' || filter === 'discount') return c.code_type === filter;
+    if(filter === 'active'){
+      if(!c.is_active) return false;
+      if(c.valid_until && c.valid_until < today) return false;
+      if(c.max_uses != null && (c.current_uses || 0) >= c.max_uses) return false;
+      return true;
+    }
+    if(filter === 'expired'){
+      if(!c.is_active) return true;
+      if(c.valid_until && c.valid_until < today) return true;
+      if(c.max_uses != null && (c.current_uses || 0) >= c.max_uses) return true;
+      return false;
+    }
+    return true;
+  });
+
+  function codeStatus(c){
+    if(!c.is_active) return { label:'Inactive', tone:'grey' };
+    if(c.valid_until && c.valid_until < today) return { label:'Expired', tone:'red' };
+    if(c.valid_from && c.valid_from > today) return { label:'Scheduled', tone:'blue' };
+    if(c.max_uses != null && (c.current_uses || 0) >= c.max_uses) return { label:'Used up', tone:'red' };
+    return { label:'Active', tone:'green' };
+  }
+  function summarizeDiscount(c){
+    if(!c.discount_type || c.discount_value == null) return '—';
+    if(c.discount_type === 'percentage') return `${c.discount_value}% off`;
+    if(c.discount_type === 'fixed') return `RM${c.discount_value} off`;
+    if(c.discount_type === 'credit') return `+${c.discount_value} credits`;
+    return '—';
+  }
+  function summarizeReferrerReward(c){
+    if(c.code_type !== 'referral') return '—';
+    if(!c.referrer_reward_type || c.referrer_reward_value == null) return '—';
+    if(c.referrer_reward_type === 'percentage') return `${c.referrer_reward_value}% off`;
+    if(c.referrer_reward_type === 'fixed') return `RM${c.referrer_reward_value} off`;
+    if(c.referrer_reward_type === 'credit') return `+${c.referrer_reward_value} credits`;
+    return '—';
+  }
+  function ownerName(id){
+    const s = (students || []).find(x => x.id === id);
+    return s ? s.name : '—';
+  }
+
+  return <div className="card" style={{marginTop:16}}>
+    <div className="settings-section-title" style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+      <span>🎟 Referral &amp; Discount Codes</span>
+      <span className="small subtle" style={{fontWeight:400,letterSpacing:0,textTransform:'none'}}>Manage promotional and referral codes. These are captured at intake and will be validated when invoices are generated.</span>
+    </div>
+
+    <div className="codes-toolbar" style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:12}}>
+      <div className="codes-filter" style={{display:'flex',gap:4,border:'1px solid var(--border-2)',borderRadius:6,padding:2,background:'var(--surface)'}}>
+        {['all','referral','discount','active','expired'].map(f =>
+          <button key={f} className={`codes-filter-pill ${filter===f?'active':''}`} onClick={()=>setFilter(f)}>{f.charAt(0).toUpperCase()+f.slice(1)}</button>
+        )}
+      </div>
+      <div style={{marginLeft:'auto'}}>
+        <button className="btn btn-primary small" onClick={()=>{ setCreating(true); setEditingId(null); }}>+ New Code</button>
+      </div>
+    </div>
+
+    {creating && <CodeEditor
+      initial={{}}
+      students={students}
+      packages={packages}
+      onCancel={()=>setCreating(false)}
+      onSave={async (input)=>{ try{ await addCode(input); setCreating(false); } catch(_){} }}
+    />}
+
+    {filtered.length === 0 && !creating && <div className="empty" style={{padding:24,textAlign:'center',color:'var(--text-3)'}}>No codes match this filter.</div>}
+
+    {filtered.length > 0 && <div className="codes-table-wrap" style={{border:'1px solid var(--border-2)',borderRadius:8,overflow:'hidden'}}>
+      <table className="codes-table" style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+        <thead style={{background:'var(--surface-2)'}}>
+          <tr>
+            <th style={{textAlign:'left',padding:'9px 10px',fontSize:10,textTransform:'uppercase',letterSpacing:.6,color:'var(--text-3)',fontWeight:800}}>Code</th>
+            <th style={{textAlign:'left',padding:'9px 10px',fontSize:10,textTransform:'uppercase',letterSpacing:.6,color:'var(--text-3)',fontWeight:800}}>Type</th>
+            <th style={{textAlign:'left',padding:'9px 10px',fontSize:10,textTransform:'uppercase',letterSpacing:.6,color:'var(--text-3)',fontWeight:800}}>Redeemer Benefit</th>
+            <th style={{textAlign:'left',padding:'9px 10px',fontSize:10,textTransform:'uppercase',letterSpacing:.6,color:'var(--text-3)',fontWeight:800}}>Referrer Reward</th>
+            <th style={{textAlign:'left',padding:'9px 10px',fontSize:10,textTransform:'uppercase',letterSpacing:.6,color:'var(--text-3)',fontWeight:800}}>Validity</th>
+            <th style={{textAlign:'left',padding:'9px 10px',fontSize:10,textTransform:'uppercase',letterSpacing:.6,color:'var(--text-3)',fontWeight:800}}>Uses</th>
+            <th style={{textAlign:'left',padding:'9px 10px',fontSize:10,textTransform:'uppercase',letterSpacing:.6,color:'var(--text-3)',fontWeight:800}}>Status</th>
+            <th style={{textAlign:'right',padding:'9px 10px',fontSize:10,textTransform:'uppercase',letterSpacing:.6,color:'var(--text-3)',fontWeight:800}}></th>
+          </tr>
+        </thead>
+        <tbody>
+          {filtered.map(c => {
+            const st = codeStatus(c);
+            const isEditing = editingId === c.id;
+            return <React.Fragment key={c.id}>
+              <tr style={{borderTop:'1px solid var(--border-2)'}}>
+                <td style={{padding:'9px 10px',fontWeight:800,fontFamily:'ui-monospace,monospace',letterSpacing:.5}}>{c.code}</td>
+                <td style={{padding:'9px 10px'}}>
+                  {c.code_type === 'referral'
+                    ? <span style={{display:'inline-flex',gap:5,alignItems:'center',fontSize:11,fontWeight:700,color:'var(--green-tx)',background:'var(--green-bg)',padding:'2px 8px',borderRadius:5,border:'1px solid var(--green-bd)'}}>👥 Referral</span>
+                    : <span style={{display:'inline-flex',gap:5,alignItems:'center',fontSize:11,fontWeight:700,color:'var(--amber-tx)',background:'var(--amber-bg)',padding:'2px 8px',borderRadius:5,border:'1px solid var(--amber-bd)'}}>🏷 Discount</span>}
+                  {c.code_type === 'referral' && c.owner_student_id ? <div className="small subtle" style={{marginTop:3}}>Owner: {ownerName(c.owner_student_id)}</div> : null}
+                </td>
+                <td style={{padding:'9px 10px'}}>{summarizeDiscount(c)}</td>
+                <td style={{padding:'9px 10px'}}>{summarizeReferrerReward(c)}</td>
+                <td style={{padding:'9px 10px',fontSize:11}}>{c.valid_from || c.valid_until
+                  ? <span>{c.valid_from || '—'} → {c.valid_until || 'open'}</span>
+                  : <span className="subtle">Always</span>}</td>
+                <td style={{padding:'9px 10px',fontSize:11}}>{c.current_uses || 0}{c.max_uses != null ? ` / ${c.max_uses}` : ' (∞)'}</td>
+                <td style={{padding:'9px 10px'}}>
+                  <span className={`code-status-pill code-status-${st.tone}`}>{st.label}</span>
+                </td>
+                <td style={{padding:'9px 10px',textAlign:'right',whiteSpace:'nowrap'}}>
+                  <button className="btn btn-ghost small" onClick={()=>setEditingId(isEditing?null:c.id)}>{isEditing?'Close':'Edit'}</button>
+                  <button className="btn btn-ghost small" onClick={()=>updateCode(c.id, { isActive: !c.is_active })} title={c.is_active?'Deactivate':'Reactivate'}>{c.is_active?'⏸':'▶'}</button>
+                  <button className="btn btn-danger small" onClick={()=>{ if(confirm(`Delete code "${c.code}"? This cannot be undone.`)) deleteCode(c.id); }}>×</button>
+                </td>
+              </tr>
+              {isEditing && <tr><td colSpan={8} style={{padding:0,background:'var(--surface-2)'}}>
+                <div style={{padding:'12px 14px'}}>
+                  <CodeEditor
+                    initial={c}
+                    students={students}
+                    packages={packages}
+                    onCancel={()=>setEditingId(null)}
+                    onSave={async (input)=>{ try{ await updateCode(c.id, input); setEditingId(null); } catch(_){} }}
+                  />
+                </div>
+              </td></tr>}
+            </React.Fragment>;
+          })}
+        </tbody>
+      </table>
+    </div>}
+  </div>;
+}
+
+// Inline form for creating / editing a single code. Adapts to the selected
+// code_type — referral codes get an owner picker and referrer-reward fields,
+// discount codes hide those.
+function CodeEditor({ initial, students, packages, onCancel, onSave }){
+  const [codeStr, setCodeStr] = useState(initial.code || '');
+  const [codeType, setCodeType] = useState(initial.code_type || 'discount');
+  const [ownerStudentId, setOwnerStudentId] = useState(initial.owner_student_id || '');
+  const [discountType, setDiscountType] = useState(initial.discount_type || 'percentage');
+  const [discountValue, setDiscountValue] = useState(initial.discount_value ?? '');
+  const [referrerRewardType, setReferrerRewardType] = useState(initial.referrer_reward_type || 'credit');
+  const [referrerRewardValue, setReferrerRewardValue] = useState(initial.referrer_reward_value ?? '');
+  const [validFrom, setValidFrom] = useState(initial.valid_from || '');
+  const [validUntil, setValidUntil] = useState(initial.valid_until || '');
+  const [maxUses, setMaxUses] = useState(initial.max_uses ?? '');
+  const [maxUsesPerCustomer, setMaxUsesPerCustomer] = useState(initial.max_uses_per_customer ?? 1);
+  const [appliesTo, setAppliesTo] = useState(initial.applies_to || 'all');
+  const [minimumAmount, setMinimumAmount] = useState(initial.minimum_amount ?? '');
+  const [isActive, setIsActive] = useState(initial.is_active !== false);
+  const [notes, setNotes] = useState(initial.notes || '');
+
+  const isReferral = codeType === 'referral';
+
+  return <div className="code-editor" style={{padding:14,background:'var(--surface)',border:'1px solid var(--border-2)',borderRadius:8,marginBottom:12}}>
+    <div style={{fontSize:11,textTransform:'uppercase',letterSpacing:.6,fontWeight:800,color:'var(--text-3)',marginBottom:10}}>
+      {initial.id ? `Edit code "${initial.code}"` : 'New code'}
+    </div>
+
+    {/* Type + Code string */}
+    <div className="form-grid" style={{gridTemplateColumns:'auto 1fr auto'}}>
+      <div className="field">
+        <label>Type</label>
+        <div style={{display:'flex',gap:4,border:'1px solid var(--border-2)',borderRadius:6,padding:2,background:'var(--surface-2)'}}>
+          <button type="button" className={`codes-type-toggle ${codeType==='discount'?'active':''}`} onClick={()=>setCodeType('discount')}>🏷 Discount</button>
+          <button type="button" className={`codes-type-toggle ${codeType==='referral'?'active':''}`} onClick={()=>setCodeType('referral')}>👥 Referral</button>
+        </div>
+      </div>
+      <div className="field">
+        <label>Code <span className="req">*</span></label>
+        <input className="input" value={codeStr} onChange={e=>setCodeStr(e.target.value.toUpperCase())} placeholder="e.g. SARAH2025 or NEW50" style={{fontFamily:'ui-monospace,monospace',letterSpacing:.5,fontWeight:700}} />
+      </div>
+      <div className="field">
+        <label>Status</label>
+        <label className="gb-check" style={{height:38,display:'inline-flex',alignItems:'center',gap:6}}>
+          <input type="checkbox" checked={isActive} onChange={e=>setIsActive(e.target.checked)} /> Active
+        </label>
+      </div>
+    </div>
+
+    {isReferral && <div className="form-grid" style={{gridTemplateColumns:'1fr',marginTop:8}}>
+      <div className="field">
+        <label>Owner (existing customer who shares this code)</label>
+        <select className="select" value={ownerStudentId} onChange={e=>setOwnerStudentId(e.target.value)}>
+          <option value="">— Select swimmer —</option>
+          {(students || []).filter(s => s.isActive !== false).map(s => <option key={s.id} value={s.id}>{s.name}{s.guardianName ? ` (${s.guardianName})` : ''}</option>)}
+        </select>
+      </div>
+    </div>}
+
+    {/* Redeemer benefit */}
+    <div style={{marginTop:12,padding:'10px 12px',background:'#F0F9FF',border:'1px solid #BFDBFE',borderRadius:6}}>
+      <div style={{fontSize:10,textTransform:'uppercase',letterSpacing:.6,fontWeight:800,color:'#1E40AF',marginBottom:7}}>Redeemer Benefit — what the new customer gets</div>
+      <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr'}}>
+        <div className="field">
+          <label>Benefit Type</label>
+          <select className="select" value={discountType} onChange={e=>setDiscountType(e.target.value)}>
+            <option value="percentage">Percentage off</option>
+            <option value="fixed">Fixed amount off (RM)</option>
+            <option value="credit">Bonus credits</option>
+          </select>
+        </div>
+        <div className="field">
+          <label>Value <span className="subtle small">({discountType==='percentage'?'%':discountType==='fixed'?'RM':'credits'})</span></label>
+          <input className="input" type="number" min="0" step="0.01" value={discountValue} onChange={e=>setDiscountValue(e.target.value)} placeholder={discountType==='percentage'?'10':discountType==='fixed'?'50':'4'} />
+        </div>
+      </div>
+    </div>
+
+    {/* Referrer reward */}
+    {isReferral && <div style={{marginTop:10,padding:'10px 12px',background:'#F0FDF4',border:'1px solid #BBF7D0',borderRadius:6}}>
+      <div style={{fontSize:10,textTransform:'uppercase',letterSpacing:.6,fontWeight:800,color:'#065F46',marginBottom:7}}>Referrer Reward — what the existing customer earns</div>
+      <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr'}}>
+        <div className="field">
+          <label>Reward Type</label>
+          <select className="select" value={referrerRewardType} onChange={e=>setReferrerRewardType(e.target.value)}>
+            <option value="credit">Bonus credits</option>
+            <option value="fixed">Fixed amount off (RM)</option>
+            <option value="percentage">Percentage off</option>
+          </select>
+        </div>
+        <div className="field">
+          <label>Value <span className="subtle small">({referrerRewardType==='percentage'?'%':referrerRewardType==='fixed'?'RM':'credits'})</span></label>
+          <input className="input" type="number" min="0" step="0.01" value={referrerRewardValue} onChange={e=>setReferrerRewardValue(e.target.value)} placeholder={referrerRewardType==='percentage'?'10':referrerRewardType==='fixed'?'50':'2'} />
+        </div>
+      </div>
+    </div>}
+
+    {/* Validity + limits */}
+    <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr',marginTop:10}}>
+      <div className="field">
+        <label>Valid From <span className="subtle small">(blank = anytime)</span></label>
+        <input className="input" type="date" value={validFrom} onChange={e=>setValidFrom(e.target.value)} />
+      </div>
+      <div className="field">
+        <label>Valid Until <span className="subtle small">(blank = no expiry)</span></label>
+        <input className="input" type="date" value={validUntil} onChange={e=>setValidUntil(e.target.value)} />
+      </div>
+    </div>
+    <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr',marginTop:8}}>
+      <div className="field">
+        <label>Max Total Uses <span className="subtle small">(blank = ∞)</span></label>
+        <input className="input" type="number" min="0" value={maxUses} onChange={e=>setMaxUses(e.target.value)} placeholder="unlimited" />
+      </div>
+      <div className="field">
+        <label>Max Uses per Customer</label>
+        <input className="input" type="number" min="1" value={maxUsesPerCustomer} onChange={e=>setMaxUsesPerCustomer(e.target.value)} placeholder="1" />
+      </div>
+      <div className="field">
+        <label>Minimum Invoice (RM)</label>
+        <input className="input" type="number" min="0" step="0.01" value={minimumAmount} onChange={e=>setMinimumAmount(e.target.value)} placeholder="none" />
+      </div>
+    </div>
+    <div className="form-grid" style={{gridTemplateColumns:'1fr 2fr',marginTop:8}}>
+      <div className="field">
+        <label>Applies To</label>
+        <select className="select" value={appliesTo} onChange={e=>setAppliesTo(e.target.value)}>
+          <option value="all">All purchases</option>
+          <option value="first_purchase">First purchase only</option>
+        </select>
+      </div>
+      <div className="field">
+        <label>Internal Notes</label>
+        <input className="input" value={notes} onChange={e=>setNotes(e.target.value)} placeholder="e.g. Q1 launch promo, only for new families" />
+      </div>
+    </div>
+
+    <div style={{display:'flex',gap:6,justifyContent:'flex-end',marginTop:14}}>
+      <button className="btn btn-ghost small" onClick={onCancel}>Cancel</button>
+      <button className="btn btn-primary small" onClick={()=>{
+        if(!codeStr.trim()){ alert('Code string is required.'); return; }
+        onSave({
+          code: codeStr,
+          codeType,
+          ownerStudentId: isReferral ? (ownerStudentId || null) : null,
+          discountType, discountValue,
+          referrerRewardType: isReferral ? referrerRewardType : null,
+          referrerRewardValue: isReferral ? referrerRewardValue : null,
+          validFrom, validUntil,
+          maxUses, maxUsesPerCustomer,
+          appliesTo, minimumAmount,
+          isActive, notes
+        });
+      }}>{initial.id ? 'Save Changes' : 'Create Code'}</button>
+    </div>
+  </div>;
 }
 
 // Manage packages nested under one lesson type: add, edit (PackageEditor),
@@ -4975,9 +5361,28 @@ const TC_CONTENT = [
   { h: '5. Replacement Class Policy', body: `5.1 Group Classes: Replacement sessions for group classes may be attended in any currently active class of the same lesson type, provided a slot is available. Replacements must be arranged through the School and are subject to availability. Replacement swimmers are marked as "drop-in replacement" and are not carried forward in subsequent weeks.\n\n5.2 Personal & Private Classes (Personal 1, Personal 2, Personal Toddler, Stroke Lab, Premium Personal, Personal Clara): Replacement sessions for personal classes are to be arranged directly between the assigned instructor and the parent or guardian, subject to mutual time availability and pool space. The School will facilitate communication. Replacement credits will be applied and the rescheduled session logged.\n\n5.3 Validity: Replacement lessons must be utilised within 14 calendar days of the missed class, unless otherwise agreed in writing. Unused replacement entitlements expire at the end of the month in which they were granted.` },
   { h: '6. Credit System (Personal & Private Classes)', body: `6.1 Students enrolled in personal or private lesson programmes are allocated a credit balance corresponding to the number of sessions purchased in their package.\n\n6.2 One (1) credit is deducted for each scheduled and attended class. Credits are not deducted for classes cancelled by the School or for classes where a valid MC has been provided.\n\n6.3 Credits are non-refundable and non-transferable to another swimmer. Unused credits at the end of a package cycle are forfeited unless otherwise agreed in writing.\n\n6.4 The School reserves the right to apply a credit deduction when a replacement or rescheduled class is successfully attended.` },
   { h: '7. Fees & Payment', body: `7.1 All fees are due in accordance with the payment schedule indicated in your enrolment confirmation. Late payment may result in suspension from classes.\n\n7.2 Fees are non-refundable once a billing cycle has commenced, except in extraordinary circumstances at the School's discretion.\n\n7.3 The School reserves the right to revise fee structures with a minimum of 30 days' written notice.` },
-  { h: '8. Health, Safety & Medical Disclosure', body: `8.1 You confirm that the swimmer is in good health and is medically fit to participate in aquatic activities. Any pre-existing medical condition, allergy, or physical limitation must be disclosed to the School prior to the commencement of classes.\n\n8.2 The School is not liable for injuries or health events arising from undisclosed medical conditions.\n\n8.3 In the event of a medical emergency, the School is authorised to administer basic first aid and to contact emergency services. All reasonable effort will be made to contact the designated emergency contact immediately.` },
+  { h: '8. Health, Safety & Medical Disclosure', body: `8.1 Good Health Confirmation: You confirm that the swimmer is in good health and is medically fit to participate in aquatic activities.
+
+8.2 Medical & Behavioural Declaration: You further declare that, to the best of your knowledge, the swimmer named in this registration:
+  (a) does not have any known medical, physical, or psychological condition that would prevent safe participation in swimming lessons;
+  (b) has not been advised by a medical professional to refrain from physical activity or aquatic programmes;
+  (c) is not under any medication or treatment that would interfere with swim lesson participation;
+  (d) does not require additional support unless previously disclosed.
+
+8.3 Disclosure Obligation: Any pre-existing medical condition, allergy, behavioural consideration, or physical limitation must be disclosed to the School prior to the commencement of classes. If any such conditions exist, you confirm that you have disclosed them during registration or will inform the School's administrators before lessons commence.
+
+8.4 Consequences of Non-Disclosure: You understand that failure to disclose relevant medical or behavioural information may affect the safety and quality of instruction and may result in withdrawal from the programme without refund.
+
+8.5 Liability: The School is not liable for injuries or health events arising from undisclosed medical or behavioural conditions.
+
+8.6 Emergency Authorisation: In the event of a medical emergency, the School is authorised to administer basic first aid and to contact emergency services. All reasonable effort will be made to contact the designated emergency contact immediately.` },
   { h: '9. Liability Waiver', body: `9.1 Participation in aquatic activities carries inherent risks. By accepting this Agreement, you acknowledge these risks and agree that ${TC_COMPANY}, its directors, instructors, and staff shall not be liable for any injury, loss, damage, or claim arising from participation in the School's programmes, except where caused by the School's gross negligence or wilful misconduct.\n\n9.2 The School maintains appropriate public liability insurance.` },
-  { h: '10. Acceptance & Governing Law', body: `This Agreement is governed by the laws of Malaysia. Any dispute shall be subject to the jurisdiction of the courts of Malaysia. By electronically accepting, you confirm you have read and agree to all clauses above on behalf of yourself and/or the enrolled swimmer.` }
+  { h: '10. Photography, Video & Marketing Consent', body: `10.1 By accepting these Terms, you consent to ${TC_COMPANY} taking photographs and video recordings of the swimmer during lessons, classes, and events for the purposes of instructor training, social media, advertising, school newsletters, and other marketing activities undertaken by the School.
+
+10.2 Opt-Out: If you wish to withhold consent for the use of your swimmer's images in marketing materials, please notify the School in writing at the time of registration or thereafter. The School will then take reasonable steps to exclude the swimmer from marketing photography going forward; this opt-out does not retroactively remove already-published materials.
+
+10.3 This School-led photography consent is distinct from the third-party photography restrictions described in clause 2.4. Visitors and other guardians remain prohibited from photographing or recording any swimmer (including their own child within shared pool areas) without prior written consent from ${TC_COMPANY} and the relevant guardians of every swimmer present.` },
+  { h: '11. Acceptance & Governing Law', body: `This Agreement is governed by the laws of Malaysia. Any dispute shall be subject to the jurisdiction of the courts of Malaysia. By electronically accepting, you confirm you have read and agree to all clauses above on behalf of yourself and/or the enrolled swimmer.` }
 ];
 
 function TCView({ students, lessonTypes, lessonTypeById, onSaveAcceptance }){
