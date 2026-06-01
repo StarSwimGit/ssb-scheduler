@@ -271,6 +271,17 @@ function IntakeForm(){
     </button>
 
     <div className="footer-note">{TC_COMPANY} · Information you provide is used solely for class administration and emergency purposes.</div>
+
+    <div className="print-pdf-row">
+      <button type="button" className="print-pdf-link" onClick={()=>{
+        const w = window.open('./form.html', '_blank', 'noopener,noreferrer,width=800,height=900');
+        // form.html auto-triggers window.print() on load — the user sees
+        // the print dialog immediately without needing to click again.
+      }}>
+        🖨 Print PDF version of this form
+      </button>
+      <span className="print-pdf-hint">Hard-copy registration · opens print dialog automatically</span>
+    </div>
   </div>;
 }
 
