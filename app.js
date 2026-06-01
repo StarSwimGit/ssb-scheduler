@@ -5713,7 +5713,7 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
                 <div className="stu-fields">
                   <StudentSelect valueId={r.studentId} fallbackLabel={r.studentId ? null : (r.name ? `${r.name}${r.age ? ` (${r.age})` : ''}` : '')} studentById={studentById} candidates={candidates} onPick={(stu)=>pickStudent(i, stu)} conflict={rowConflict(r, i)} trialStudentIds={trialStudentIds}
         trialByLessonType={trialByLessonType} pendingByKey={pendingByKey} weekStartDate={wk} lessonTypeId={ltId} />
-                  {pkgLabel ? <span className="stu-pkg-label" title={`Enrolled package for ${currentLt?.name}`}>{pkgLabel}</span> : null}
+                  {pkgLabel && !isTrial ? <span className="stu-pkg-label" title={`Enrolled package for ${currentLt?.name}`}>{pkgLabel}</span> : null}
                   {isTrial ? <span className="trial-pill" title="Trial package — one-off booking.">trial</span> : null}
                   {canMarkReplacement ? <button type="button" className="repl-mark-btn" title="Move this swimmer out for replacement" onClick={async ()=>{
                     const ok = await markForReplacement({ studentId:r.studentId, sessionId:modal.id, weekStartDate:wk, lessonTypeId:ltId, lessonTypeName:currentLt.name, day:modal.day, startMinute:modal.startMinute });
