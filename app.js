@@ -2012,8 +2012,9 @@ function App(){
       <div className="header-tabs">
         <div className="tabs">
           {['day','week','month','accounts','students','enroll'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='week'?'📅 Weekly':v==='day'?'📋 Daily':v==='month'?'🗓️ Monthly':v==='accounts'?'👤 Accounts':v==='students'?'👥 Swimmers':'🎯 Enroll'}</button>)}
-          {/* Intake is special — it opens the parent-facing intake.html in a new tab/window rather than switching view in this app. Placed inside the left tabs group, immediately before the Summary/Settings group. */}
-          <button type="button" className="tab tab-link" onClick={() => window.open('./intake.html', '_blank', 'noopener,noreferrer')} title="Open the parent intake form in a new tab — hand the tablet over and tap 'Register Another Family' when done">📝 Intake <span aria-hidden="true" style={{marginLeft:3,opacity:.6,fontSize:11}}>↗</span></button>
+          {/* Intake opens intake.html in a new tab. Print Form opens the printable PDF form. */}
+          <button type="button" className="tab tab-link" onClick={() => window.open('./intake.html', '_blank', 'noopener,noreferrer')} title="Open the digital parent intake form in a new tab">📝 Intake <span aria-hidden="true" style={{marginLeft:3,opacity:.6,fontSize:11}}>↗</span></button>
+          <button type="button" className="tab tab-link" onClick={() => window.open('./form.html', '_blank', 'noopener,noreferrer')} title="Open the printable hard-copy registration form — save as PDF or print directly">🖨 Print Form <span aria-hidden="true" style={{marginLeft:3,opacity:.6,fontSize:11}}>↗</span></button>
         </div>
         <div className="tabs tabs-right">
           {['summary','receipts','settings'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='summary'?'📊 Summary':v==='receipts'?'💰 Receipts':'⚙️ Settings'}</button>)}
