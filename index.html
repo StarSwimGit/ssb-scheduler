@@ -676,8 +676,25 @@
     .adult-self-toggle span{flex:1}
 
     /* ════════════════════════════════════════════════════════════════
-       Referral & Discount Codes panel (Settings → Codes)
+       Billing Preview panel (Accounts → 🧾 Billing Preview)
        ════════════════════════════════════════════════════════════════ */
+    .parent-billing-panel{padding:13px 14px;background:var(--surface);border:1px solid var(--border-2);border-left:3px solid #10B981;border-radius:6px;margin-bottom:10px}
+    .billing-section{margin-top:10px}
+    .billing-section-head{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;background:#F0FDF4;border:1px solid #BBF7D0;border-radius:5px;margin-bottom:6px}
+    .billing-section-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#065F46}
+    .billing-section-sum{font-weight:800;color:#065F46;font-size:13px}
+    .billing-table{width:100%;border-collapse:collapse;font-size:12px}
+    .billing-table th{padding:6px 8px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-3);font-weight:800;border-bottom:1px solid var(--border-2);background:var(--surface-2)}
+    .billing-table th.num,.billing-table td.num{text-align:right;font-variant-numeric:tabular-nums}
+    .billing-table td{padding:7px 8px;border-bottom:1px solid var(--border-2);vertical-align:top}
+    .billing-table tbody tr:last-child td{border-bottom:none}
+    .billing-warn{font-size:11px;color:var(--amber-tx);margin-top:3px;font-weight:600}
+    .billing-info{font-size:11px;color:#065F46;margin-top:3px;font-style:italic}
+    .billing-total-row{display:flex;justify-content:space-between;align-items:center;padding:9px 12px;margin-top:12px;background:#0C2340;color:#fff;border-radius:6px}
+    .billing-total-label{font-size:12px;text-transform:uppercase;letter-spacing:.7px;font-weight:700;color:#67E8F9}
+    .billing-total-value{font-size:18px;font-weight:800;letter-spacing:-.3px}
+
+    /* Referral & Discount Codes panel (Settings → Codes) */
     .codes-filter-pill{background:transparent;border:none;padding:6px 12px;font-size:12px;font-weight:700;color:var(--text-3);cursor:pointer;border-radius:4px;transition:.12s}
     .codes-filter-pill:hover{background:var(--surface-2)}
     .codes-filter-pill.active{background:var(--primary);color:#fff}
