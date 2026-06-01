@@ -1792,10 +1792,16 @@ function App(){
   // be a single DB constraint without denormalization. We check before
   // inserting; the UI also surfaces a "Already in <other group>" message
   // earlier so users see it without hitting the alert.
-  async function addStudentToGroup(studentId, groupId){
+  // `targetOverride` is for callers (like handleCreate in ParentGroupManager)
+  // who just INSERTED the group and have the row in hand — React's state
+  // batching means familyGroups in our closure won't reflect the insert
+  // until the next render, so the find-by-id below would fail. The
+  // override lets the caller skip that lookup. Shape must match the
+  // familyGroups row: { id, name, packageId, groupType }.
+  async function addStudentToGroup(studentId, groupId, targetOverride){
     try{
       setError('');
-      const target = familyGroups.find(g => g.id === groupId);
+      const target = targetOverride || familyGroups.find(g => g.id === groupId);
       if(!target){ alert('Group not found.'); return false; }
       // Check uniqueness: is the swimmer already in another group with
       // the same (lesson_type, package)? Skip if target group has no
@@ -5215,13 +5221,24 @@ function ParentGroupManager({ pg, familyGroups, groupById, membersByGroup, group
     if(!creatingLtId || !creatingPkgId){ alert('Pick a Lesson Type and Package first.'); return; }
     const inserted = await addGroup({ name, packageId: creatingPkgId, groupType: creatingType });
     if(!inserted){ return; }  // addGroup already alerted on failure
+    // The `inserted` row is a raw DB record (snake_case). Map it to the
+    // familyGroups state shape (camelCase) so addStudentToGroup can use
+    // it directly without needing the lookup — necessary because React
+    // hasn't re-rendered yet within this same event handler, so our
+    // closure's familyGroups doesn't include the brand-new group.
+    const targetOverride = {
+      id: inserted.id,
+      name: inserted.name || '',
+      packageId: inserted.package_id || null,
+      groupType: inserted.group_type || 'discount'
+    };
     // Bulk-assign each selected swimmer to the new group. addStudentToGroup
     // enforces uniqueness — a swimmer who's already in another group with
     // the same package will be filtered out in the UI before this point,
     // but the write API blocks duplicates as a defensive backstop.
     for(const sid of creatingMemberIds){
       // eslint-disable-next-line no-await-in-loop
-      await addStudentToGroup(sid, inserted.id);
+      await addStudentToGroup(sid, inserted.id, targetOverride);
     }
     // Reset create form
     setCreatingName(''); setCreatingLtId(''); setCreatingPkgId(''); setCreatingType('discount'); setCreatingMemberIds(new Set()); setCreatingOpen(false);
