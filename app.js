@@ -4458,7 +4458,7 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
               {!pg.email && !pg.phone ? <span>(no contact recorded)</span> : null}
               {(pg.emergencyName || pg.emergencyPhone) && !pg.emergencySameAsGuardian ? <span> · 🚨 {pg.emergencyName || pg.emergencyPhone}{pg.emergencyName && pg.emergencyPhone ? ` ${pg.emergencyPhone}` : ''}{pg.emergencyRelationship ? ` (${pg.emergencyRelationship})` : ''}</span> : null}
               {parentGroupsInPlay.length > 0 && <span> · {parentGroupsInPlay.map(g => {
-                const gp = g.package_id && packageById ? packageById(g.package_id) : null;
+                const gp = g.packageId && packageById ? packageById(g.packageId) : null;
                 return <span key={g.id} className="parent-group-tag" title={gp ? `${gp.name} package` : undefined}>{g.groupType==='bound'?'🔗':'👪'} {g.name}{gp ? ` · ${gp.name}` : ''}</span>;
               })}</span>}
             </div>
@@ -4997,7 +4997,7 @@ function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packag
   accountGroupIds.forEach(gid => {
     const g = groupById?.[gid];
     if(!g) return;
-    const pkg = g.package_id ? (typeof pkgById === 'function' ? pkgById(g.package_id) : pkgById[g.package_id]) : null;
+    const pkg = g.packageId ? (typeof pkgById === 'function' ? pkgById(g.packageId) : pkgById[g.packageId]) : null;
     if(!pkg){
       // Group exists but has no package set — flag it so the user can fix it
       // via "Manage Group → Set package". Without a package the billing
@@ -5044,7 +5044,7 @@ function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packag
   pg.swimmers.forEach(sw => {
     const enrolledIn = sw.enrollments || [];
     const swGroup = sw.familyGroupId ? groupById?.[sw.familyGroupId] : null;
-    const coveredPkgId = swGroup?.package_id || null;
+    const coveredPkgId = swGroup?.packageId || null;
     enrolledIn.forEach(e => {
       if(!e.lessonTypeId || !e.packageId) return;
       // Skip the enrollment that's covered by this swimmer's family group bundle
@@ -5267,11 +5267,11 @@ function ParentGroupManager({ pg, familyGroups, groupById, membersByGroup, lesso
     {involvedGroups.length > 0 && <div style={{marginBottom:14}}>
       {involvedGroups.map(g => {
         const isBound = g.groupType === 'bound';
-        const pkgInfo = packageLabel(g.package_id);
+        const pkgInfo = packageLabel(g.packageId);
         // Eligibility: swimmers with the group's exact package. Without
         // a package_id on the group (legacy data) we fall back to "all
         // swimmers in this family" so legacy groups remain editable.
-        const eligibleHere = g.package_id ? eligibleFor(pkgInfo ? (packageById?.(g.package_id)?.lesson_type_id) : null, g.package_id) : pg.swimmers;
+        const eligibleHere = g.packageId ? eligibleFor(pkgInfo ? (packageById?.(g.packageId)?.lesson_type_id) : null, g.packageId) : pg.swimmers;
         const memberSetForThisParent = pg.swimmers.filter(s => s.familyGroupId === g.id);
         const isEditingPkg = editPkgFor === g.id;
         const editPkgChoices = editPkgLtId ? packages.filter(p => p.lesson_type_id === editPkgLtId) : [];
@@ -5282,9 +5282,9 @@ function ParentGroupManager({ pg, familyGroups, groupById, membersByGroup, lesso
             <button className="btn btn-ghost small" onClick={()=>{
               if(isEditingPkg){ setEditPkgFor(null); return; }
               // Pre-fill the editor with current selection
-              const cur = g.package_id ? packageById?.(g.package_id) : null;
+              const cur = g.packageId ? packageById?.(g.packageId) : null;
               setEditPkgLtId(cur?.lesson_type_id || '');
-              setEditPkgPkgId(g.package_id || '');
+              setEditPkgPkgId(g.packageId || '');
               setEditPkgFor(g.id);
             }}>{isEditingPkg ? 'Cancel' : (pkgInfo ? '✎ Change package' : '+ Set package')}</button>
             <button className="btn btn-ghost small" onClick={()=>updateGroup(g.id, { groupType: isBound?'discount':'bound' })}>
@@ -5330,7 +5330,7 @@ function ParentGroupManager({ pg, familyGroups, groupById, membersByGroup, lesso
               return <label key={sw.id} className="parent-group-member"><input type="checkbox" checked={inThis} onChange={(e)=>setStudentGroup(sw.id, e.target.checked ? g.id : null)} /> {sw.name}</label>;
             })}
             {/* Show any non-eligible swimmers as muted, so user understands why they can't be added */}
-            {g.package_id && pg.swimmers.filter(s => !eligibleHere.includes(s)).map(sw => <label key={sw.id} className="parent-group-member" style={{opacity:.45}} title="Does not have the matching package enrollment"><input type="checkbox" disabled /> {sw.name}</label>)}
+            {g.packageId && pg.swimmers.filter(s => !eligibleHere.includes(s)).map(sw => <label key={sw.id} className="parent-group-member" style={{opacity:.45}} title="Does not have the matching package enrollment"><input type="checkbox" disabled /> {sw.name}</label>)}
           </div>
         </div>;
       })}
