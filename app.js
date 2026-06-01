@@ -1777,11 +1777,13 @@ function App(){
       await loadGroups();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to update family group'); }
   }
-  async function deleteGroup(row){
-    const memberCount = (membersByGroup[row.id] || []).length;
-    if(!confirm(memberCount > 0
-      ? `Delete family group "${row.name}"? Its ${memberCount} member${memberCount===1?'':'s'} stay in the swimmer registry but will no longer be billed as a group.`
-      : `Delete family group "${row.name}"?`)) return;
+  async function deleteGroup(row, silent){
+    if(!silent){
+      const memberCount = (membersByGroup[row.id] || []).length;
+      if(!confirm(memberCount > 0
+        ? `Delete family group "${row.name}"? Its ${memberCount} member${memberCount===1?'':'s'} stay in the swimmer registry but will no longer be billed as a group.`
+        : `Delete family group "${row.name}"?`)) return;
+    }
     try{ setError(''); await deleteRows('family_groups', { id: row.id }); await loadGroups(); await loadGroupMemberships(); await loadStudents(); }
     catch(err){ handleErr(err); alert(err.message || 'Failed to delete family group'); }
   }
@@ -4439,6 +4441,10 @@ function swimmerAccent(idx){ return SWIMMER_ACCENTS[idx % SWIMMER_ACCENTS.length
 // The Swimmers page is intentionally read-only — use this page to admin.
 // ============================================================================
 function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, packageById, familyGroups, groupById, membersByGroup, creditByKey, subscriptions, addStudent, updateStudent, deleteStudent, addGroup, updateGroup, deleteGroup, setStudentGroup, addStudentToGroup, removeStudentFromGroup, groupIdsByStudent, addSubscription, cancelSubscription, adjustBalanceTo, setView }){
+  // ── Sub-view: which Accounts admin pane is showing ──────────────────
+  // 'accounts'      → existing per-account admin (the original ParentsView)
+  // 'familyGroups'  → system-wide family-groups admin (audit + cleanup)
+  const [adminView, setAdminView] = useState('accounts');
   const [searchQ, setSearchQ] = useState('');
   const [statusFilter, setStatusFilter] = useState('active');   // 'active' | 'archived' | 'all'
   const [expandedKey, setExpandedKey] = useState(null);
@@ -4497,6 +4503,23 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
   }
 
   return <>
+    {/* ── Sub-navigation: two children under the Accounts top tab ───── */}
+    <div className="admin-subnav">
+      <button className={`admin-subnav-btn ${adminView==='accounts'?'is-on':''}`} onClick={()=>setAdminView('accounts')}>👤 Accounts — Administration</button>
+      <button className={`admin-subnav-btn ${adminView==='familyGroups'?'is-on':''}`} onClick={()=>setAdminView('familyGroups')}>👪 Family Groups — Administration</button>
+    </div>
+
+    {adminView === 'familyGroups' && <FamilyGroupsAdminView
+      familyGroups={familyGroups}
+      membersByGroup={membersByGroup}
+      lessonTypes={lessonTypes}
+      lessonTypeById={lessonTypeById}
+      packages={packages}
+      packageById={packageById}
+      deleteGroup={deleteGroup}
+    />}
+
+    {adminView === 'accounts' && <>
     <div className="card" style={{marginBottom:12}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap',marginBottom:10}}>
         <div>
@@ -4771,8 +4794,140 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
         </div>}
       </div>;
     })}
+    </>}
   </>;
 }
+
+// ============================================================================
+// FamilyGroupsAdminView — system-wide family-groups admin panel.
+// Lists EVERY family_groups row in the system, with member count, package
+// context, member names, and the guardian/account each member belongs to.
+// Use to audit and clean up legacy/test data without dropping to SQL.
+// ============================================================================
+function FamilyGroupsAdminView({ familyGroups, membersByGroup, lessonTypes, lessonTypeById, packages, packageById, deleteGroup }){
+  const [searchQ, setSearchQ] = useState('');
+  const [filter, setFilter] = useState('all'); // all | empty | configured | misconfigured
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  // Enrich each group with derived signals: package info, member rows, account names
+  const enriched = (familyGroups || []).map(g => {
+    const members = membersByGroup?.[g.id] || [];
+    const pkg = g.packageId ? (typeof packageById === 'function' ? packageById(g.packageId) : packageById?.[g.packageId]) : null;
+    const lt = pkg?.lesson_type_id ? (typeof lessonTypeById === 'function' ? lessonTypeById(pkg.lesson_type_id) : lessonTypeById?.[pkg.lesson_type_id]) : null;
+    const accountNames = [...new Set(members.map(m => m.guardianName || m.guardian_name || '— No account —'))];
+    return {
+      ...g,
+      memberRows: members,
+      memberCount: members.length,
+      pkg,
+      pkgName: pkg?.name || null,
+      ltName: lt?.name || null,
+      accountNames,
+      isEmpty: members.length === 0,
+      isConfigured: !!pkg,
+      isMisconfigured: !pkg  // group exists but no package set
+    };
+  });
+
+  // Counts for the filter tab labels
+  const counts = {
+    all: enriched.length,
+    empty: enriched.filter(g => g.isEmpty).length,
+    configured: enriched.filter(g => g.isConfigured && !g.isEmpty).length,
+    misconfigured: enriched.filter(g => g.isMisconfigured).length
+  };
+
+  // Apply filter + search
+  const filtered = enriched.filter(g => {
+    if(filter === 'empty' && !g.isEmpty) return false;
+    if(filter === 'configured' && (!g.isConfigured || g.isEmpty)) return false;
+    if(filter === 'misconfigured' && !g.isMisconfigured) return false;
+    if(!searchQ.trim()) return true;
+    const q = searchQ.toLowerCase();
+    if(g.name?.toLowerCase().includes(q)) return true;
+    if(g.pkgName?.toLowerCase().includes(q)) return true;
+    if(g.ltName?.toLowerCase().includes(q)) return true;
+    if(g.accountNames.some(n => (n || '').toLowerCase().includes(q))) return true;
+    if(g.memberRows.some(m => (m.name || '').toLowerCase().includes(q))) return true;
+    return false;
+  });
+  // Sort: empty first (so cleanup is easy), then by name
+  filtered.sort((a, b) => {
+    if(a.isEmpty !== b.isEmpty) return a.isEmpty ? -1 : 1;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+
+  async function bulkDeleteEmpty(){
+    const empties = enriched.filter(g => g.isEmpty);
+    if(empties.length === 0){ alert('No empty groups to delete.'); return; }
+    if(!confirm(`Delete ALL ${empties.length} empty family group${empties.length === 1 ? '' : 's'}? This cannot be undone.\n\nGroups to delete:\n${empties.map(g => `• ${g.name}`).join('\n')}`)) return;
+    setBulkBusy(true);
+    try{
+      for(const g of empties){
+        // eslint-disable-next-line no-await-in-loop
+        await deleteGroup(g, /*silentConfirm*/ true);
+      }
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  return <>
+    <div className="card" style={{marginBottom:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap',marginBottom:10}}>
+        <div>
+          <div style={{fontSize:18,fontWeight:800}}>👪 Family Groups — Administration</div>
+          <div className="small subtle" style={{marginTop:3}}>Every family group in the system, with members and package context. Audit legacy or test data here; bulk-clean empty groups in one click.</div>
+        </div>
+        <div style={{display:'flex',gap:14,alignItems:'flex-end',flexWrap:'wrap'}}>
+          <div><div className="small subtle">Total</div><div style={{fontSize:22,fontWeight:800,color:'var(--primary)'}}>{counts.all}</div></div>
+          <div><div className="small subtle">Configured</div><div style={{fontSize:22,fontWeight:800,color:'#10B981'}}>{counts.configured}</div></div>
+          <div><div className="small subtle">Empty</div><div style={{fontSize:22,fontWeight:800,color:'#94A3B8'}}>{counts.empty}</div></div>
+          <div><div className="small subtle">Misconfigured</div><div style={{fontSize:22,fontWeight:800,color:'#F59E0B'}}>{counts.misconfigured}</div></div>
+        </div>
+      </div>
+      <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+        <input className="input" style={{flex:1,minWidth:240,maxWidth:420}} placeholder="Search by group, package, lesson type, account, or member name…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
+        <div className="tabs" style={{gap:2,padding:2}}>
+          <button className={`tab ${filter==='all'?'active':''}`}            style={{padding:'4px 10px',fontSize:11}} onClick={()=>setFilter('all')}>All ({counts.all})</button>
+          <button className={`tab ${filter==='configured'?'active':''}`}     style={{padding:'4px 10px',fontSize:11}} onClick={()=>setFilter('configured')}>Configured ({counts.configured})</button>
+          <button className={`tab ${filter==='empty'?'active':''}`}          style={{padding:'4px 10px',fontSize:11}} onClick={()=>setFilter('empty')}>Empty ({counts.empty})</button>
+          <button className={`tab ${filter==='misconfigured'?'active':''}`}  style={{padding:'4px 10px',fontSize:11}} onClick={()=>setFilter('misconfigured')}>Misconfigured ({counts.misconfigured})</button>
+        </div>
+        {counts.empty > 0 ? <button className="btn btn-danger small" onClick={bulkDeleteEmpty} disabled={bulkBusy} title={`Delete all ${counts.empty} groups with zero members`}>{bulkBusy ? 'Cleaning…' : `🧹 Clean ${counts.empty} empty`}</button> : null}
+      </div>
+    </div>
+
+    {filtered.length === 0 ? <div className="card empty" style={{padding:30}}>No family groups match the current filter.</div> : null}
+
+    <div style={{display:'flex',flexDirection:'column',gap:8}}>
+      {filtered.map(g => {
+        const isBound = g.groupType === 'bound';
+        return <div key={g.id} className="fga-card">
+          <div className="fga-head">
+            <div className="fga-head-main">
+              <div className="fga-name">{isBound ? '🔗' : '👪'} {g.name}</div>
+              <div className="fga-meta">
+                {g.isConfigured
+                  ? <span className="fga-pkg-tag">{g.ltName || '?'} · {g.pkgName}</span>
+                  : <span className="fga-pkg-tag fga-pkg-warn">⚠ no package set</span>}
+                <span className={`fga-count ${g.isEmpty ? 'is-empty' : ''}`}>{g.memberCount} member{g.memberCount === 1 ? '' : 's'}</span>
+                {g.accountNames.length > 0 ? <span className="fga-accounts">{g.accountNames.join(', ')}</span> : null}
+              </div>
+            </div>
+            <div className="fga-actions">
+              <button className="btn btn-danger small" onClick={()=>deleteGroup(g)}>Delete</button>
+            </div>
+          </div>
+          {g.memberCount > 0 ? <div className="fga-members">
+            {g.memberRows.map(m => <span key={m.id} className="fga-member-chip">{m.name}{m.age != null ? ` · ${m.age}y` : ''}</span>)}
+          </div> : null}
+        </div>;
+      })}
+    </div>
+  </>;
+}
+
 
 // ============================================================================
 
