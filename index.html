@@ -241,8 +241,12 @@
     .ssel-x{font-size:16px;line-height:1;color:var(--text-3);padding:0 2px;flex-shrink:0}
     .ssel-x:hover{color:var(--red-tx)}
     .ssel-warn{font-size:10.5px;color:var(--amber-tx);margin-top:3px;font-weight:600}
-    .ssel-backdrop{position:fixed;inset:0;z-index:61}
-    .ssel-pop{position:absolute;left:0;right:0;top:calc(100% + 5px);z-index:62;background:var(--surface);border:1px solid var(--border-2);border-radius:12px;box-shadow:var(--shadow-lg);padding:7px}
+    .ssel-backdrop{position:fixed;inset:0;z-index:71}
+    .ssel-pop{position:absolute;left:0;right:0;top:calc(100% + 5px);z-index:72;background:var(--surface);border:1px solid var(--border-2);border-radius:12px;box-shadow:var(--shadow-lg);padding:7px}
+    /* Portalled popup — uses fixed positioning anchored to the trigger's
+       bounding rect. Floats above the modal backdrop so it never gets
+       clipped by the scrollable modal-body. */
+    .ssel-pop-portal{position:fixed !important;right:auto !important;top:auto;z-index:72;max-width:calc(100vw - 16px)}
     .ssel-search{margin-bottom:6px}
     .ssel-list{max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:2px}
     .ssel-item{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;text-align:left;background:transparent;border:none;border-radius:8px;padding:8px 9px;cursor:pointer;color:var(--text);font-weight:600;font-size:13px}
