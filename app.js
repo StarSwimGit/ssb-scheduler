@@ -3788,9 +3788,15 @@ function EnrollView({ sessions, students, studentById, lessonTypes, lessonTypeBy
 }
 
 // Searchable swimmer combobox used in each enrollment slot.
+// The dropdown is portalled into document.body and positioned with
+// position:fixed so it floats above the modal — never clipped by the
+// scrollable modal-body. Auto-flips upward when there isn't enough room
+// below; tracks the input on window scroll/resize.
 function StudentSelect({ valueId, fallbackLabel, studentById, candidates, onPick, conflict, trialStudentIds, pendingByKey, weekStartDate, lessonTypeId }){
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
+  const [popPos, setPopPos] = useState(null);   // { left, top, width, flipUp, maxH }
+  const triggerRef = React.useRef(null);
   const sel = valueId ? studentById[valueId] : null;
   const label = sel ? `${sel.name}${sel.age != null ? ` (${sel.age})` : ''}` : (fallbackLabel || '');
   const filtered = (candidates || []).filter(s => !q || (s.name || '').toLowerCase().includes(q.toLowerCase()));
@@ -3816,7 +3822,67 @@ function StudentSelect({ valueId, fallbackLabel, studentById, candidates, onPick
     return (a.name || '').localeCompare(b.name || '');
   });
   function choose(s){ onPick(s); setOpen(false); setQ(''); }
-  return <div className="ssel">
+
+  // Recompute popup position from the trigger's bounding rect. Used on
+  // open + on resize + on capture-phase scroll so scrolling the modal
+  // body keeps the dropdown stuck to the input.
+  function recalcPos(){
+    const el = triggerRef.current;
+    if(!el) return;
+    const r = el.getBoundingClientRect();
+    const vh = window.innerHeight;
+    const desired = 280; // ideal dropdown height
+    const spaceBelow = vh - r.bottom - 12;
+    const spaceAbove = r.top - 12;
+    const flipUp = spaceBelow < 180 && spaceAbove > spaceBelow;
+    const maxH = Math.min(desired, Math.max(140, flipUp ? spaceAbove : spaceBelow));
+    setPopPos({
+      left: Math.max(8, Math.min(r.left, window.innerWidth - Math.max(r.width, 260) - 8)),
+      top: flipUp ? null : (r.bottom + 5),
+      bottom: flipUp ? (vh - r.top + 5) : null,
+      width: Math.max(r.width, 260),
+      maxH
+    });
+  }
+  React.useEffect(() => {
+    if(!open) return;
+    recalcPos();
+    const onResize = () => recalcPos();
+    const onScroll = () => recalcPos();
+    window.addEventListener('resize', onResize);
+    window.addEventListener('scroll', onScroll, true);  // capture so modal-body scroll also fires
+    return () => { window.removeEventListener('resize', onResize); window.removeEventListener('scroll', onScroll, true); };
+  }, [open]);
+
+  // The dropdown body — extracted so we can portal it cleanly.
+  const dropdown = open && popPos ? <>
+    <div className="ssel-backdrop" onClick={()=>{ setOpen(false); setQ(''); }} />
+    <div className="ssel-pop ssel-pop-portal" style={{
+      position:'fixed',
+      left: popPos.left,
+      ...(popPos.top != null ? { top: popPos.top } : {}),
+      ...(popPos.bottom != null ? { bottom: popPos.bottom } : {}),
+      width: popPos.width
+    }}>
+      <div className="ssel-list" style={{ maxHeight: popPos.maxH }}>
+        {sortedFiltered.length ? sortedFiltered.map(s => {
+          const isPending = !!(pendingByKey && lessonTypeId && weekStartDate && pendingByKey[`${s.id}:${lessonTypeId}:${weekStartDate}`]);
+          const isTrial = isTrialFor(s);
+          const pendingInfo = isPending ? pendingByKey[`${s.id}:${lessonTypeId}:${weekStartDate}`] : null;
+          return <button key={s.id} type="button" className={`ssel-item ${isPending ? 'ssel-item-pending' : ''} ${isTrial ? 'ssel-item-trial' : ''}`} onClick={()=>choose(s)}>
+            <span className="ssel-item-main">
+              {isPending ? <span className="ssel-flag ssel-flag-r" title={`Pending replacement from ${pendingInfo.original_session_label}`}>R-pending</span> : null}
+              {isTrial ? <span className="ssel-flag ssel-flag-trial" title="Trial swimmer — one-off booking for this lesson type">trial</span> : null}
+              <span className="ssel-item-name">{s.name}</span>
+            </span>
+            <span className="ssel-item-meta">{s.age != null ? `${s.age}y` : ''}{isPending ? ` · from ${pendingInfo.original_session_label}` : (s.package ? ` · ${s.package}` : '')}</span>
+          </button>;
+        }) : <div className="ssel-empty">No swimmers found</div>}
+      </div>
+    </div>
+  </> : null;
+
+  return <div className="ssel" ref={triggerRef}>
     <div className={`ssel-control ${label ? 'has' : ''}`}>
       <input
         className="ssel-input"
@@ -3830,26 +3896,7 @@ function StudentSelect({ valueId, fallbackLabel, studentById, candidates, onPick
         : <span className="ssel-caret" title="Browse" onMouseDown={(e)=>{ e.preventDefault(); setOpen(o=>!o); setQ(''); }}>▾</span>}
     </div>
     {conflict ? <div className="ssel-warn">⚠ Also booked {conflict} this week</div> : null}
-    {open ? <>
-      <div className="ssel-backdrop" onClick={()=>{ setOpen(false); setQ(''); }} />
-      <div className="ssel-pop">
-        <div className="ssel-list">
-          {sortedFiltered.length ? sortedFiltered.map(s => {
-            const isPending = !!(pendingByKey && lessonTypeId && weekStartDate && pendingByKey[`${s.id}:${lessonTypeId}:${weekStartDate}`]);
-            const isTrial = isTrialFor(s);
-            const pendingInfo = isPending ? pendingByKey[`${s.id}:${lessonTypeId}:${weekStartDate}`] : null;
-            return <button key={s.id} type="button" className={`ssel-item ${isPending ? 'ssel-item-pending' : ''} ${isTrial ? 'ssel-item-trial' : ''}`} onClick={()=>choose(s)}>
-              <span className="ssel-item-main">
-                {isPending ? <span className="ssel-flag ssel-flag-r" title={`Pending replacement from ${pendingInfo.original_session_label}`}>R-pending</span> : null}
-                {isTrial ? <span className="ssel-flag ssel-flag-trial" title="Trial swimmer — one-off booking for this lesson type">trial</span> : null}
-                <span className="ssel-item-name">{s.name}</span>
-              </span>
-              <span className="ssel-item-meta">{s.age != null ? `${s.age}y` : ''}{isPending ? ` · from ${pendingInfo.original_session_label}` : (s.package ? ` · ${s.package}` : '')}</span>
-            </button>;
-          }) : <div className="ssel-empty">No swimmers found</div>}
-        </div>
-      </div>
-    </> : null}
+    {dropdown ? ReactDOM.createPortal(dropdown, document.body) : null}
   </div>;
 }
 
