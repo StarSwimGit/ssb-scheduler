@@ -2049,11 +2049,6 @@ function App(){
     return m;
   }, [sessions]);
 
-  // Indexed by id but using the ENRICHED row set so callers can read
-  // `.familyGroupIds` (the multi-group array) — needed by the SessionModal's
-  // bound-cascade logic, the Billing Preview, and any other consumer that
-  // wants to know all groups a swimmer is in.
-  const studentById = useMemo(() => { const m = {}; studentsWithGroups.forEach(s => m[s.id] = s); return m; }, [studentsWithGroups]);
   // Set of swimmer IDs currently on a "trial" package (one-off bookings). Drives
   // the trial annotation in the modal/cards and the duplicate-week skip rule.
   const trialStudentIds = useMemo(() => {
@@ -2113,6 +2108,13 @@ function App(){
     return { groupIdsByStudent: idsByStu, membersByGroup: byGroup, studentsWithGroups: withGroups };
   }, [students, groupMemberships]);
 
+  // Indexed by id but using the ENRICHED row set so callers can read
+  // `.familyGroupIds` (the multi-group array) — needed by the SessionModal's
+  // bound-cascade logic, the Billing Preview, and any other consumer that
+  // wants to know all groups a swimmer is in. MUST be declared AFTER the
+  // destructuring above so `studentsWithGroups` is in scope.
+  const studentById = useMemo(() => { const m = {}; (studentsWithGroups || []).forEach(s => m[s.id] = s); return m; }, [studentsWithGroups]);
+
   // parentGroups: nest swimmers under their guardian (parent) account.
   // No explicit parents table — we cluster on guardian_email (most
   // unique), falling back to guardian_phone, then guardian_name. A
@@ -2120,7 +2122,7 @@ function App(){
   // pseudo-parent so they're still findable.
   const parentGroups = useMemo(() => {
     const m = {};
-    studentsWithGroups.forEach(s => {
+    (studentsWithGroups || []).forEach(s => {
       const emailKey = (s.guardianEmail || '').toLowerCase().trim();
       const phoneKey = (s.guardianPhone || '').replace(/\s+/g,'').trim();
       const nameKey = (s.guardianName || '').toLowerCase().trim();
