@@ -33,6 +33,13 @@
       border-radius: 7px; padding: 10px 14px; font-size: 13px; font-weight: 600;
       cursor: pointer; font-family: inherit;
     }
+    .btn-back:hover { background: #f8fafc; border-color: #94a3b8 }
+    .btn-close {
+      background: #1e293b; color: #fff; border: 1px solid #1e293b;
+      border-radius: 7px; padding: 10px 16px; font-size: 13px; font-weight: 700;
+      cursor: pointer; font-family: inherit;
+    }
+    .btn-close:hover { background: #0f172a }
 
     /* ── Sheet ── */
     .sheet {
@@ -115,6 +122,7 @@
     /* ── Print ── */
     @page { size: A4 portrait; margin: 7mm 9mm }
     @media print {
+      @page { size: A4 portrait; margin: 7mm 9mm }
       body { background: #fff; padding: 0 }
       .toolbar, .hint { display: none !important }
       .sheet { box-shadow: none; padding: 0; max-width: none; width: 100% }
@@ -128,10 +136,9 @@
       // Small delay so the logo image and Inter font render before print.
       setTimeout(() => window.print(), 700);
     });
-    // Close this helper window automatically after the user dismisses print.
-    window.addEventListener('afterprint', () => {
-      setTimeout(() => window.close(), 200);
-    });
+    // NOTE: intentionally no afterprint handler. When the user cancels or
+    // completes the print dialog, this window stays open so they can review
+    // the form, re-trigger print, or close manually using the toolbar button.
   </script>
 </head>
 <body>
@@ -139,11 +146,11 @@
 <div class="toolbar">
   <div class="toolbar-info">
     SSB Registration — Hard Copy Form
-    <span>Print dialog opens automatically · close this window if you need to cancel</span>
+    <span>Print dialog opens automatically (A4 portrait). After printing or cancelling, this window stays open — click <strong>Close Window</strong> when done.</span>
   </div>
-  <div style="display:flex;gap:8px">
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
     <button class="btn-back" onclick="window.print()">🖨 Print again</button>
-    <button class="btn-back" onclick="window.close()">Close</button>
+    <button class="btn-close" onclick="window.close()">✕ Close Window</button>
   </div>
 </div>
 
