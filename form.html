@@ -159,25 +159,26 @@
     <div class="hd-form">Swimmer Registration Form</div>
   </div>
 
-  <!-- Account Holder -->
+  <!-- Section A: Parent / Guardian -->
   <div class="sec">
     <div class="sec-label">Parent / Guardian</div>
     <div class="row">
-      <div class="f grow"><div class="lbl">Swimmer's Full Name <span class="req">*</span></div><div class="line line-tall"></div></div>
+      <div class="f grow"><div class="lbl">Full Name <span class="req">*</span></div><div class="line line-tall"></div></div>
       <div class="f grow"><div class="lbl">Email Address <span class="req">*</span></div><div class="line line-tall"></div></div>
       <div class="f w100"><div class="lbl">Mobile Phone <span class="req">*</span></div><div class="line line-tall"></div></div>
     </div>
   </div>
 
-  <!-- Emergency Contact -->
+  <!-- Section B: Emergency Contact — same-as on first line, fields on second -->
   <div class="sec">
     <div class="sec-label">Emergency Contact</div>
-    <div class="row" style="margin-bottom:6px">
-      <div class="f w80" style="justify-content:flex-end">
-        <div class="lbl">Same as above?</div>
-        <div class="checks"><label class="ck"><span class="box r"></span> Yes</label><label class="ck"><span class="box r"></span> No</label></div>
-      </div>
-      <div class="f grow"><div class="lbl">Emergency Contact Name</div><div class="line line-tall"></div></div>
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:7px">
+      <span class="lbl" style="white-space:nowrap;margin:0">Same as above?</span>
+      <label class="ck"><span class="box r"></span> Yes — skip fields below</label>
+      <label class="ck"><span class="box r"></span> No — complete below</label>
+    </div>
+    <div class="row">
+      <div class="f grow"><div class="lbl">Emergency Contact Full Name</div><div class="line line-tall"></div></div>
       <div class="f w100"><div class="lbl">Phone Number</div><div class="line line-tall"></div></div>
       <div class="f w100"><div class="lbl">Relationship</div><div class="line line-tall"></div></div>
     </div>
@@ -185,9 +186,13 @@
 
   <hr>
 
-  <!-- Swimmer 1 -->
+  <!-- Swimmer 1 — includes adult self-registration option -->
   <div class="sw">
     <div class="sw-head"><span class="sw-num">1</span><span class="sw-label">Swimmer One</span></div>
+    <label class="ck" style="display:inline-flex;margin-bottom:6px;font-size:9px">
+      <span class="box" style="margin-top:1px;flex-shrink:0"></span>
+      <span style="margin-left:5px;color:#444">Adult swimmer registering myself — I am the swimmer (name &amp; DOB same as Parent / Guardian above; complete gender only)</span>
+    </label>
     <div class="row">
       <div class="f grow"><div class="lbl">Swimmer's Full Name <span class="req">*</span></div><div class="line line-tall"></div></div>
       <div class="f w100"><div class="lbl">Date of Birth <span class="req">*</span></div><div class="line line-tall"></div></div>
@@ -199,9 +204,9 @@
     </div>
   </div>
 
-  <!-- Swimmer 2 -->
+  <!-- Swimmers 2–5 -->
   <div class="sw">
-    <div class="sw-head"><span class="sw-num">2</span><span class="sw-label">Swimmer Two &nbsp;<span style="font-weight:400;font-size:9px;color:#888">— complete if applicable</span></span></div>
+    <div class="sw-head"><span class="sw-num">2</span><span class="sw-label">Swimmer Two &nbsp;<span style="font-weight:400;font-size:9px;color:#888">— if applicable</span></span></div>
     <div class="row">
       <div class="f grow"><div class="lbl">Swimmer's Full Name</div><div class="line line-tall"></div></div>
       <div class="f w100"><div class="lbl">Date of Birth</div><div class="line line-tall"></div></div>
@@ -213,9 +218,8 @@
     </div>
   </div>
 
-  <!-- Swimmer 3 -->
   <div class="sw">
-    <div class="sw-head"><span class="sw-num">3</span><span class="sw-label">Swimmer Three &nbsp;<span style="font-weight:400;font-size:9px;color:#888">— complete if applicable</span></span></div>
+    <div class="sw-head"><span class="sw-num">3</span><span class="sw-label">Swimmer Three &nbsp;<span style="font-weight:400;font-size:9px;color:#888">— if applicable</span></span></div>
     <div class="row">
       <div class="f grow"><div class="lbl">Swimmer's Full Name</div><div class="line line-tall"></div></div>
       <div class="f w100"><div class="lbl">Date of Birth</div><div class="line line-tall"></div></div>
@@ -227,14 +231,38 @@
     </div>
   </div>
 
-  <!-- Signature -->
+  <div class="sw">
+    <div class="sw-head"><span class="sw-num">4</span><span class="sw-label">Swimmer Four &nbsp;<span style="font-weight:400;font-size:9px;color:#888">— if applicable</span></span></div>
+    <div class="row">
+      <div class="f grow"><div class="lbl">Swimmer's Full Name</div><div class="line line-tall"></div></div>
+      <div class="f w100"><div class="lbl">Date of Birth</div><div class="line line-tall"></div></div>
+      <div class="f w36"><div class="lbl">Age</div><div class="line line-tall"></div></div>
+      <div class="f w48" style="justify-content:flex-end">
+        <div class="lbl">Gender</div>
+        <div class="checks"><label class="ck"><span class="box"></span> F</label><label class="ck"><span class="box"></span> M</label></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sw">
+    <div class="sw-head"><span class="sw-num">5</span><span class="sw-label">Swimmer Five &nbsp;<span style="font-weight:400;font-size:9px;color:#888">— if applicable</span></span></div>
+    <div class="row">
+      <div class="f grow"><div class="lbl">Swimmer's Full Name</div><div class="line line-tall"></div></div>
+      <div class="f w100"><div class="lbl">Date of Birth</div><div class="line line-tall"></div></div>
+      <div class="f w36"><div class="lbl">Age</div><div class="line line-tall"></div></div>
+      <div class="f w48" style="justify-content:flex-end">
+        <div class="lbl">Gender</div>
+        <div class="checks"><label class="ck"><span class="box"></span> F</label><label class="ck"><span class="box"></span> M</label></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Declaration + Signature -->
   <div class="note">
-    By signing below I confirm that the information provided is accurate and that I agree to Star Swim Sdn Bhd's Terms and Conditions of Enrolment, including class, cancellation, replacement and credit policies.
-    &nbsp;&nbsp;For additional swimmers, please request a supplement form from our staff.
+    By signing below I confirm that the information provided is accurate and that I agree to Star Swim Sdn Bhd's Terms and Conditions of Enrolment, including class, cancellation, replacement and credit policies. For additional swimmers, please request a supplement form from our staff.
   </div>
   <div class="sig">
     <div class="f grow"><div class="lbl">Parent / Guardian Signature <span class="req">*</span></div><div class="line" style="min-height:30px"></div></div>
-    <div class="f grow"><div class="lbl">Full Name (print) <span class="req">*</span></div><div class="line" style="min-height:30px"></div></div>
     <div class="f w100"><div class="lbl">Date <span class="req">*</span></div><div class="line" style="min-height:30px"></div></div>
   </div>
 
