@@ -1621,7 +1621,7 @@ function App(){
   }
 
   // ───── Swimmer registry CRUD ──────────────────────────────────────────────
-  async function addStudent({ name, dateOfBirth, gender, enrollments, guardianName, guardianEmail, guardianPhone, emergencyName, emergencyPhone, emergencyRelationship, emergencySameAsGuardian }){
+  async function addStudent({ name, dateOfBirth, gender, enrollments, guardianName, guardianEmail, guardianPhone, emergencyName, emergencyPhone, emergencyRelationship, emergencySameAsGuardian, tcAcceptedAt, tcAcceptanceId }){
     try{
       setError('');
       const validEnrollments = (enrollments || []).filter(e => e.lessonTypeId);
@@ -1642,7 +1642,12 @@ function App(){
         emergency_name: sameAsG ? (guardianName || null) : (emergencyName || null),
         emergency_phone: sameAsG ? (guardianPhone || null) : (emergencyPhone || null),
         emergency_relationship: sameAsG ? 'Parent / Guardian' : (emergencyRelationship || null),
-        emergency_same_as_guardian: sameAsG
+        emergency_same_as_guardian: sameAsG,
+        // T&C inheritance: a swimmer added under an existing account
+        // inherits the account-level T&C acceptance so the whole household
+        // shares one consent record.
+        tc_accepted_at: tcAcceptedAt || null,
+        tc_acceptance_id: tcAcceptanceId || null
       });
       const studentId = inserted?.[0]?.id;
       if(studentId && validEnrollments.length){
@@ -4327,9 +4332,7 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
   const [addingSwimmerFor, setAddingSwimmerFor] = useState(null); // parent key for which we're adding a new swimmer
   const [editingSwimmerId, setEditingSwimmerId] = useState(null); // swimmer id being edited inline
   const [groupPanelKey, setGroupPanelKey] = useState(null);     // parent key whose group management is open
-  const [purchaseKey, setPurchaseKey] = useState(null);         // parent key whose purchase form is open
   const [billingKey, setBillingKey] = useState(null);           // parent key whose billing preview is open
-  const [creatingParent, setCreatingParent] = useState(false);  // new-parent flow
 
   const filtered = (parentGroups || [])
     .filter(pg => {
@@ -4399,29 +4402,15 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
           <button className={`tab ${statusFilter==='archived'?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setStatusFilter('archived')}>Archived ({archivedCount})</button>
           <button className={`tab ${statusFilter==='all'?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setStatusFilter('all')}>All</button>
         </div>
-        <button className="btn btn-primary small" onClick={()=>setCreatingParent(true)}>+ New Account</button>
+        {/* + New Account is intentionally absent. New accounts can only
+            be opened via the parent intake form (📝 Intake in the header),
+            which enforces T&C acceptance as a hard requirement. The legacy
+            ability to create an account from this admin panel was removed
+            because it bypassed the T&C gate. */}
       </div>
     </div>
 
-    {/* New-parent flow — creates the first swimmer; the parent record is
-        derived from that swimmer's guardian fields automatically. */}
-    {creatingParent && <div className="parent-card" style={{borderColor:'var(--primary)',background:'#F0F9FF'}}>
-      <div className="parent-head" style={{cursor:'default'}}>
-        <div className="parent-head-main">
-          <div className="parent-name">+ New Account &amp; First Swimmer</div>
-          <div className="parent-contact subtle small">If the swimmer is an adult registering themselves, toggle <strong>"Adult swimmer is the account holder"</strong> at the top of the form below — the account holder name auto-fills from the swimmer name. Otherwise, fill the account holder details normally for a parent registering a child.</div>
-        </div>
-        <button className="btn btn-ghost small" onClick={()=>setCreatingParent(false)}>Cancel</button>
-      </div>
-      <div className="parent-body">
-        <StudentEditor row={{}} lessonTypes={lessonTypes} packages={packages} onSave={async (patch)=>{
-          await addStudent(patch);
-          setCreatingParent(false);
-        }} />
-      </div>
-    </div>}
-
-    {filtered.length === 0 && !creatingParent && <div className="card empty" style={{padding:30}}>No accounts match.</div>}
+    {filtered.length === 0 && <div className="card empty" style={{padding:30}}>No accounts match.</div>}
 
     {filtered.map(pg => {
       const isExpanded = expandedKey === pg.key;
@@ -4476,7 +4465,12 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
             <button className="btn btn-ghost small" onClick={()=>setContactEditKey(isEditingContact?null:pg.key)}>{isEditingContact?'Close':'✎ Edit Contact'}</button>
             <button className="btn btn-ghost small" onClick={()=>setAddingSwimmerFor(isAddingSwimmer?null:pg.key)}>{isAddingSwimmer?'Close':'+ Add Swimmer'}</button>
             {swimmerCount >= 2 && <button className="btn btn-ghost small" onClick={()=>setGroupPanelKey(isManagingGroup?null:pg.key)}>{isManagingGroup?'Close':'👪 Manage Group'}</button>}
-            {addSubscription && <button className="btn btn-primary small" onClick={()=>setPurchaseKey(purchaseKey===pg.key?null:pg.key)}>{purchaseKey===pg.key?'Close':'💳 Record Purchase'}</button>}
+            {/* 💳 Record Purchase removed — billing is now driven from
+                🧾 Billing Preview which shows the actual amounts owed and
+                records payment against precise line items. The legacy
+                Record Purchase form was free-form and let staff record
+                purchases that didn't match the swimmers' actual
+                enrolments, leading to inconsistencies. */}
             <button className="btn btn-ghost small" onClick={()=>setBillingKey(billingKey===pg.key?null:pg.key)} title="Preview what this account would be billed based on current enrolments + family groups">{billingKey===pg.key?'Close':'🧾 Billing Preview'}</button>
             <div style={{marginLeft:'auto'}}>
               <button className={`btn small ${pg.isActive?'btn-ghost':'btn-primary'}`} onClick={()=>setParentArchived(pg, pg.isActive)} title={pg.isActive ? 'Archive this parent and all their swimmers' : 'Restore this parent and all their swimmers'}>
@@ -4485,30 +4479,20 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
             </div>
           </div>}
 
-          {/* T&C summary at the account level — each swimmer's status as
-              a compact row of badges. Click takes you to the T&C tab for
-              the swimmer flow. Lives next to the contact since it's an
-              identity / compliance fact about each swimmer in the account. */}
-          {pg.key !== '__unassigned__' && <div className="account-tc-summary">
-            <span className="account-tc-label">Terms &amp; Conditions:</span>
-            {pg.swimmers.map(sw => sw.tcAcceptedAt
-              ? <span key={sw.id} className="account-tc-badge tc-ok" title={`Accepted ${new Date(sw.tcAcceptedAt).toLocaleDateString()} · ID ${sw.tcAcceptanceId}`}>✅ {sw.name}</span>
-              : <span key={sw.id} className="account-tc-badge tc-pending" title="Not yet accepted — visit the T&C flow for this swimmer">⚠ {sw.name}</span>
-            )}
-          </div>}
-
-          {/* Detailed purchase / subscription form with auto-pricing */}
-          {purchaseKey === pg.key && <RecordPurchaseForm
-            pg={pg}
-            lessonTypes={lessonTypes}
-            lessonTypeById={lessonTypeById}
-            packages={packages}
-            packageById={packageById}
-            groupById={groupById}
-            membersByGroup={membersByGroup}
-            addSubscription={addSubscription}
-            onClose={()=>setPurchaseKey(null)}
-          />}
+          {/* T&C is an ACCOUNT-LEVEL status. Once any swimmer in this
+              account has accepted, the whole account is covered — new
+              swimmers added under it inherit the same acceptance. The
+              intake form enforces T&C as a hard requirement for new
+              accounts. Legacy accounts were backfilled. */}
+          {pg.key !== '__unassigned__' && (() => {
+            const accepted = pg.swimmers.find(sw => sw.tcAcceptedAt);
+            return <div className="account-tc-summary">
+              <span className="account-tc-label">Terms &amp; Conditions:</span>
+              {accepted
+                ? <span className="account-tc-badge tc-ok" title={`Accepted ${new Date(accepted.tcAcceptedAt).toLocaleDateString()} · ID ${accepted.tcAcceptanceId} · covers all swimmers in this account`}>✅ Accepted · {new Date(accepted.tcAcceptedAt).toLocaleDateString(undefined,{dateStyle:'medium'})}</span>
+                : <span className="account-tc-badge tc-pending" title="No swimmer in this account has T&C acceptance recorded">⚠ Pending</span>}
+            </div>;
+          })()}
 
           {/* Billing preview — forward-looking invoice based on current
               enrolments + family group memberships. The user uses this to
@@ -4520,6 +4504,9 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
             packages={packages}
             packageById={packageById}
             groupById={groupById}
+            membersByGroup={membersByGroup}
+            subscriptions={subscriptions}
+            addSubscription={addSubscription}
             onClose={()=>setBillingKey(null)}
           />}
 
@@ -4536,6 +4523,11 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
               lessonTypes={lessonTypes} packages={packages}
               hideAccountSections={true}
               onSave={async (patch)=>{
+                // New swimmer inherits the account's T&C acceptance: the
+                // account holder already agreed to terms when the account
+                // was opened (or via legacy backfill), and that consent
+                // covers every swimmer under them.
+                const accountTcSwimmer = pg.swimmers.find(s => s.tcAcceptedAt);
                 await addStudent({
                   ...patch,
                   guardianName: pg.name,
@@ -4544,7 +4536,10 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
                   emergencyName: pg.emergencyName,
                   emergencyPhone: pg.emergencyPhone,
                   emergencyRelationship: pg.emergencyRelationship,
-                  emergencySameAsGuardian: pg.emergencySameAsGuardian
+                  emergencySameAsGuardian: pg.emergencySameAsGuardian,
+                  // Inherit T&C from the account so the new swimmer is covered immediately
+                  tcAcceptedAt: accountTcSwimmer?.tcAcceptedAt || null,
+                  tcAcceptanceId: accountTcSwimmer?.tcAcceptanceId || null
                 });
                 setAddingSwimmerFor(null);
               }}
@@ -4663,259 +4658,6 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
 }
 
 // ============================================================================
-// RecordPurchaseForm — full credit purchase / subscription recording form.
-// Restores the detailed entry path (date, lesson type, credits, amount,
-// receipt #, source, notes) that used to live in CreditHistoryPanel,
-// surfaced now at the parent admin level where billing actually happens.
-//
-// Pricing auto-calculates from the chosen package + selected swimmers:
-//   • Group package (is_group=true) where selected count == pkg.pax:
-//       total = amount × quantity  (bundle / family discount applies)
-//   • Group package where selected count != pkg.pax:
-//       total = fallback_per_pax × count × quantity  (no discount)
-//   • Non-group package (per-swimmer):
-//       total = amount × count × quantity
-//
-// Subject routing for the resulting subscription:
-//   • If selected swimmers === all members of one unbound family group:
-//       subject = family_group  (one subscription, N purchase rows)
-//   • Else if a single swimmer is selected:
-//       subject = student  (one subscription, one purchase row)
-//   • Else: a per-swimmer subscription is fired for each selected swimmer
-//       (linked by shared receipt # for consolidated reporting)
-// ============================================================================
-function RecordPurchaseForm({ pg, lessonTypes, lessonTypeById, packages, packageById, groupById, membersByGroup, addSubscription, onClose }){
-  // Eligible lesson types: those any of the parent's swimmers are enrolled in
-  const eligibleLts = (lessonTypes || []).filter(lt =>
-    pg.swimmers.some(s => (s.lessonTypeIds || []).includes(lt.id))
-  );
-  const [ltId, setLtId] = useState(eligibleLts[0]?.id || '');
-
-  // Eligible swimmers for this LT (under this parent)
-  const eligibleSwimmers = pg.swimmers.filter(s => (s.lessonTypeIds || []).includes(ltId));
-  const [selectedSwimmerIds, setSelectedSwimmerIds] = useState(new Set());
-
-  // Reset swimmer selection when LT changes — default to all eligible
-  useEffect(() => {
-    setSelectedSwimmerIds(new Set(eligibleSwimmers.map(s => s.id)));
-  }, [ltId]);
-
-  // Packages for this lesson type
-  const eligiblePackages = (packages || []).filter(p => p.lesson_type_id === ltId && p.is_active !== false);
-  // Pre-select package: pick the one already on the first selected swimmer's
-  // enrollment for this LT, falling back to the first eligible package.
-  const defaultPkgId = (() => {
-    const firstSwimmer = eligibleSwimmers.find(s => selectedSwimmerIds.has(s.id)) || eligibleSwimmers[0];
-    const enrol = firstSwimmer?.enrollments?.find(e => e.lessonTypeId === ltId);
-    return enrol?.packageId || eligiblePackages[0]?.id || '';
-  })();
-  const [pkgId, setPkgId] = useState(defaultPkgId);
-  useEffect(() => { setPkgId(defaultPkgId); }, [defaultPkgId]);
-
-  const [credits, setCredits] = useState(4);
-  const [quantity, setQuantity] = useState(1);
-  const [date, setDate] = useState(toDateStr(new Date()));
-  const [amountPaid, setAmountPaid] = useState('');
-  const [receiptNumber, setReceiptNumber] = useState('');
-  const [source, setSource] = useState('topup');
-  const [notes, setNotes] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const selectedPkg = pkgId ? packageById(pkgId) : null;
-
-  // When package changes, default credits to the package's billing_count
-  useEffect(() => {
-    if(selectedPkg && selectedPkg.billing_mode === 'credit' && selectedPkg.billing_count){
-      setCredits(Number(selectedPkg.billing_count));
-    }
-  }, [pkgId]);
-
-  // Auto-pricing: depends on package shape + selected swimmer count
-  const selectedCount = selectedSwimmerIds.size;
-  const { unitPrice, totalPrice, pricingNote, qualifiesForBundle } = useMemo(() => {
-    if(!selectedPkg || !selectedCount) return { unitPrice:0, totalPrice:0, pricingNote:'Select a package', qualifiesForBundle:false };
-    const amount = Number(selectedPkg.amount) || 0;
-    const fallback = Number(selectedPkg.fallback_per_pax) || 0;
-    const pax = Number(selectedPkg.pax) || 0;
-    if(selectedPkg.is_group){
-      if(pax && selectedCount === pax){
-        const tp = amount * Number(quantity || 1);
-        return { unitPrice:amount, totalPrice:tp, pricingNote:`Bundle: RM${amount.toFixed(2)} for ${pax} swimmers (family discount)`, qualifiesForBundle:true };
-      } else {
-        const tp = fallback * selectedCount * Number(quantity || 1);
-        return { unitPrice:fallback, totalPrice:tp, pricingNote:`Off-bundle: RM${fallback.toFixed(2)} × ${selectedCount} swimmer${selectedCount===1?'':'s'} (needs exactly ${pax} pax to qualify for the discount)`, qualifiesForBundle:false };
-      }
-    } else {
-      const tp = amount * selectedCount * Number(quantity || 1);
-      return { unitPrice:amount, totalPrice:tp, pricingNote:`Individual: RM${amount.toFixed(2)} × ${selectedCount} swimmer${selectedCount===1?'':'s'}`, qualifiesForBundle:false };
-    }
-  }, [selectedPkg, selectedCount, quantity]);
-
-  // Auto-fill amount paid from the computed total when the form updates
-  useEffect(() => {
-    setAmountPaid(totalPrice ? totalPrice.toFixed(2) : '');
-  }, [totalPrice]);
-
-  // Surface family pax group options that exist for this LT — gives the user
-  // a hint when there's a Fam3/Fam4/Fam5 package they could be using.
-  const familyPaxOptions = eligiblePackages.filter(p => p.is_group && p.pax);
-
-  // Determine subject routing
-  const selectedSwimmers = eligibleSwimmers.filter(s => selectedSwimmerIds.has(s.id));
-  // Are all selected swimmers in the same unbound family group, AND do they
-  // collectively make up all members of that group?
-  const sharedGroupId = selectedSwimmers.length ? selectedSwimmers[0].familyGroupId : null;
-  const allShareGroup = !!sharedGroupId && selectedSwimmers.every(s => s.familyGroupId === sharedGroupId);
-  const sharedGroup = allShareGroup && groupById ? groupById[sharedGroupId] : null;
-  const groupIsUnbound = sharedGroup && sharedGroup.groupType !== 'bound';
-  const groupMembersInLt = sharedGroup ? ((membersByGroup?.[sharedGroupId] || []).filter(m => (m.lessonTypeIds||[]).includes(ltId))) : [];
-  const routesAsGroup = allShareGroup && groupIsUnbound && selectedSwimmers.length === groupMembersInLt.length;
-  const subjectLabel = routesAsGroup
-    ? `👪 Family group "${sharedGroup.name}" (all ${selectedSwimmers.length} members)`
-    : selectedSwimmers.length === 1
-      ? `👤 ${selectedSwimmers[0].name}`
-      : selectedSwimmers.length > 1
-        ? `👤 ${selectedSwimmers.length} individual subscriptions (one per swimmer)`
-        : 'No swimmers selected';
-
-  function toggleSwimmer(id){
-    const next = new Set(selectedSwimmerIds);
-    if(next.has(id)) next.delete(id); else next.add(id);
-    setSelectedSwimmerIds(next);
-  }
-  function selectAll(){ setSelectedSwimmerIds(new Set(eligibleSwimmers.map(s => s.id))); }
-  function selectNone(){ setSelectedSwimmerIds(new Set()); }
-
-  async function submit(){
-    if(!ltId){ alert('Select a lesson type.'); return; }
-    if(!selectedSwimmers.length){ alert('Select at least one swimmer.'); return; }
-    if(!Number(credits)){ alert('Credits per swimmer must be > 0.'); return; }
-    try{
-      setBusy(true);
-      const baseOpts = {
-        lessonTypeId: ltId,
-        creditsPerSwimmer: Number(credits),
-        quantity: Number(quantity) || 1,
-        source,
-        notes: notes || `Recorded purchase (${pg.name})`,
-        amountPaid: amountPaid ? Number(amountPaid) : null,
-        receiptNumber: receiptNumber || null,
-        subscriptionDate: date,
-        packageId: pkgId || null
-      };
-      if(routesAsGroup){
-        await addSubscription({ ...baseOpts, subjectType:'family_group', subjectId: sharedGroupId });
-      } else {
-        // Fire one subscription per swimmer, sharing the receipt number
-        // so they're consolidated visually in the Receipts log.
-        for(const s of selectedSwimmers){
-          await addSubscription({ ...baseOpts, subjectType:'student', subjectId: s.id });
-        }
-      }
-      onClose();
-    } catch(err){
-      alert(err.message || 'Failed to record purchase.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return <div className="record-purchase-form">
-    <div className="parent-sub-log-title">💳 Record purchase / subscription</div>
-    <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr'}}>
-      <div className="field"><label>Lesson Type</label>
-        <select className="select" value={ltId} onChange={e=>setLtId(e.target.value)}>
-          {eligibleLts.length === 0 && <option value="">No swimmer is enrolled in any lesson type</option>}
-          {eligibleLts.map(lt => <option key={lt.id} value={lt.id}>{lt.name}</option>)}
-        </select>
-      </div>
-      <div className="field"><label>Package</label>
-        <select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}>
-          {eligiblePackages.length === 0 && <option value="">No packages for this lesson type</option>}
-          {eligiblePackages.map(p => <option key={p.id} value={p.id}>
-            {p.name}{p.is_group ? ` · Family ${p.pax}` : ''}{p.amount != null ? ` · RM${p.amount}` : ''}{p.billing_mode==='credit' && p.billing_count ? ` · ${p.billing_count}cr` : ''}
-          </option>)}
-        </select>
-      </div>
-    </div>
-
-    <div className="field" style={{marginTop:8}}>
-      <label>Swimmers <span className="subtle" style={{textTransform:'none',letterSpacing:0,fontWeight:600,fontSize:10}}>· {selectedCount} of {eligibleSwimmers.length} selected</span></label>
-      <div className="record-purchase-swimmers">
-        {eligibleSwimmers.length === 0
-          ? <div className="subtle small">No swimmer under {pg.name} is enrolled in the selected lesson type.</div>
-          : <>
-              {eligibleSwimmers.map(s => <label key={s.id} className="record-purchase-swimmer">
-                <input type="checkbox" checked={selectedSwimmerIds.has(s.id)} onChange={()=>toggleSwimmer(s.id)} /> {s.name}
-                {s.familyGroupId && groupById?.[s.familyGroupId] && <span className="subtle small" style={{marginLeft:4}}> · {groupById[s.familyGroupId].groupType==='bound'?'🔗':'👪'} {groupById[s.familyGroupId].name}</span>}
-              </label>)}
-              <div style={{display:'flex',gap:4,marginTop:4}}>
-                <button type="button" className="btn btn-ghost small" onClick={selectAll}>All</button>
-                <button type="button" className="btn btn-ghost small" onClick={selectNone}>None</button>
-              </div>
-            </>}
-      </div>
-    </div>
-
-    {/* Family-pax hint — surfaces alternative discounted packages */}
-    {familyPaxOptions.length > 0 && <div className="record-purchase-hint">
-      <strong>Family pax options for this lesson type:</strong>
-      {familyPaxOptions.map(p => <span key={p.id} className="record-purchase-pax-chip" style={p.id === pkgId ? {background:'#DBEAFE',borderColor:'#3B82F6',color:'#1E40AF'} : null}>
-        {p.name} · {p.pax} pax · RM{p.amount}{selectedCount === p.pax ? ' ← matches!' : ''}
-      </span>)}
-    </div>}
-
-    {/* Pricing summary — the auto-calculated total */}
-    <div className={`record-purchase-pricing ${qualifiesForBundle?'is-discount':''}`}>
-      <div className="record-purchase-total">
-        Total: <strong>RM{totalPrice.toFixed(2)}</strong>
-        {Number(quantity) > 1 && <span className="subtle small"> · {quantity}× cycle</span>}
-      </div>
-      <div className="record-purchase-note subtle small">{pricingNote}</div>
-      <div className="record-purchase-subject subtle small" style={{marginTop:3}}>Will record as: {subjectLabel}</div>
-    </div>
-
-    <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr',marginTop:8}}>
-      <div className="field"><label>Credits per swimmer</label>
-        <input className="input" type="number" min="1" value={credits} onChange={e=>setCredits(e.target.value)} />
-      </div>
-      <div className="field"><label>Quantity (cycles)</label>
-        <input className="input" type="number" min="1" value={quantity} onChange={e=>setQuantity(e.target.value)} />
-      </div>
-      <div className="field"><label>Date</label>
-        <input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)} />
-      </div>
-    </div>
-
-    <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr',marginTop:8}}>
-      <div className="field"><label>Amount paid (RM)</label>
-        <input className="input" type="number" step="0.01" value={amountPaid} onChange={e=>setAmountPaid(e.target.value)} placeholder="Auto-calculated" />
-      </div>
-      <div className="field"><label>Receipt #</label>
-        <input className="input" value={receiptNumber} onChange={e=>setReceiptNumber(e.target.value)} placeholder="e.g. INV-001234" />
-      </div>
-      <div className="field"><label>Source</label>
-        <select className="select" value={source} onChange={e=>setSource(e.target.value)}>
-          <option value="topup">Top-up</option>
-          <option value="signup">Sign-up</option>
-          <option value="subscription">Subscription</option>
-          <option value="gift">Gift</option>
-          <option value="manual">Manual</option>
-        </select>
-      </div>
-    </div>
-
-    <div className="field" style={{marginTop:8}}>
-      <label>Notes (optional)</label>
-      <textarea className="textarea" rows={2} value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Reference, payment method, anything to remember…" />
-    </div>
-
-    <div style={{display:'flex',justifyContent:'flex-end',gap:6,marginTop:10}}>
-      <button className="btn btn-ghost small" onClick={onClose}>Cancel</button>
-      <button className="btn btn-primary" onClick={submit} disabled={busy || !ltId || !selectedSwimmers.length || !Number(credits)}>{busy ? 'Saving…' : 'Record Purchase'}</button>
-    </div>
-  </div>;
-}
 
 // Inline editor for an account's contact info + emergency contact.
 // Two visually distinct sections — Account Holder (parent or self) on
@@ -4979,11 +4721,82 @@ function ParentContactEditor({ pg, onSave, onCancel }){
 // This is a verification surface for the billing logic — staff reads it to
 // confirm the math adds up before the future invoice module runs.
 // ============================================================================
-function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packageById, groupById, onClose }){
+function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packageById, groupById, membersByGroup, subscriptions, addSubscription, onClose }){
   // Lookup helpers
   const ltById = lessonTypeById || ((id) => lessonTypes.find(x => x.id === id));
   const pkgById = packageById || ((id) => packages.find(p => p.id === id));
   function ltName(id){ const lt = typeof ltById === 'function' ? ltById(id) : ltById[id]; return lt?.name || 'Lesson'; }
+
+  // ── Record Payment inline form state ─────────────────────────────────
+  // Only one Record form is open at a time. The `recordingKey` is a stable
+  // identifier — `group:{groupId}` for a bundle row, `ind:{swimmerId}:{ltId}:{pkgId}`
+  // for an individual row. The form lives inline beneath the row; submit
+  // calls addSubscription with the right subject routing then collapses.
+  const [recordingKey, setRecordingKey] = useState(null);
+  const [recForm, setRecForm] = useState({ date: new Date().toISOString().slice(0,10), amount:'', receipt:'', source:'cash', notes:'' });
+  const [recBusy, setRecBusy] = useState(false);
+  function openRecorder(key, defaultAmount){
+    setRecordingKey(key);
+    setRecForm({ date: new Date().toISOString().slice(0,10), amount: String(defaultAmount.toFixed(2)), receipt:'', source:'cash', notes:'' });
+  }
+  function closeRecorder(){ setRecordingKey(null); setRecBusy(false); }
+  // Submit handler — routes to family_group OR student subject depending on
+  // the line item type. Wraps the existing addSubscription contract; no DB
+  // schema changes required. creditsPerSwimmer falls back to 4 for
+  // monthly-billed packages that don't specify a credit count.
+  async function submitRecorder(item){
+    if(!addSubscription){ alert('Payment recording is not available in this view.'); return; }
+    const amountNum = Number(recForm.amount);
+    if(!isFinite(amountNum) || amountNum <= 0){ alert('Enter a valid amount.'); return; }
+    const creditsPerSwimmer = (item.billingMode === 'credit' && item.billingCount) ? Number(item.billingCount) : 4;
+    setRecBusy(true);
+    try{
+      const payload = {
+        subjectType: item.key.startsWith('group:') ? 'family_group' : 'student',
+        subjectId: item.key.startsWith('group:') ? item.groupId : item.swimmerId,
+        lessonTypeId: item.lessonTypeId,
+        packageId: item.packageId,
+        creditsPerSwimmer,
+        quantity: 1,
+        amountPaid: amountNum,
+        subscriptionDate: recForm.date,
+        receiptNumber: recForm.receipt || null,
+        source: recForm.source || 'cash',
+        notes: recForm.notes || null
+      };
+      const result = await addSubscription(payload);
+      if(result) closeRecorder();
+    } catch(err){
+      alert(err?.message || 'Failed to record payment.');
+    } finally {
+      setRecBusy(false);
+    }
+  }
+  // Render the inline recorder strip — appears beneath the line being paid.
+  function renderRecorder(item){
+    return <tr><td colSpan={5} style={{padding:0,borderBottom:'1px solid var(--border-2)'}}>
+      <div className="billing-recorder">
+        <div className="billing-recorder-title">💳 Record payment for: <strong>{item.key.startsWith('group:') ? `${item.groupName} bundle` : `${item.swimmerName} · ${item.pkgName}`}</strong></div>
+        <div className="billing-recorder-grid">
+          <div className="field"><label>Date paid</label><input className="input" type="date" value={recForm.date} onChange={e=>setRecForm({...recForm, date:e.target.value})} /></div>
+          <div className="field"><label>Amount (RM)</label><input className="input" type="number" min="0" step="0.01" value={recForm.amount} onChange={e=>setRecForm({...recForm, amount:e.target.value})} /></div>
+          <div className="field"><label>Receipt #</label><input className="input" value={recForm.receipt} onChange={e=>setRecForm({...recForm, receipt:e.target.value})} placeholder="optional" /></div>
+          <div className="field"><label>Source</label><select className="select" value={recForm.source} onChange={e=>setRecForm({...recForm, source:e.target.value})}>
+            <option value="cash">Cash</option>
+            <option value="bank_transfer">Bank Transfer</option>
+            <option value="duitnow">DuitNow</option>
+            <option value="card">Card</option>
+            <option value="other">Other</option>
+          </select></div>
+        </div>
+        <div className="field" style={{margin:'0 0 8px'}}><label>Notes</label><input className="input" value={recForm.notes} onChange={e=>setRecForm({...recForm, notes:e.target.value})} placeholder="optional" /></div>
+        <div style={{display:'flex',justifyContent:'flex-end',gap:6}}>
+          <button className="btn btn-ghost small" onClick={closeRecorder} disabled={recBusy}>Cancel</button>
+          <button className="btn btn-primary small" onClick={()=>submitRecorder(item)} disabled={recBusy}>{recBusy ? 'Recording…' : '💳 Confirm payment'}</button>
+        </div>
+      </div>
+    </td></tr>;
+  }
 
   // Compute line items
   const groupItems = [];
@@ -5024,16 +4837,23 @@ function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packag
       surchargeNote = `+ ${extras} × RM${fb} overfill`;
     }
     groupItems.push({
+      key: `group:${gid}`,
+      groupId: gid,
       groupName: g.name,
       groupType: g.groupType,
+      lessonTypeId: pkg.lesson_type_id,
+      packageId: pkg.id,
       ltName: ltName(pkg.lesson_type_id),
       pkgName: pkg.name,
       memberCount,
       required,
+      memberIds: members.map(m => m.id),
       memberNames: members.map(m => m.name).join(', '),
       bundle,
       amount,
       surchargeNote,
+      billingMode: pkg.billing_mode || 'monthly',
+      billingCount: pkg.billing_count,
       isUnderfilled: required != null && memberCount < required,
       isEmpty: memberCount === 0
     });
@@ -5053,7 +4873,11 @@ function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packag
       if(!pkg) return;
       const amount = pkg.amount != null ? Number(pkg.amount) : 0;
       individualItems.push({
+        key: `ind:${sw.id}:${e.lessonTypeId}:${e.packageId}`,
+        swimmerId: sw.id,
         swimmerName: sw.name,
+        lessonTypeId: e.lessonTypeId,
+        packageId: e.packageId,
         ltName: ltName(e.lessonTypeId),
         pkgName: pkg.name,
         billingMode: pkg.billing_mode || 'monthly',
@@ -5113,24 +4937,31 @@ function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packag
             <th>Members</th>
             <th className="num">Bundle</th>
             <th className="num">Charge</th>
+            <th style={{width:1}}></th>
           </tr>
         </thead>
         <tbody>
-          {groupItems.map((it, i) => <tr key={i}>
-            <td><strong>{it.groupType==='bound'?'🔗':'👪'} {it.groupName}</strong></td>
-            <td>{it.ltName} · {it.pkgName}</td>
-            <td>
-              <span style={{fontWeight:700}}>{it.memberCount}{it.required != null ? `/${it.required}` : ''}</span>
-              {it.memberNames ? <div className="small subtle" style={{marginTop:2}}>{it.memberNames}</div> : null}
-              {it.isEmpty ? <div className="billing-warn">⚠ No members — bundle still owed</div> : null}
-              {it.isUnderfilled && !it.isEmpty ? <div className="billing-info">Underfill OK — bundle covers any size</div> : null}
-            </td>
-            <td className="num">RM{it.bundle.toFixed(2)}</td>
-            <td className="num">
-              <strong>RM{it.amount.toFixed(2)}</strong>
-              {it.surchargeNote ? <div className="small subtle" style={{marginTop:2}}>{it.surchargeNote}</div> : null}
-            </td>
-          </tr>)}
+          {groupItems.map((it, i) => <React.Fragment key={i}>
+            <tr>
+              <td><strong>{it.groupType==='bound'?'🔗':'👪'} {it.groupName}</strong></td>
+              <td>{it.ltName} · {it.pkgName}</td>
+              <td>
+                <span style={{fontWeight:700}}>{it.memberCount}{it.required != null ? `/${it.required}` : ''}</span>
+                {it.memberNames ? <div className="small subtle" style={{marginTop:2}}>{it.memberNames}</div> : null}
+                {it.isEmpty ? <div className="billing-warn">⚠ No members — bundle still owed</div> : null}
+                {it.isUnderfilled && !it.isEmpty ? <div className="billing-info">Underfill OK — bundle covers any size</div> : null}
+              </td>
+              <td className="num">RM{it.bundle.toFixed(2)}</td>
+              <td className="num">
+                <strong>RM{it.amount.toFixed(2)}</strong>
+                {it.surchargeNote ? <div className="small subtle" style={{marginTop:2}}>{it.surchargeNote}</div> : null}
+              </td>
+              <td>
+                {addSubscription ? <button className="btn btn-primary small" onClick={()=>recordingKey===it.key ? closeRecorder() : openRecorder(it.key, it.amount)}>{recordingKey===it.key ? 'Close' : '💳 Record'}</button> : null}
+              </td>
+            </tr>
+            {recordingKey === it.key ? renderRecorder(it) : null}
+          </React.Fragment>)}
         </tbody>
       </table>
     </div>}
@@ -5148,15 +4979,22 @@ function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packag
             <th>Lesson · Package</th>
             <th>Billing</th>
             <th className="num">Charge</th>
+            <th style={{width:1}}></th>
           </tr>
         </thead>
         <tbody>
-          {individualItems.map((it, i) => <tr key={i}>
-            <td>{it.swimmerName}</td>
-            <td>{it.ltName} · {it.pkgName}</td>
-            <td className="small subtle">{it.billingMode === 'credit' && it.billingCount ? `${it.billingCount} credits` : it.billingMode || 'monthly'}</td>
-            <td className="num"><strong>RM{it.amount.toFixed(2)}</strong></td>
-          </tr>)}
+          {individualItems.map((it, i) => <React.Fragment key={i}>
+            <tr>
+              <td>{it.swimmerName}</td>
+              <td>{it.ltName} · {it.pkgName}</td>
+              <td className="small subtle">{it.billingMode === 'credit' && it.billingCount ? `${it.billingCount} credits` : it.billingMode || 'monthly'}</td>
+              <td className="num"><strong>RM{it.amount.toFixed(2)}</strong></td>
+              <td>
+                {addSubscription ? <button className="btn btn-primary small" onClick={()=>recordingKey===it.key ? closeRecorder() : openRecorder(it.key, it.amount)}>{recordingKey===it.key ? 'Close' : '💳 Record'}</button> : null}
+              </td>
+            </tr>
+            {recordingKey === it.key ? renderRecorder(it) : null}
+          </React.Fragment>)}
         </tbody>
       </table>
     </div>}
@@ -5540,87 +5378,6 @@ function ReceiptModal({ subscription, subjectName, ltName, onClose }){
 }
 
 
-function FamilyGroupsPanel({ groups, students, groupPackages, lessonTypes, packageById, membersByGroup, scheduleByStudent, addGroup, updateGroup, deleteGroup, setStudentGroup }){
-  const [name, setName] = useState('');
-  const [pkgId, setPkgId] = useState('');
-  const [editId, setEditId] = useState(null);
-
-  function statusChip(b){
-    if(b.status === 'qualified')   return { cls:'gb-ok', text:`Qualified · RM${fmtMoney(b.total)}${b.perHead != null ? ` (RM${fmtMoney(b.perHead)}/child)` : ''}` };
-    if(b.status === 'under_ok')    return { cls:'gb-ok', text:`Bundle covers underfill · ${b.n}/${b.required} · RM${fmtMoney(b.total)} (account pays the package, not per swimmer)` };
-    if(b.status === 'empty')       return { cls:'gb-warn', text:`Empty group · RM${fmtMoney(b.total)} bundle still owed — add eligible swimmers or delete the group` };
-    if(b.status === 'flat_bundle') return { cls:'gb-ok', text:`Bundle · RM${fmtMoney(b.total)} · ${b.n} member${b.n===1?'':'s'}` };
-    if(b.status === 'over')        return { cls:'gb-amber', text:`⚠ ${b.n}/${b.required} — overfilled. ${b.fb != null ? `Bundle + ${b.n - b.required} × RM${fmtMoney(b.fb)} = RM${fmtMoney(b.total)}` : `Move to a ${b.n}-pax family package.`}` };
-    if(b.status === 'flat')        return { cls:'gb-ok', text:`RM${fmtMoney(b.total)} for the group${b.mode === 'credit' && b.credits != null ? ` · ${b.credits} credits` : ''} · ${b.n} member${b.n===1?'':'s'}${b.required != null ? ` · up to ${b.required}` : ''}` };
-    if(b.status === 'over_soft')   return { cls:'gb-amber', text:`⚠ ${b.n} members — package max is ${b.required}` };
-    return { cls:'gb-dim', text:'Set amount (and required pax) on the package.' };
-  }
-
-  return <div className="card" style={{marginTop:16}}>
-    <div style={{fontSize:18,fontWeight:800}}>Family Groups</div>
-    <div className="small subtle" style={{marginTop:4}}>A family group is one paying unit sharing a package — use it for a discounted family bundle, or to keep a private class (Duo, Premium Clara) booked together. When you enroll, you can drop the whole group into a class at once.</div>
-
-    <div style={{display:'flex',gap:10,alignItems:'flex-end',marginTop:14,flexWrap:'wrap'}}>
-      <div className="field" style={{margin:0,minWidth:200,flex:1}}><label>New group name</label><input className="input" placeholder="e.g. Tan Family" value={name} onChange={e=>setName(e.target.value)} /></div>
-      <div className="field" style={{margin:0,minWidth:220}}><label>Package</label><select className="select" value={pkgId} onChange={e=>setPkgId(e.target.value)}><option value="">Select a package…</option>{packageOptionGroups(groupPackages.filter(p=>p.pax>1), lessonTypes)}</select></div>
-      <button className="btn btn-primary" disabled={!groupPackages.length} onClick={()=>{ const v=name.trim(); if(!v||!pkgId) return; addGroup({ name:v, packageId:pkgId }); setName(''); setPkgId(''); }}>Create Group</button>
-    </div>
-    {groupPackages.length ? null : <div className="hint" style={{marginTop:8}}>No packages yet. Add one in Settings → Packages first.</div>}
-
-    <div style={{display:'flex',flexDirection:'column',gap:12,marginTop:16}}>
-      {groups.length ? groups.map(g => {
-        const pkg = g.packageId ? packageById(g.packageId) : null;
-        const members = membersByGroup[g.id] || [];
-        const b = groupBilling(pkg, members.length);
-        const chip = statusChip(b);
-        const candidates = students.filter(s => !s.familyGroupId);
-        return <div className="gb-card" key={g.id}>
-          <div className="gb-head">
-            <div style={{minWidth:0}}>
-              <div style={{fontWeight:800,fontSize:15}}>👪 {g.name}</div>
-              <div className="small subtle">{pkg ? (pkg.is_group
-                ? `${pkg.name}${pkg.pax!=null?` · needs ${pkg.pax} pax`:''}${pkg.amount!=null?` · RM${pkg.amount} bundle`:''}${pkg.fallback_per_pax!=null?` · RM${pkg.fallback_per_pax}/pax standard`:''}`
-                : `${pkg.name}${pkg.pax!=null?` · up to ${pkg.pax} pax`:''}${pkg.amount!=null?` · RM${pkg.amount}`:''}${(pkg.billing_mode==='credit'&&pkg.billing_count!=null)?` · ${pkg.billing_count} credits`:''}`) : 'No package linked'}</div>
-            </div>
-            <div style={{display:'flex',gap:6,flexShrink:0,flexWrap:'wrap',alignItems:'center'}}>
-              <button className={`btn small ${g.groupType==='bound'?'group-chip-bound':'btn-ghost'}`}
-                title={g.groupType==='bound' ? 'Bound group — members must attend together. Click to switch to Discount.' : 'Discount group — members share billing discount but can split up. Click to switch to Bound.'}
-                onClick={()=>updateGroup(g.id,{groupType:g.groupType==='bound'?'discount':'bound'})}>
-                {g.groupType==='bound' ? '🔗 Bound' : '👪 Discount'}
-              </button>
-              <button className="btn btn-ghost small" onClick={()=>setEditId(editId===g.id?null:g.id)}>{editId===g.id?'Close':'Edit'}</button>
-              <button className="btn btn-danger small" onClick={()=>deleteGroup(g)}>Del</button>
-            </div>
-          </div>
-
-          <div className={`gb-status ${chip.cls}`}>{chip.text}</div>
-
-          {editId===g.id ? <div className="gb-edit">
-            <div style={{display:'flex',gap:10,alignItems:'flex-end',flexWrap:'wrap'}}>
-              <div className="field" style={{margin:0,flex:1,minWidth:180}}><label>Group name</label><input className="input" defaultValue={g.name} onBlur={e=>{ const v=e.target.value.trim(); if(v && v!==g.name) updateGroup(g.id,{name:v}); }} /></div>
-              <div className="field" style={{margin:0,minWidth:180}}><label>Package</label><select className="select" value={g.packageId||''} onChange={e=>updateGroup(g.id,{packageId:e.target.value||null})}><option value="">(none)</option>{packageOptionGroups(groupPackages.filter(p=>p.pax>1), lessonTypes)}</select></div>
-            </div>
-            <div className="hint" style={{marginTop:6}}>Group name saves when you click away.</div>
-          </div> : null}
-
-          <div className="gb-members">
-            {members.length ? members.map(m => { const classes = (scheduleByStudent[m.id]||[]).length; return <div className="gb-member" key={m.id}>
-              <div style={{minWidth:0}}><span style={{fontWeight:700}}>{m.name}</span>{m.age!=null?<span className="subtle"> · {m.age}y</span>:null} <span className={classes? 'subtle small':'gb-noclass'}>{classes ? `· in ${classes} class${classes===1?'':'es'}` : '· ⚠ not in any class'}</span></div>
-              <button className="btn btn-ghost small" onClick={()=>setStudentGroup(m.id, null)}>Remove</button>
-            </div>; }) : <div className="subtle small" style={{padding:'4px 0'}}>No members yet.</div>}
-          </div>
-
-          <div className="gb-add">
-            <span className="small subtle">Add member:</span>
-            <div style={{flex:1,minWidth:180}}>
-              <StudentSelect valueId={null} fallbackLabel={null} studentById={{}} candidates={candidates} onPick={(stu)=>{ if(stu) setStudentGroup(stu.id, g.id); }} conflict={null} />
-            </div>
-          </div>
-        </div>;
-      }) : <div className="empty">No family groups yet.</div>}
-    </div>
-  </div>;
-}
 
 function StudentsView({ students, lessonTypes, lessonTypeById, packages, packageById, groupById, familyGroups, membersByGroup, scheduleByStudent, sessions, jumpToWeek, creditByKey, purchasesByStudent, subscriptions, addCreditPurchase, deleteCreditPurchase, addSubscription, cancelSubscription, adjustBalanceTo, addStudent, updateStudent, deleteStudent }){
   const [name, setName] = useState('');
