@@ -45,94 +45,104 @@
     .hd {
       display: flex; align-items: flex-end; justify-content: space-between;
       border-bottom: 2.5px solid #000;
-      padding-bottom: 8px; margin-bottom: 14px;
+      padding-bottom: 7px; margin-bottom: 12px;
     }
-    .hd-name { font-size: 17px; font-weight: 800; letter-spacing: -.3px }
+    .hd-name { font-size: 18px; font-weight: 800; letter-spacing: -.3px }
     .hd-form { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: #555 }
 
     /* Section */
-    .sec { margin-bottom: 13px }
+    .sec { margin-bottom: 10px }
     .sec-label {
-      font-size: 8.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.2px;
-      color: #000; background: #000; color: #fff;
-      display: inline-block; padding: 2px 7px; margin-bottom: 7px;
-    }
-    .sec-label.light {
-      background: transparent; color: #000; border: 1px solid #000;
+      font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;
+      background: #000; color: #fff;
+      display: inline-block; padding: 2px 7px; margin-bottom: 6px;
     }
 
     /* Row of fields */
-    .row { display: flex; gap: 14px; align-items: flex-end; margin-bottom: 10px; flex-wrap: wrap }
+    .row { display: flex; gap: 12px; align-items: flex-end; margin-bottom: 8px; flex-wrap: wrap }
     .f { display: flex; flex-direction: column; min-width: 0 }
     .f.grow { flex: 1 }
     .f.w80 { flex: 0 0 80px }
-    .f.w100 { flex: 0 0 100px }
-    .f.w48 { flex: 0 0 48px }
-    .f.w36 { flex: 0 0 36px }
+    .f.w100 { flex: 0 0 108px }
+    .f.w48 { flex: 0 0 52px }
+    .f.w36 { flex: 0 0 40px }
     .lbl {
-      font-size: 7.5px; text-transform: uppercase; letter-spacing: .8px;
+      font-size: 9px; text-transform: uppercase; letter-spacing: .7px;
       font-weight: 700; color: #555; margin-bottom: 3px; white-space: nowrap;
     }
     .lbl .req { color: #000 }
     .line {
-      border: none; border-bottom: 1px solid #333;
+      border: none; border-bottom: 1.2px solid #333;
       min-height: 20px; width: 100%;
     }
-    .line-tall { min-height: 26px }
+    .line-tall { min-height: 23px }
 
     /* Checkboxes */
-    .checks { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center }
-    .ck { display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 600; white-space: nowrap }
-    .box { width: 10px; height: 10px; border: 1.2px solid #000; border-radius: 1.5px; flex-shrink: 0; display: inline-block }
+    .checks { display: flex; flex-wrap: wrap; gap: 5px 12px; align-items: center }
+    .ck { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; white-space: nowrap }
+    .box { width: 11px; height: 11px; border: 1.3px solid #000; border-radius: 2px; flex-shrink: 0; display: inline-block }
     .box.r { border-radius: 50% }
 
     /* Swimmer block */
-    .sw { border: 1px solid #bbb; padding: 9px 11px 7px; margin-bottom: 10px }
+    .sw { border: 1px solid #aaa; padding: 8px 10px 6px; margin-bottom: 8px }
     .sw-head {
-      font-size: 8px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;
-      margin-bottom: 7px; display: flex; align-items: center; gap: 7px;
+      font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;
+      margin-bottom: 5px; display: flex; align-items: center; gap: 6px;
     }
-    .sw-num { font-size: 11px; font-weight: 800 }
-    .sw-label { color: #555 }
+    .sw-num { font-size: 13px; font-weight: 800 }
+    .sw-label { color: #444 }
 
-    /* Lesson type checkboxes — tighter 2-col */
-    .lt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 20px; margin-top: 6px }
-    .lt-item { display: inline-flex; align-items: center; gap: 5px; font-size: 8.5px; font-weight: 600 }
+    /* Lesson type checkboxes */
+    .lt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 16px; margin-top: 4px }
+    .lt-item { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 600 }
 
     /* Divider */
-    hr { border: none; border-top: 1px solid #ccc; margin: 12px 0 }
+    hr { border: none; border-top: 1px solid #ccc; margin: 9px 0 }
 
     /* Signature */
-    .sig { display: flex; gap: 14px; align-items: flex-end; margin-top: 14px; flex-wrap: wrap }
+    .sig { display: flex; gap: 12px; align-items: flex-end; margin-top: 10px; flex-wrap: wrap }
 
     .note {
-      font-size: 7.5px; color: #555; margin-top: 10px; line-height: 1.5;
-      border-top: 1px dashed #ccc; padding-top: 7px;
+      font-size: 9px; color: #555; margin-top: 8px; line-height: 1.5;
+      border-top: 1px dashed #ccc; padding-top: 6px;
     }
     .footer-line {
-      font-size: 7.5px; color: #777; text-align: center; margin-top: 10px;
-      border-top: 1px solid #ddd; padding-top: 6px;
+      font-size: 8.5px; color: #777; text-align: center; margin-top: 8px;
+      border-top: 1px solid #ddd; padding-top: 5px;
     }
 
     /* ── Print ── */
-    @page { size: A4 portrait; margin: 9mm 11mm }
+    @page { size: A4 portrait; margin: 7mm 9mm }
     @media print {
       body { background: #fff; padding: 0 }
       .toolbar, .hint { display: none !important }
       .sheet { box-shadow: none; padding: 0; max-width: none; width: 100% }
     }
   </style>
+  <script>
+    // Auto-trigger the print dialog as soon as the page and fonts have loaded.
+    // This means clicking "Print PDF version" in the intake form opens this
+    // window and the print dialog appears immediately — no extra click needed.
+    window.addEventListener('load', () => {
+      // Small delay so the logo image and Outfit font render before print.
+      setTimeout(() => window.print(), 700);
+    });
+    // Close this helper window automatically after the user dismisses print.
+    window.addEventListener('afterprint', () => {
+      setTimeout(() => window.close(), 200);
+    });
+  </script>
 </head>
 <body>
 
 <div class="toolbar">
   <div class="toolbar-info">
     SSB Registration — Hard Copy Form
-    <span>Print or save as PDF via your browser print dialog · one page · A4</span>
+    <span>Print dialog opens automatically · close this window if you need to cancel</span>
   </div>
   <div style="display:flex;gap:8px">
-    <button class="btn-back" onclick="window.close()">← Back</button>
-    <button class="btn-p" onclick="window.print()">🖨 Print / Save as PDF</button>
+    <button class="btn-back" onclick="window.print()">🖨 Print again</button>
+    <button class="btn-back" onclick="window.close()">Close</button>
   </div>
 </div>
 
@@ -151,9 +161,9 @@
 
   <!-- Account Holder -->
   <div class="sec">
-    <div class="sec-label">Account Holder / Parent / Guardian</div>
+    <div class="sec-label">Parent / Guardian</div>
     <div class="row">
-      <div class="f grow"><div class="lbl">Full Name <span class="req">*</span></div><div class="line line-tall"></div></div>
+      <div class="f grow"><div class="lbl">Swimmer's Full Name <span class="req">*</span></div><div class="line line-tall"></div></div>
       <div class="f grow"><div class="lbl">Email Address <span class="req">*</span></div><div class="line line-tall"></div></div>
       <div class="f w100"><div class="lbl">Mobile Phone <span class="req">*</span></div><div class="line line-tall"></div></div>
     </div>
@@ -179,7 +189,7 @@
   <div class="sw">
     <div class="sw-head"><span class="sw-num">1</span><span class="sw-label">Swimmer One</span></div>
     <div class="row">
-      <div class="f grow"><div class="lbl">Full Name <span class="req">*</span></div><div class="line line-tall"></div></div>
+      <div class="f grow"><div class="lbl">Swimmer's Full Name <span class="req">*</span></div><div class="line line-tall"></div></div>
       <div class="f w100"><div class="lbl">Date of Birth <span class="req">*</span></div><div class="line line-tall"></div></div>
       <div class="f w36"><div class="lbl">Age</div><div class="line line-tall"></div></div>
       <div class="f w48" style="justify-content:flex-end">
@@ -187,72 +197,33 @@
         <div class="checks"><label class="ck"><span class="box"></span> F</label><label class="ck"><span class="box"></span> M</label></div>
       </div>
     </div>
-    <div class="lbl" style="margin-bottom:3px">Lesson Type — tick all that apply <span class="req">*</span></div>
-    <div class="lt-grid">
-      <label class="lt-item"><span class="box"></span> LTS Group (5–18 yrs · 1:6)</label>
-      <label class="lt-item"><span class="box"></span> Personal 1:1 (5 yrs+)</label>
-      <label class="lt-item"><span class="box"></span> LTS Toddler Group (2–4 yrs · 1:4)</label>
-      <label class="lt-item"><span class="box"></span> Personal Duo 1:2 (5 yrs+)</label>
-      <label class="lt-item"><span class="box"></span> LTS Adult 18+ (1:4)</label>
-      <label class="lt-item"><span class="box"></span> Personal Toddler 1:1 (1–2 yrs)</label>
-      <label class="lt-item"><span class="box"></span> Family 3 / Family 4 / Family 5</label>
-      <label class="lt-item"><span class="box"></span> StrokeLab / StrokeLab Elite</label>
-      <label class="lt-item"><span class="box"></span> Premium Personal 2:1</label>
-      <label class="lt-item"><span class="box"></span> Premium Clara</label>
-    </div>
   </div>
 
   <!-- Swimmer 2 -->
   <div class="sw">
-    <div class="sw-head"><span class="sw-num">2</span><span class="sw-label">Swimmer Two &nbsp;<span style="font-weight:400;font-size:7.5px;color:#888">— complete if applicable</span></span></div>
+    <div class="sw-head"><span class="sw-num">2</span><span class="sw-label">Swimmer Two &nbsp;<span style="font-weight:400;font-size:9px;color:#888">— complete if applicable</span></span></div>
     <div class="row">
-      <div class="f grow"><div class="lbl">Full Name</div><div class="line line-tall"></div></div>
+      <div class="f grow"><div class="lbl">Swimmer's Full Name</div><div class="line line-tall"></div></div>
       <div class="f w100"><div class="lbl">Date of Birth</div><div class="line line-tall"></div></div>
       <div class="f w36"><div class="lbl">Age</div><div class="line line-tall"></div></div>
       <div class="f w48" style="justify-content:flex-end">
         <div class="lbl">Gender</div>
         <div class="checks"><label class="ck"><span class="box"></span> F</label><label class="ck"><span class="box"></span> M</label></div>
       </div>
-    </div>
-    <div class="lbl" style="margin-bottom:3px">Lesson Type</div>
-    <div class="lt-grid">
-      <label class="lt-item"><span class="box"></span> LTS Group (5–18 yrs · 1:6)</label>
-      <label class="lt-item"><span class="box"></span> Personal 1:1 (5 yrs+)</label>
-      <label class="lt-item"><span class="box"></span> LTS Toddler Group (2–4 yrs · 1:4)</label>
-      <label class="lt-item"><span class="box"></span> Personal Duo 1:2 (5 yrs+)</label>
-      <label class="lt-item"><span class="box"></span> LTS Adult 18+ (1:4)</label>
-      <label class="lt-item"><span class="box"></span> Personal Toddler 1:1 (1–2 yrs)</label>
-      <label class="lt-item"><span class="box"></span> Family 3 / Family 4 / Family 5</label>
-      <label class="lt-item"><span class="box"></span> StrokeLab / StrokeLab Elite</label>
-      <label class="lt-item"><span class="box"></span> Premium Personal 2:1</label>
-      <label class="lt-item"><span class="box"></span> Premium Clara</label>
     </div>
   </div>
 
   <!-- Swimmer 3 -->
   <div class="sw">
-    <div class="sw-head"><span class="sw-num">3</span><span class="sw-label">Swimmer Three &nbsp;<span style="font-weight:400;font-size:7.5px;color:#888">— complete if applicable</span></span></div>
+    <div class="sw-head"><span class="sw-num">3</span><span class="sw-label">Swimmer Three &nbsp;<span style="font-weight:400;font-size:9px;color:#888">— complete if applicable</span></span></div>
     <div class="row">
-      <div class="f grow"><div class="lbl">Full Name</div><div class="line line-tall"></div></div>
+      <div class="f grow"><div class="lbl">Swimmer's Full Name</div><div class="line line-tall"></div></div>
       <div class="f w100"><div class="lbl">Date of Birth</div><div class="line line-tall"></div></div>
       <div class="f w36"><div class="lbl">Age</div><div class="line line-tall"></div></div>
       <div class="f w48" style="justify-content:flex-end">
         <div class="lbl">Gender</div>
         <div class="checks"><label class="ck"><span class="box"></span> F</label><label class="ck"><span class="box"></span> M</label></div>
       </div>
-    </div>
-    <div class="lbl" style="margin-bottom:3px">Lesson Type</div>
-    <div class="lt-grid">
-      <label class="lt-item"><span class="box"></span> LTS Group (5–18 yrs · 1:6)</label>
-      <label class="lt-item"><span class="box"></span> Personal 1:1 (5 yrs+)</label>
-      <label class="lt-item"><span class="box"></span> LTS Toddler Group (2–4 yrs · 1:4)</label>
-      <label class="lt-item"><span class="box"></span> Personal Duo 1:2 (5 yrs+)</label>
-      <label class="lt-item"><span class="box"></span> LTS Adult 18+ (1:4)</label>
-      <label class="lt-item"><span class="box"></span> Personal Toddler 1:1 (1–2 yrs)</label>
-      <label class="lt-item"><span class="box"></span> Family 3 / Family 4 / Family 5</label>
-      <label class="lt-item"><span class="box"></span> StrokeLab / StrokeLab Elite</label>
-      <label class="lt-item"><span class="box"></span> Premium Personal 2:1</label>
-      <label class="lt-item"><span class="box"></span> Premium Clara</label>
     </div>
   </div>
 
