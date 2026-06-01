@@ -270,13 +270,15 @@ function IntakeForm(){
     </div>
 
     {/* Referral / Discount Code — optional. Just captured here; the
-        invoice module (future) handles validation and benefit application. */}
-    <div className="card">
-      <div className="section-title">Referral or Discount Code <span className="optional-tag">optional</span></div>
-      <div className="section-hint">If you were referred by an existing customer or have a promotional code, enter it below. We'll apply any applicable benefits when your first invoice is generated.</div>
-      <div className="field" style={{marginTop:6}}>
-        <label>Code</label>
-        <input className="input" value={referralCode} onChange={e=>setReferralCode(e.target.value.toUpperCase())} placeholder="e.g. SARAH2025 or NEW50" maxLength={32} style={{textTransform:'uppercase',letterSpacing:'.5px'}} />
+        invoice module (future) handles validation and benefit application.
+        Compact single-row layout — label on left, code input on right. */}
+    <div className="card referral-card">
+      <div className="referral-row">
+        <div className="referral-text">
+          <div className="referral-title">🎟 Referral / Discount Code <span className="optional-tag">optional</span></div>
+          <div className="referral-hint">If you were referred or have a promo code</div>
+        </div>
+        <input className="input referral-input" value={referralCode} onChange={e=>setReferralCode(e.target.value.toUpperCase())} placeholder="e.g. SARAH2025" maxLength={32} />
       </div>
     </div>
 
