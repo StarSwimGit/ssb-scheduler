@@ -4988,6 +4988,7 @@ function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packag
   // Compute line items
   const groupItems = [];
   const individualItems = [];
+  const unconfiguredGroups = [];   // groups touching this account that lack a package_id
   let groupTotal = 0;
   let individualTotal = 0;
 
@@ -4997,7 +4998,17 @@ function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packag
     const g = groupById?.[gid];
     if(!g) return;
     const pkg = g.package_id ? (typeof pkgById === 'function' ? pkgById(g.package_id) : pkgById[g.package_id]) : null;
-    if(!pkg) return;
+    if(!pkg){
+      // Group exists but has no package set — flag it so the user can fix it
+      // via "Manage Group → Set package". Without a package the billing
+      // engine has no rate to apply, so the bundle line is omitted and
+      // members' matching enrolments incorrectly fall through to individual
+      // billing. The warning makes the broken state visible instead of
+      // silently miscomputing the total.
+      const members = pg.swimmers.filter(s => s.familyGroupId === gid);
+      unconfiguredGroups.push({ id: gid, name: g.name, groupType: g.groupType, memberCount: members.length, memberNames: members.map(m => m.name).join(', ') });
+      return;
+    }
     const members = pg.swimmers.filter(s => s.familyGroupId === gid);
     const memberCount = members.length;
     const required = pkg.pax != null ? Number(pkg.pax) : null;
@@ -5067,8 +5078,25 @@ function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packag
       Individual lessons not bound to a family group are charged per swimmer per package.
     </div>
 
-    {!hasAny && <div className="empty" style={{padding:20,textAlign:'center',color:'var(--text-3)'}}>
+    {!hasAny && unconfiguredGroups.length === 0 && <div className="empty" style={{padding:20,textAlign:'center',color:'var(--text-3)'}}>
       No billable items — no swimmers have package enrolments yet.
+    </div>}
+
+    {/* Warning: family groups without a package set — common for legacy
+        data. Without a package_id the billing engine can't apply a bundle
+        rate, so member enrolments incorrectly fall through to individual
+        billing. The fix is one click away in Manage Group → Set package. */}
+    {unconfiguredGroups.length > 0 && <div className="billing-warning-box">
+      <div className="billing-warning-title">⚠ {unconfiguredGroups.length} family group{unconfiguredGroups.length===1?'':'s'} need{unconfiguredGroups.length===1?'s':''} a package assigned</div>
+      <div className="billing-warning-body">
+        Until a package is set on these groups, their members are billed individually below — which inflates the total. Open <strong>🔗 Manage Group</strong> in the toolbar above and click <strong>+ Set package</strong> on each:
+        <ul style={{margin:'6px 0 0',paddingLeft:18}}>
+          {unconfiguredGroups.map(ug => <li key={ug.id} style={{fontSize:11.5,marginTop:3}}>
+            <strong>{ug.groupType==='bound'?'🔗':'👪'} {ug.name}</strong>
+            <span className="subtle"> · {ug.memberCount} member{ug.memberCount===1?'':'s'}: {ug.memberNames}</span>
+          </li>)}
+        </ul>
+      </div>
     </div>}
 
     {/* Group bundles */}
@@ -5174,6 +5202,12 @@ function ParentGroupManager({ pg, familyGroups, groupById, membersByGroup, lesso
   const [creatingPkgId, setCreatingPkgId] = useState('');
   const [creatingType, setCreatingType] = useState('discount');
   const [creatingMemberIds, setCreatingMemberIds] = useState(new Set());
+  // ── State for editing an existing group's package ──────────────────
+  // editPkgFor = group.id of the group whose package editor is open.
+  // editPkgLtId / editPkgPkgId hold the in-progress selection.
+  const [editPkgFor, setEditPkgFor] = useState(null);
+  const [editPkgLtId, setEditPkgLtId] = useState('');
+  const [editPkgPkgId, setEditPkgPkgId] = useState('');
 
   // Packages dropdown is filtered by selected lesson type — each package
   // belongs to exactly one lesson type by schema (packages.lesson_type_id).
@@ -5239,16 +5273,57 @@ function ParentGroupManager({ pg, familyGroups, groupById, membersByGroup, lesso
         // swimmers in this family" so legacy groups remain editable.
         const eligibleHere = g.package_id ? eligibleFor(pkgInfo ? (packageById?.(g.package_id)?.lesson_type_id) : null, g.package_id) : pg.swimmers;
         const memberSetForThisParent = pg.swimmers.filter(s => s.familyGroupId === g.id);
+        const isEditingPkg = editPkgFor === g.id;
+        const editPkgChoices = editPkgLtId ? packages.filter(p => p.lesson_type_id === editPkgLtId) : [];
         return <div key={g.id} className="parent-group-block">
           <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginBottom:6}}>
             <strong>{isBound ? '🔗' : '👪'} {g.name}</strong>
             {pkgInfo ? <span className="parent-group-tag" title="Group package — only swimmers with this package are eligible">{pkgInfo.ltName} · {pkgInfo.pkgName}</span> : <span className="parent-group-tag" style={{background:'#fef3c7',borderColor:'#fde68a',color:'#854d0e'}}>⚠ no package set</span>}
+            <button className="btn btn-ghost small" onClick={()=>{
+              if(isEditingPkg){ setEditPkgFor(null); return; }
+              // Pre-fill the editor with current selection
+              const cur = g.package_id ? packageById?.(g.package_id) : null;
+              setEditPkgLtId(cur?.lesson_type_id || '');
+              setEditPkgPkgId(g.package_id || '');
+              setEditPkgFor(g.id);
+            }}>{isEditingPkg ? 'Cancel' : (pkgInfo ? '✎ Change package' : '+ Set package')}</button>
             <button className="btn btn-ghost small" onClick={()=>updateGroup(g.id, { groupType: isBound?'discount':'bound' })}>
               {isBound ? 'Switch to Discount' : 'Switch to Bound'}
             </button>
             <button className="btn btn-danger small" onClick={()=>deleteGroup(g)}>Delete</button>
             <span className="subtle small" style={{marginLeft:'auto'}}>{memberSetForThisParent.length} of {eligibleHere.length} eligible</span>
           </div>
+
+          {/* Inline package editor for this existing group */}
+          {isEditingPkg && <div style={{padding:'9px 11px',background:'#F0F9FF',border:'1px solid #BFDBFE',borderRadius:6,marginBottom:8}}>
+            <div className="parent-sub-log-title" style={{fontSize:10,marginBottom:6}}>
+              {pkgInfo ? 'Change package for this group' : 'Set the package this group is billed under'}
+            </div>
+            <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr auto'}}>
+              <div className="field">
+                <label>Lesson Type</label>
+                <select className="select" value={editPkgLtId} onChange={e=>{ setEditPkgLtId(e.target.value); setEditPkgPkgId(''); }}>
+                  <option value="">— Select lesson type —</option>
+                  {lessonTypes.map(lt => <option key={lt.id} value={lt.id}>{lt.name}</option>)}
+                </select>
+              </div>
+              <div className="field">
+                <label>Package</label>
+                <select className="select" value={editPkgPkgId} onChange={e=>setEditPkgPkgId(e.target.value)} disabled={!editPkgLtId}>
+                  <option value="">{editPkgLtId ? '— Select package —' : 'Pick lesson type first'}</option>
+                  {editPkgChoices.map(p => <option key={p.id} value={p.id}>{p.name}{p.amount != null ? ` · RM${p.amount}` : ''}</option>)}
+                </select>
+              </div>
+              <div className="field" style={{justifyContent:'flex-end'}}>
+                <button className="btn btn-primary small" disabled={!editPkgPkgId} onClick={async ()=>{
+                  await updateGroup(g.id, { packageId: editPkgPkgId });
+                  setEditPkgFor(null);
+                }}>Save</button>
+              </div>
+            </div>
+            <div className="hint" style={{marginTop:6}}>Setting the package activates bundle billing for this group — all members enrolled in this (lesson type, package) pair are billed once via the group bundle.</div>
+          </div>}
+
           <div className="parent-group-members">
             {eligibleHere.length === 0 ? <span className="subtle small">No swimmers in this family have the matching package.</span> : eligibleHere.map(sw => {
               const inThis = sw.familyGroupId === g.id;
