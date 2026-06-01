@@ -6182,40 +6182,46 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
             })}
           </div>
           {/* ── Quick Add Groups ─────────────────────────────────────
-              Show family-group chips below the swimmer list. STRICT
-              filter: only groups whose PACKAGE'S lesson_type matches the
-              CURRENT session's lesson_type appear. A group is bound to
-              one (lesson_type, package) by its package_id — that's the
-              identity that decides whether it belongs in this session.
-              Groups without a package set are hidden (misconfigured —
-              the Billing Preview surfaces them with a fix-it warning).
-              Clicking a chip additively adds the group's members.
-              Bound groups (🔗) require all members to move together. */}
+              Show family-group chips below the swimmer list. Two-layer
+              filter:
+                (a) STRICT IDENTITY — the group's package's lesson_type
+                    must equal this session's lesson_type. A group is
+                    bound to one (lesson_type, package) by its package_id;
+                    that's the identity that decides whether it belongs
+                    in this session. Groups without a package_id are
+                    hidden (misconfigured — Billing Preview surfaces them).
+                (b) NON-EMPTY UTILITY — at least one member must still
+                    be addable (enrolled in this lesson type AND not
+                    already in this session). Empty groups and groups
+                    whose members are all already added produce no
+                    useful click, so we hide them.
+              Together: a chip only appears when clicking it would
+              actually add at least one swimmer. */}
           {(() => {
             const ltId = currentLt?.id;
             if(!ltId) return null;
+            const existingIds = new Set((modal.form.studentRows || []).filter(r => r.studentId).map(r => r.studentId));
             const eligibleGroups = (familyGroups || []).filter(g => {
+              // (a) Strict package identity
               if(!g.packageId) return false;
               const pkg = packageById?.(g.packageId);
-              return pkg && pkg.lesson_type_id === ltId;
+              if(!pkg || pkg.lesson_type_id !== ltId) return false;
+              // (b) At least one addable member
+              const members = (membersByGroup && membersByGroup[g.id]) || [];
+              const addable = members.filter(m => (m.lessonTypeIds || []).includes(ltId) && !existingIds.has(m.id));
+              return addable.length > 0;
             });
             if(!eligibleGroups.length) return null;
             return <div className="quick-add-groups">
               <span className="quick-add-label">Quick add group:</span>
               {eligibleGroups.map(g => {
-                // Members eligible to add here: members of the group who
-                // are enrolled in this lesson type. With the strict filter
-                // above, all members SHOULD qualify (group package's
-                // lesson_type = session lesson_type, and members were
-                // added on that basis), but the per-member check guards
-                // against legacy data where a member's enrolment was
-                // edited away after joining the group.
-                const eligible = ((membersByGroup && membersByGroup[g.id]) || []).filter(m => (m.lessonTypeIds||[]).includes(ltId));
+                const members = (membersByGroup && membersByGroup[g.id]) || [];
+                const addable = members.filter(m => (m.lessonTypeIds || []).includes(ltId) && !existingIds.has(m.id));
                 const isBound = g.groupType === 'bound';
                 return <button key={g.id} type="button" className={`group-chip ${isBound?'group-chip-bound':''}`}
                   onClick={() => quickAddGroup(g)}
-                  title={isBound ? `Bound group — all ${eligible.length} members must attend together` : `Discount group — click to add all ${eligible.length} members`}>
-                  {isBound ? '🔗' : '👪'} {g.name} · {eligible.length}
+                  title={isBound ? `Bound group — all ${addable.length} members must attend together` : `Discount group — click to add ${addable.length} member${addable.length===1?'':'s'} not yet in this session`}>
+                  {isBound ? '🔗' : '👪'} {g.name} · {addable.length}
                 </button>;
               })}
             </div>;
