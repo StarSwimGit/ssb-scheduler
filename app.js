@@ -6181,24 +6181,36 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
               </div>;
             })}
           </div>
-          {/* ── Quick Add Groups (req #4) ────────────────────────────
-              Show family-group chips below the swimmer list. Clicking
-              a chip additively adds that group's eligible members (those
-              enrolled in this lesson type) without replacing existing
-              students. Bound groups show with a 🔗 icon and enforce an
-              all-or-nothing add. */}
+          {/* ── Quick Add Groups ─────────────────────────────────────
+              Show family-group chips below the swimmer list. STRICT
+              filter: only groups whose PACKAGE'S lesson_type matches the
+              CURRENT session's lesson_type appear. A group is bound to
+              one (lesson_type, package) by its package_id — that's the
+              identity that decides whether it belongs in this session.
+              Groups without a package set are hidden (misconfigured —
+              the Billing Preview surfaces them with a fix-it warning).
+              Clicking a chip additively adds the group's members.
+              Bound groups (🔗) require all members to move together. */}
           {(() => {
             const ltId = currentLt?.id;
+            if(!ltId) return null;
             const eligibleGroups = (familyGroups || []).filter(g => {
-              const members = (membersByGroup && membersByGroup[g.id]) || [];
-              return members.some(m => !ltId || (m.lessonTypeIds || []).includes(ltId));
+              if(!g.packageId) return false;
+              const pkg = packageById?.(g.packageId);
+              return pkg && pkg.lesson_type_id === ltId;
             });
             if(!eligibleGroups.length) return null;
             return <div className="quick-add-groups">
               <span className="quick-add-label">Quick add group:</span>
               {eligibleGroups.map(g => {
-                const ltId = currentLt?.id;
-                const eligible = ((membersByGroup && membersByGroup[g.id]) || []).filter(m => !ltId || (m.lessonTypeIds||[]).includes(ltId));
+                // Members eligible to add here: members of the group who
+                // are enrolled in this lesson type. With the strict filter
+                // above, all members SHOULD qualify (group package's
+                // lesson_type = session lesson_type, and members were
+                // added on that basis), but the per-member check guards
+                // against legacy data where a member's enrolment was
+                // edited away after joining the group.
+                const eligible = ((membersByGroup && membersByGroup[g.id]) || []).filter(m => (m.lessonTypeIds||[]).includes(ltId));
                 const isBound = g.groupType === 'bound';
                 return <button key={g.id} type="button" className={`group-chip ${isBound?'group-chip-bound':''}`}
                   onClick={() => quickAddGroup(g)}
