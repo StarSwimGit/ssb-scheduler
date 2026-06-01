@@ -1736,9 +1736,13 @@ function App(){
   }
 
   // ───── Family groups (single-payer bundles) ──────────────────────────────
-  async function addGroup({ name, packageId }){
-    try{ setError(''); await insertRows('family_groups', { name, package_id: packageId || null }); await loadGroups(); }
-    catch(err){ handleErr(err); alert(err.message || 'Failed to create family group'); }
+  async function addGroup({ name, packageId, groupType }){
+    try{
+      setError('');
+      const ins = await insertRows('family_groups', { name, package_id: packageId || null, group_type: groupType || 'discount' });
+      await loadGroups();
+      return ins?.[0] || null;
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to create family group'); return null; }
   }
   async function updateGroup(id, patch){
     try{
@@ -2233,19 +2237,8 @@ function App(){
           updateStudent={updateStudent}
           deleteStudent={deleteStudent}
         />
-        <FamilyGroupsPanel
-          groups={familyGroups}
-          students={students}
-          groupPackages={options.packages.filter(p => p.is_active !== false)}
-          lessonTypes={activeLessonTypes()}
-          packageById={packageById}
-          membersByGroup={membersByGroup}
-          scheduleByStudent={scheduleByStudent}
-          addGroup={addGroup}
-          updateGroup={updateGroup}
-          deleteGroup={deleteGroup}
-          setStudentGroup={setStudentGroup}
-        />
+        {/* FamilyGroupsPanel removed — family groups are now managed
+            exclusively inside the Accounts tab, per-account context. */}
         <div style={{height:'42vh'}} aria-hidden="true"></div>
       </>}
       {!loading && view==='enroll' && <EnrollView
@@ -4447,7 +4440,10 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
               {pg.phone ? <span>📞 {pg.phone}</span> : null}
               {!pg.email && !pg.phone ? <span>(no contact recorded)</span> : null}
               {(pg.emergencyName || pg.emergencyPhone) && !pg.emergencySameAsGuardian ? <span> · 🚨 {pg.emergencyName || pg.emergencyPhone}{pg.emergencyName && pg.emergencyPhone ? ` ${pg.emergencyPhone}` : ''}{pg.emergencyRelationship ? ` (${pg.emergencyRelationship})` : ''}</span> : null}
-              {parentGroupsInPlay.length > 0 && <span> · {parentGroupsInPlay.map(g => <span key={g.id} className="parent-group-tag">{g.groupType==='bound'?'🔗':'👪'} {g.name}</span>)}</span>}
+              {parentGroupsInPlay.length > 0 && <span> · {parentGroupsInPlay.map(g => {
+                const gp = g.package_id && packageById ? packageById(g.package_id) : null;
+                return <span key={g.id} className="parent-group-tag" title={gp ? `${gp.name} package` : undefined}>{g.groupType==='bound'?'🔗':'👪'} {g.name}{gp ? ` · ${gp.name}` : ''}</span>;
+              })}</span>}
             </div>
           </div>
           <div className="parent-head-stats">
@@ -4524,12 +4520,14 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
             />
           </div>}
 
-          {/* Group management panel */}
+          {/* Group management panel — package-driven creation flow */}
           {isManagingGroup && <ParentGroupManager
             pg={pg}
             familyGroups={familyGroups}
             groupById={groupById}
             membersByGroup={membersByGroup}
+            lessonTypes={lessonTypes}
+            packages={packages}
             packageById={packageById}
             addGroup={addGroup}
             updateGroup={updateGroup}
@@ -4940,62 +4938,192 @@ function ParentContactEditor({ pg, onSave, onCancel }){
 
 // Family group management for a parent — pick existing group or create new
 // from this parent's children, toggle membership per child, switch type.
-function ParentGroupManager({ pg, familyGroups, groupById, membersByGroup, packageById, addGroup, updateGroup, deleteGroup, setStudentGroup, onClose }){
-  const [creatingName, setCreatingName] = useState(pg.name + ' family');
-  const [creatingType, setCreatingType] = useState('discount');
-  async function createNewAndAddAll(){
-    if(!creatingName.trim()) { alert('Group needs a name.'); return; }
-    // addGroup returns nothing; we re-find by name after load. Cleanest
-    // path: insert, then patch each swimmer's family_group_id from the
-    // refreshed groups list. We rely on addGroup awaiting completion.
-    await addGroup({ name: creatingName.trim(), packageId: null });
-    // We can't get the new id directly without addGroup returning it,
-    // so a brief workaround: pull from familyGroups after the next render
-    // is not possible in this single call. Use setStudentGroup with the
-    // group whose name matches. For now ask the user to re-open Manage
-    // Group and assign members — pragmatic given the schema.
-    alert(`Created group "${creatingName.trim()}". Re-open Manage Group to set ${creatingType==='bound'?'🔗 Bound':'👪 Discount'} and assign children.`);
-    onClose();
+// Package-driven family group manager — lives inside the Accounts tab.
+// Flow:
+//   1. Existing groups touching this family are listed at the top with
+//      their package context, member checkboxes, and an inline type/name editor.
+//      Only swimmers in this family who have an enrollment matching the
+//      group's package are shown as eligible checkboxes.
+//   2. Below, "Create new group" picks Lesson Type → Package → Type, and
+//      live-previews which family swimmers are eligible (have that exact
+//      package enrollment). The user ticks who to include and one click
+//      creates the group and assigns members in a single transaction.
+function ParentGroupManager({ pg, familyGroups, groupById, membersByGroup, lessonTypes, packages, packageById, addGroup, updateGroup, deleteGroup, setStudentGroup, onClose }){
+  // ── Eligibility helper ───────────────────────────────────────────────
+  // A swimmer in this account is eligible for a (lessonTypeId, packageId)
+  // group iff they have an enrollment row with that exact pair. This is
+  // the precise filter the user asked for: only swimmers with matching
+  // package can be slotted into the group.
+  function eligibleFor(lessonTypeId, packageId){
+    if(!lessonTypeId || !packageId) return [];
+    return pg.swimmers.filter(s => (s.enrollments || []).some(e => e.lessonTypeId === lessonTypeId && e.packageId === packageId));
   }
-  // List existing groups this parent's swimmers are in, plus a quick
-  // toggle for each child.
+
+  // ── State for the create form ────────────────────────────────────────
+  const [creatingOpen, setCreatingOpen] = useState(false);
+  const [creatingName, setCreatingName] = useState('');
+  const [creatingLtId, setCreatingLtId] = useState('');
+  const [creatingPkgId, setCreatingPkgId] = useState('');
+  const [creatingType, setCreatingType] = useState('discount');
+  const [creatingMemberIds, setCreatingMemberIds] = useState(new Set());
+
+  // Packages dropdown is filtered by selected lesson type — each package
+  // belongs to exactly one lesson type by schema (packages.lesson_type_id).
+  const eligiblePackages = creatingLtId
+    ? packages.filter(p => p.lesson_type_id === creatingLtId)
+    : [];
+
+  // Live preview of who is eligible right now given the current pick.
+  const previewEligible = eligibleFor(creatingLtId, creatingPkgId);
+
+  function toggleMember(id){
+    const next = new Set(creatingMemberIds);
+    if(next.has(id)) next.delete(id); else next.add(id);
+    setCreatingMemberIds(next);
+  }
+  function selectAllEligible(){ setCreatingMemberIds(new Set(previewEligible.map(s => s.id))); }
+  function selectNone(){ setCreatingMemberIds(new Set()); }
+
+  // When lessonType/package changes, default member selection to all eligible
+  // (saves a click — most common case is "create and add everyone").
+  React.useEffect(() => {
+    setCreatingMemberIds(new Set(previewEligible.map(s => s.id)));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [creatingLtId, creatingPkgId]);
+
+  async function handleCreate(){
+    const name = creatingName.trim();
+    if(!name){ alert('Group needs a name.'); return; }
+    if(!creatingLtId || !creatingPkgId){ alert('Pick a Lesson Type and Package first.'); return; }
+    const inserted = await addGroup({ name, packageId: creatingPkgId, groupType: creatingType });
+    if(!inserted){ return; }  // addGroup already alerted on failure
+    // Bulk-assign each selected swimmer to the new group.
+    for(const sid of creatingMemberIds){
+      // eslint-disable-next-line no-await-in-loop
+      await setStudentGroup(sid, inserted.id);
+    }
+    // Reset create form
+    setCreatingName(''); setCreatingLtId(''); setCreatingPkgId(''); setCreatingType('discount'); setCreatingMemberIds(new Set()); setCreatingOpen(false);
+  }
+
+  // ── Existing groups touching this family ─────────────────────────────
   const involvedGroupIds = [...new Set(pg.swimmers.map(s => s.familyGroupId).filter(Boolean))];
   const involvedGroups = involvedGroupIds.map(gid => groupById?.[gid]).filter(Boolean);
+
+  function packageLabel(pkgId){
+    if(!pkgId) return null;
+    const p = packageById ? packageById(pkgId) : null;
+    if(!p) return null;
+    const lt = lessonTypes.find(x => x.id === p.lesson_type_id);
+    return { ltName: lt?.name || 'Unknown lesson type', pkgName: p.name || 'Package' };
+  }
+
   return <div className="parent-group-panel">
     <div className="parent-sub-log-title">Family group management</div>
-    {involvedGroups.length > 0 && <div style={{marginBottom:10}}>
+
+    {/* ── Existing groups ──────────────────────────────────────────── */}
+    {involvedGroups.length > 0 && <div style={{marginBottom:14}}>
       {involvedGroups.map(g => {
         const isBound = g.groupType === 'bound';
+        const pkgInfo = packageLabel(g.package_id);
+        // Eligibility: swimmers with the group's exact package. Without
+        // a package_id on the group (legacy data) we fall back to "all
+        // swimmers in this family" so legacy groups remain editable.
+        const eligibleHere = g.package_id ? eligibleFor(pkgInfo ? (packageById?.(g.package_id)?.lesson_type_id) : null, g.package_id) : pg.swimmers;
         const memberSetForThisParent = pg.swimmers.filter(s => s.familyGroupId === g.id);
         return <div key={g.id} className="parent-group-block">
           <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginBottom:6}}>
             <strong>{isBound ? '🔗' : '👪'} {g.name}</strong>
-            <button className={`btn small ${isBound?'group-chip-bound':'btn-ghost'}`} onClick={()=>updateGroup(g.id, { groupType: isBound?'discount':'bound' })}>
+            {pkgInfo ? <span className="parent-group-tag" title="Group package — only swimmers with this package are eligible">{pkgInfo.ltName} · {pkgInfo.pkgName}</span> : <span className="parent-group-tag" style={{background:'#fef3c7',borderColor:'#fde68a',color:'#854d0e'}}>⚠ no package set</span>}
+            <button className="btn btn-ghost small" onClick={()=>updateGroup(g.id, { groupType: isBound?'discount':'bound' })}>
               {isBound ? 'Switch to Discount' : 'Switch to Bound'}
             </button>
-            <span className="subtle small">{memberSetForThisParent.length} of this parent's swimmers in group</span>
+            <button className="btn btn-danger small" onClick={()=>deleteGroup(g)}>Delete</button>
+            <span className="subtle small" style={{marginLeft:'auto'}}>{memberSetForThisParent.length} of {eligibleHere.length} eligible</span>
           </div>
           <div className="parent-group-members">
-            {pg.swimmers.map(sw => {
+            {eligibleHere.length === 0 ? <span className="subtle small">No swimmers in this family have the matching package.</span> : eligibleHere.map(sw => {
               const inThis = sw.familyGroupId === g.id;
               return <label key={sw.id} className="parent-group-member"><input type="checkbox" checked={inThis} onChange={(e)=>setStudentGroup(sw.id, e.target.checked ? g.id : null)} /> {sw.name}</label>;
             })}
+            {/* Show any non-eligible swimmers as muted, so user understands why they can't be added */}
+            {g.package_id && pg.swimmers.filter(s => !eligibleHere.includes(s)).map(sw => <label key={sw.id} className="parent-group-member" style={{opacity:.45}} title="Does not have the matching package enrollment"><input type="checkbox" disabled /> {sw.name}</label>)}
           </div>
         </div>;
       })}
     </div>}
+
+    {/* ── Create new group ──────────────────────────────────────────── */}
     <div className="parent-group-create">
-      <div className="parent-sub-log-title" style={{marginBottom:5}}>Create a new group</div>
-      <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
-        <input className="input" style={{flex:1,minWidth:160}} value={creatingName} onChange={e=>setCreatingName(e.target.value)} placeholder="Group name" />
-        <div className="tabs" style={{gap:2,padding:2}}>
-          <button className={`tab ${creatingType==='discount'?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setCreatingType('discount')}>👪 Discount</button>
-          <button className={`tab ${creatingType==='bound'?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setCreatingType('bound')}>🔗 Bound</button>
-        </div>
-        <button className="btn btn-primary small" onClick={createNewAndAddAll}>+ Create</button>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:creatingOpen?8:0}}>
+        <div className="parent-sub-log-title" style={{margin:0}}>Create a new family group</div>
+        <button className={`btn small ${creatingOpen?'btn-ghost':'btn-primary'}`} onClick={()=>setCreatingOpen(o=>!o)}>{creatingOpen?'Cancel':'+ New Group'}</button>
       </div>
-      <div className="hint" style={{marginTop:6}}>After creating, re-open Manage Group to flip type or assign children. (Two-step is intentional — keeps the create flow simple.)</div>
+
+      {creatingOpen && <div style={{display:'flex',flexDirection:'column',gap:10,marginTop:8}}>
+        {/* Step 1: Lesson Type + Package (the eligibility filter) */}
+        <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr'}}>
+          <div className="field">
+            <label>Lesson Type</label>
+            <select className="select" value={creatingLtId} onChange={e=>{ setCreatingLtId(e.target.value); setCreatingPkgId(''); }}>
+              <option value="">— Select lesson type —</option>
+              {lessonTypes.map(lt => <option key={lt.id} value={lt.id}>{lt.name}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label>Package</label>
+            <select className="select" value={creatingPkgId} onChange={e=>setCreatingPkgId(e.target.value)} disabled={!creatingLtId}>
+              <option value="">{creatingLtId ? '— Select package —' : 'Pick lesson type first'}</option>
+              {eligiblePackages.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* Step 2: Group name + type */}
+        <div className="form-grid" style={{gridTemplateColumns:'1fr auto'}}>
+          <div className="field">
+            <label>Group Name</label>
+            <input className="input" value={creatingName} onChange={e=>setCreatingName(e.target.value)} placeholder={`${pg.name} family · ${eligiblePackages.find(p=>p.id===creatingPkgId)?.name || 'group'}`} />
+          </div>
+          <div className="field">
+            <label>Type</label>
+            <div className="tabs" style={{gap:2,padding:2}}>
+              <button type="button" className={`tab ${creatingType==='discount'?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setCreatingType('discount')}>👪 Discount</button>
+              <button type="button" className={`tab ${creatingType==='bound'?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setCreatingType('bound')}>🔗 Bound</button>
+            </div>
+          </div>
+        </div>
+
+        {/* Step 3: Eligible swimmers (filtered by selected package) */}
+        {creatingPkgId && <div className="parent-group-block" style={{background:'#F0F9FF',borderColor:'#BFDBFE'}}>
+          <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginBottom:6}}>
+            <strong>Eligible swimmers</strong>
+            <span className="subtle small">{previewEligible.length} match the selected package</span>
+            <div style={{marginLeft:'auto',display:'flex',gap:4}}>
+              <button className="btn btn-ghost small" onClick={selectAllEligible} disabled={previewEligible.length===0}>All</button>
+              <button className="btn btn-ghost small" onClick={selectNone} disabled={creatingMemberIds.size===0}>None</button>
+            </div>
+          </div>
+          <div className="parent-group-members">
+            {previewEligible.length === 0
+              ? <span className="subtle small">No swimmers in this family have the selected package. Add the enrolment to a swimmer first via ✎ Edit on their row.</span>
+              : previewEligible.map(sw => {
+                  const checked = creatingMemberIds.has(sw.id);
+                  return <label key={sw.id} className="parent-group-member"><input type="checkbox" checked={checked} onChange={()=>toggleMember(sw.id)} /> {sw.name}</label>;
+                })}
+            {/* Show ineligible swimmers as muted, for transparency */}
+            {pg.swimmers.filter(s => !previewEligible.includes(s)).map(sw => <label key={sw.id} className="parent-group-member" style={{opacity:.45}} title="Does not have the selected package — add the enrolment to make eligible"><input type="checkbox" disabled /> {sw.name}</label>)}
+          </div>
+        </div>}
+
+        <div style={{display:'flex',justifyContent:'flex-end',gap:6}}>
+          <button className="btn btn-primary small" onClick={handleCreate} disabled={!creatingLtId || !creatingPkgId || !creatingName.trim()}>
+            + Create &amp; Assign {creatingMemberIds.size > 0 ? `(${creatingMemberIds.size})` : ''}
+          </button>
+        </div>
+      </div>}
     </div>
+
     <div style={{display:'flex',justifyContent:'flex-end',marginTop:8}}>
       <button className="btn btn-ghost small" onClick={onClose}>Close</button>
     </div>
