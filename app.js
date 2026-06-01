@@ -2796,10 +2796,12 @@ function trialAmountFor(lt, packages){
   return (trial && trial.amount != null) ? Number(trial.amount) : null;
 }
 
-// Live billing for a family group. The discount is NEVER stored per head: when
-// the group is at its required size it costs the bundled total; the moment it
-// drops below, it reverts to the standard per-pax rate — so a removed member
-// can't leave a stale discounted rate behind.
+// Live billing for a family group. New rule: the bundle price covers the
+// group regardless of how many members are actually in it (1, 2, … up to
+// `required`). The account is billed for the package, not per swimmer.
+// Underfill is fully allowed. Only an overfill (more members than the
+// package's pax allowance) triggers the per-pax overflow surcharge — and
+// even that is only applied if `fallback_per_pax` is set on the package.
 function groupBilling(pkg, memberCount){
   const n = memberCount;
   if(!pkg) return { n, status:'unknown', total:null, perHead:null, required:null, bundle:null, fb:null, credits:null, mode:null, isGroup:false };
@@ -2819,12 +2821,26 @@ function groupBilling(pkg, memberCount){
     if(required != null && n > required) status = 'over_soft';
     return { n, status, total, perHead, required, bundle, fb, credits, mode, isGroup:false };
   }
-  // Family discount bundle: price holds at full size, reverts to per-pax below.
+  // Family bundle: account is billed the bundle price for any size ≤ required.
+  // Underfill no longer falls back to per-pax — that rule was removed: a
+  // Family-5 group with 3 swimmers still pays the Family-5 bundle. The
+  // account opts out of the family price by changing each swimmer's
+  // individual package on their enrolment instead.
   let status = 'unknown', total = null;
   if(required != null && bundle != null){
-    if(n === required){ status = 'qualified'; total = bundle; }
-    else if(n < required){ status = 'under'; total = (fb != null ? n * fb : null); }
-    else { status = 'over'; total = (fb != null ? bundle + (n - required) * fb : bundle); }
+    if(n === 0){
+      status = 'empty'; total = bundle;  // bundle still charged even if empty (package was purchased)
+    } else if(n < required){
+      status = 'under_ok'; total = bundle;  // bundle covers underfill — no fallback
+    } else if(n === required){
+      status = 'qualified'; total = bundle;
+    } else {
+      // Overfill: bundle + (extras × per-pax fallback if set, otherwise just bundle)
+      status = 'over'; total = (fb != null ? bundle + (n - required) * fb : bundle);
+    }
+  } else if(bundle != null){
+    // No pax constraint set — bundle is a flat charge regardless of size
+    status = n === 0 ? 'empty' : 'flat_bundle'; total = bundle;
   }
   const perHead = (total != null && n > 0) ? total / n : null;
   return { n, status, total, perHead, required, bundle, fb, credits, mode, isGroup:true };
@@ -4312,6 +4328,7 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
   const [editingSwimmerId, setEditingSwimmerId] = useState(null); // swimmer id being edited inline
   const [groupPanelKey, setGroupPanelKey] = useState(null);     // parent key whose group management is open
   const [purchaseKey, setPurchaseKey] = useState(null);         // parent key whose purchase form is open
+  const [billingKey, setBillingKey] = useState(null);           // parent key whose billing preview is open
   const [creatingParent, setCreatingParent] = useState(false);  // new-parent flow
 
   const filtered = (parentGroups || [])
@@ -4460,6 +4477,7 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
             <button className="btn btn-ghost small" onClick={()=>setAddingSwimmerFor(isAddingSwimmer?null:pg.key)}>{isAddingSwimmer?'Close':'+ Add Swimmer'}</button>
             {swimmerCount >= 2 && <button className="btn btn-ghost small" onClick={()=>setGroupPanelKey(isManagingGroup?null:pg.key)}>{isManagingGroup?'Close':'👪 Manage Group'}</button>}
             {addSubscription && <button className="btn btn-primary small" onClick={()=>setPurchaseKey(purchaseKey===pg.key?null:pg.key)}>{purchaseKey===pg.key?'Close':'💳 Record Purchase'}</button>}
+            <button className="btn btn-ghost small" onClick={()=>setBillingKey(billingKey===pg.key?null:pg.key)} title="Preview what this account would be billed based on current enrolments + family groups">{billingKey===pg.key?'Close':'🧾 Billing Preview'}</button>
             <div style={{marginLeft:'auto'}}>
               <button className={`btn small ${pg.isActive?'btn-ghost':'btn-primary'}`} onClick={()=>setParentArchived(pg, pg.isActive)} title={pg.isActive ? 'Archive this parent and all their swimmers' : 'Restore this parent and all their swimmers'}>
                 {pg.isActive ? '📦 Archive' : '✓ Restore'}
@@ -4490,6 +4508,19 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
             membersByGroup={membersByGroup}
             addSubscription={addSubscription}
             onClose={()=>setPurchaseKey(null)}
+          />}
+
+          {/* Billing preview — forward-looking invoice based on current
+              enrolments + family group memberships. The user uses this to
+              verify the billing logic is computing the right total. */}
+          {billingKey === pg.key && <BillingPreviewPanel
+            pg={pg}
+            lessonTypes={lessonTypes}
+            lessonTypeById={lessonTypeById}
+            packages={packages}
+            packageById={packageById}
+            groupById={groupById}
+            onClose={()=>setBillingKey(null)}
           />}
 
           {/* Contact editor */}
@@ -4938,7 +4969,184 @@ function ParentContactEditor({ pg, onSave, onCancel }){
 
 // Family group management for a parent — pick existing group or create new
 // from this parent's children, toggle membership per child, switch type.
-// Package-driven family group manager — lives inside the Accounts tab.
+// ============================================================================
+// BillingPreviewPanel — forward-looking invoice preview for an account.
+// Shows exactly what the account would be billed based on:
+//   (1) Each family group involving this family: one bundle charge per group
+//       (NOT per swimmer). Bundle covers any size up to required.
+//   (2) Each non-grouped lesson enrolment per swimmer: charged at that
+//       package's individual amount.
+// This is a verification surface for the billing logic — staff reads it to
+// confirm the math adds up before the future invoice module runs.
+// ============================================================================
+function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packageById, groupById, onClose }){
+  // Lookup helpers
+  const ltById = lessonTypeById || ((id) => lessonTypes.find(x => x.id === id));
+  const pkgById = packageById || ((id) => packages.find(p => p.id === id));
+  function ltName(id){ const lt = typeof ltById === 'function' ? ltById(id) : ltById[id]; return lt?.name || 'Lesson'; }
+
+  // Compute line items
+  const groupItems = [];
+  const individualItems = [];
+  let groupTotal = 0;
+  let individualTotal = 0;
+
+  // 1. Family group bundles (deduplicated by groupId)
+  const accountGroupIds = [...new Set(pg.swimmers.map(s => s.familyGroupId).filter(Boolean))];
+  accountGroupIds.forEach(gid => {
+    const g = groupById?.[gid];
+    if(!g) return;
+    const pkg = g.package_id ? (typeof pkgById === 'function' ? pkgById(g.package_id) : pkgById[g.package_id]) : null;
+    if(!pkg) return;
+    const members = pg.swimmers.filter(s => s.familyGroupId === gid);
+    const memberCount = members.length;
+    const required = pkg.pax != null ? Number(pkg.pax) : null;
+    const bundle = pkg.amount != null ? Number(pkg.amount) : 0;
+    const fb = pkg.fallback_per_pax != null ? Number(pkg.fallback_per_pax) : null;
+    // Bundle pricing per new rule: any size up to required pays bundle.
+    // Overfill adds per-pax surcharge if fb is set.
+    let amount = bundle;
+    let surchargeNote = null;
+    if(required != null && memberCount > required && fb != null){
+      const extras = memberCount - required;
+      amount = bundle + extras * fb;
+      surchargeNote = `+ ${extras} × RM${fb} overfill`;
+    }
+    groupItems.push({
+      groupName: g.name,
+      groupType: g.groupType,
+      ltName: ltName(pkg.lesson_type_id),
+      pkgName: pkg.name,
+      memberCount,
+      required,
+      memberNames: members.map(m => m.name).join(', '),
+      bundle,
+      amount,
+      surchargeNote,
+      isUnderfilled: required != null && memberCount < required,
+      isEmpty: memberCount === 0
+    });
+    groupTotal += amount;
+  });
+
+  // 2. Individual lessons NOT covered by the swimmer's family group
+  pg.swimmers.forEach(sw => {
+    const enrolledIn = sw.enrollments || [];
+    const swGroup = sw.familyGroupId ? groupById?.[sw.familyGroupId] : null;
+    const coveredPkgId = swGroup?.package_id || null;
+    enrolledIn.forEach(e => {
+      if(!e.lessonTypeId || !e.packageId) return;
+      // Skip the enrollment that's covered by this swimmer's family group bundle
+      if(coveredPkgId && e.packageId === coveredPkgId) return;
+      const pkg = typeof pkgById === 'function' ? pkgById(e.packageId) : pkgById[e.packageId];
+      if(!pkg) return;
+      const amount = pkg.amount != null ? Number(pkg.amount) : 0;
+      individualItems.push({
+        swimmerName: sw.name,
+        ltName: ltName(e.lessonTypeId),
+        pkgName: pkg.name,
+        billingMode: pkg.billing_mode || 'monthly',
+        billingCount: pkg.billing_count,
+        amount
+      });
+      individualTotal += amount;
+    });
+  });
+
+  const grandTotal = groupTotal + individualTotal;
+  const hasAny = groupItems.length > 0 || individualItems.length > 0;
+
+  return <div className="parent-billing-panel">
+    <div className="parent-sub-log-title" style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
+      <span>🧾 Billing Preview — what this account would be billed</span>
+      <button className="btn btn-ghost small" onClick={onClose}>Close</button>
+    </div>
+    <div className="small subtle" style={{marginBottom:10}}>
+      Forward-looking calculation based on current enrolments + family group memberships.
+      Family group bundles are charged <strong>once per group</strong> regardless of how many swimmers are in it (underfill allowed).
+      Individual lessons not bound to a family group are charged per swimmer per package.
+    </div>
+
+    {!hasAny && <div className="empty" style={{padding:20,textAlign:'center',color:'var(--text-3)'}}>
+      No billable items — no swimmers have package enrolments yet.
+    </div>}
+
+    {/* Group bundles */}
+    {groupItems.length > 0 && <div className="billing-section">
+      <div className="billing-section-head">
+        <span className="billing-section-title">Family Group Bundles</span>
+        <span className="billing-section-sum">RM{groupTotal.toFixed(2)}</span>
+      </div>
+      <table className="billing-table">
+        <thead>
+          <tr>
+            <th>Group</th>
+            <th>Lesson · Package</th>
+            <th>Members</th>
+            <th className="num">Bundle</th>
+            <th className="num">Charge</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groupItems.map((it, i) => <tr key={i}>
+            <td><strong>{it.groupType==='bound'?'🔗':'👪'} {it.groupName}</strong></td>
+            <td>{it.ltName} · {it.pkgName}</td>
+            <td>
+              <span style={{fontWeight:700}}>{it.memberCount}{it.required != null ? `/${it.required}` : ''}</span>
+              {it.memberNames ? <div className="small subtle" style={{marginTop:2}}>{it.memberNames}</div> : null}
+              {it.isEmpty ? <div className="billing-warn">⚠ No members — bundle still owed</div> : null}
+              {it.isUnderfilled && !it.isEmpty ? <div className="billing-info">Underfill OK — bundle covers any size</div> : null}
+            </td>
+            <td className="num">RM{it.bundle.toFixed(2)}</td>
+            <td className="num">
+              <strong>RM{it.amount.toFixed(2)}</strong>
+              {it.surchargeNote ? <div className="small subtle" style={{marginTop:2}}>{it.surchargeNote}</div> : null}
+            </td>
+          </tr>)}
+        </tbody>
+      </table>
+    </div>}
+
+    {/* Individual lessons */}
+    {individualItems.length > 0 && <div className="billing-section">
+      <div className="billing-section-head">
+        <span className="billing-section-title">Individual Lessons (not in a family group)</span>
+        <span className="billing-section-sum">RM{individualTotal.toFixed(2)}</span>
+      </div>
+      <table className="billing-table">
+        <thead>
+          <tr>
+            <th>Swimmer</th>
+            <th>Lesson · Package</th>
+            <th>Billing</th>
+            <th className="num">Charge</th>
+          </tr>
+        </thead>
+        <tbody>
+          {individualItems.map((it, i) => <tr key={i}>
+            <td>{it.swimmerName}</td>
+            <td>{it.ltName} · {it.pkgName}</td>
+            <td className="small subtle">{it.billingMode === 'credit' && it.billingCount ? `${it.billingCount} credits` : it.billingMode || 'monthly'}</td>
+            <td className="num"><strong>RM{it.amount.toFixed(2)}</strong></td>
+          </tr>)}
+        </tbody>
+      </table>
+    </div>}
+
+    {/* Grand total */}
+    {hasAny && <div className="billing-total-row">
+      <span className="billing-total-label">Account Total</span>
+      <span className="billing-total-value">RM{grandTotal.toFixed(2)}</span>
+    </div>}
+
+    <div className="hint" style={{marginTop:10}}>
+      This is a preview only — no invoice is generated yet. Actual invoicing will happen via the Invoice module (in development).
+      If a swimmer is in a family group, the price in that group's package replaces their individual price for that lesson type.
+    </div>
+  </div>;
+}
+
+
 // Flow:
 //   1. Existing groups touching this family are listed at the top with
 //      their package context, member checkboxes, and an inline type/name editor.
@@ -5263,12 +5471,13 @@ function FamilyGroupsPanel({ groups, students, groupPackages, lessonTypes, packa
   const [editId, setEditId] = useState(null);
 
   function statusChip(b){
-    if(b.status === 'qualified') return { cls:'gb-ok', text:`Qualified · RM${fmtMoney(b.total)}${b.perHead != null ? ` (RM${fmtMoney(b.perHead)}/child)` : ''}` };
-    if(b.status === 'under')     return { cls:'gb-warn', text:`⚠ Under-enrolled ${b.n}/${b.required} · discount void → RM${fmtMoney(b.total)}${b.fb != null ? ` (${b.n} × RM${fmtMoney(b.fb)})` : ''}` };
-    if(b.status === 'over')      return { cls:'gb-amber', text:`⚠ ${b.n} members — package is for ${b.required}. Move to a ${b.n}-pax family package.` };
-    if(b.status === 'flat')      return { cls:'gb-ok', text:`RM${fmtMoney(b.total)} for the group${b.mode === 'credit' && b.credits != null ? ` · ${b.credits} credits` : ''} · ${b.n} member${b.n===1?'':'s'}${b.required != null ? ` · up to ${b.required}` : ''}` };
-    if(b.status === 'under_soft')return { cls:'gb-ok', text:`RM${fmtMoney(b.total)} for the group${b.mode === 'credit' && b.credits != null ? ` · ${b.credits} credits` : ''} · ${b.n} member${b.n===1?'':'s'}` };
-    if(b.status === 'over_soft') return { cls:'gb-amber', text:`⚠ ${b.n} members — package max is ${b.required}` };
+    if(b.status === 'qualified')   return { cls:'gb-ok', text:`Qualified · RM${fmtMoney(b.total)}${b.perHead != null ? ` (RM${fmtMoney(b.perHead)}/child)` : ''}` };
+    if(b.status === 'under_ok')    return { cls:'gb-ok', text:`Bundle covers underfill · ${b.n}/${b.required} · RM${fmtMoney(b.total)} (account pays the package, not per swimmer)` };
+    if(b.status === 'empty')       return { cls:'gb-warn', text:`Empty group · RM${fmtMoney(b.total)} bundle still owed — add eligible swimmers or delete the group` };
+    if(b.status === 'flat_bundle') return { cls:'gb-ok', text:`Bundle · RM${fmtMoney(b.total)} · ${b.n} member${b.n===1?'':'s'}` };
+    if(b.status === 'over')        return { cls:'gb-amber', text:`⚠ ${b.n}/${b.required} — overfilled. ${b.fb != null ? `Bundle + ${b.n - b.required} × RM${fmtMoney(b.fb)} = RM${fmtMoney(b.total)}` : `Move to a ${b.n}-pax family package.`}` };
+    if(b.status === 'flat')        return { cls:'gb-ok', text:`RM${fmtMoney(b.total)} for the group${b.mode === 'credit' && b.credits != null ? ` · ${b.credits} credits` : ''} · ${b.n} member${b.n===1?'':'s'}${b.required != null ? ` · up to ${b.required}` : ''}` };
+    if(b.status === 'over_soft')   return { cls:'gb-amber', text:`⚠ ${b.n} members — package max is ${b.required}` };
     return { cls:'gb-dim', text:'Set amount (and required pax) on the package.' };
   }
 
