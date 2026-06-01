@@ -2012,9 +2012,8 @@ function App(){
       <div className="header-tabs">
         <div className="tabs">
           {['day','week','month','accounts','students','enroll'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='week'?'📅 Weekly':v==='day'?'📋 Daily':v==='month'?'🗓️ Monthly':v==='accounts'?'👤 Accounts':v==='students'?'👥 Swimmers':'🎯 Enroll'}</button>)}
-          {/* Intake opens intake.html in a new tab. Print Form opens the printable PDF form. */}
+          {/* Intake opens intake.html in a new tab. */}
           <button type="button" className="tab tab-link" onClick={() => window.open('./intake.html', '_blank', 'noopener,noreferrer')} title="Open the digital parent intake form in a new tab">📝 Intake <span aria-hidden="true" style={{marginLeft:3,opacity:.6,fontSize:11}}>↗</span></button>
-          <button type="button" className="tab tab-link" onClick={() => window.open('./form.html', '_blank', 'noopener,noreferrer')} title="Open the printable hard-copy registration form — save as PDF or print directly">🖨 Print Form <span aria-hidden="true" style={{marginLeft:3,opacity:.6,fontSize:11}}>↗</span></button>
         </div>
         <div className="tabs tabs-right">
           {['summary','receipts','settings'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='summary'?'📊 Summary':v==='receipts'?'💰 Receipts':'⚙️ Settings'}</button>)}
@@ -4889,9 +4888,6 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
         <div style={{display:'flex',gap:8,flexShrink:0,flexWrap:'wrap'}}>
           <button type="button" className="btn btn-primary intake-banner-btn" onClick={()=>window.open('./intake.html', '_blank', 'noopener,noreferrer')} title="Opens the digital intake form in a new tab">
             Digital Form <span aria-hidden="true" style={{marginLeft:6}}>↗</span>
-          </button>
-          <button type="button" className="btn btn-print intake-banner-btn" onClick={()=>window.open('./form.html', '_blank', 'noopener,noreferrer')} title="Open the printable hard-copy registration form (PDF-ready)">
-            🖨 Print Form
           </button>
         </div>
       </div>
