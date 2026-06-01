@@ -3,553 +3,274 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SSB Swimmer Registration Form</title>
+  <title>SSB Registration Form</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&display=swap" />
   <style>
-    /* ── Screen preview ─────────────────────────────────────────── */
-    *{ box-sizing:border-box; margin:0; padding:0 }
-    body{
-      font-family: Outfit, 'Segoe UI', Arial, sans-serif;
-      background: #e8edf3;
-      color: #111;
-      min-height: 100vh;
-      padding: 24px 16px 48px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 16px;
+    /* ── Screen preview ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0 }
+    body {
+      font-family: Outfit, Arial, sans-serif;
+      background: #d0d7e2;
+      padding: 28px 16px 48px;
+      display: flex; flex-direction: column; align-items: center; gap: 16px;
     }
-    .screen-toolbar{
-      width: 100%; max-width: 820px;
-      display: flex; align-items: center; justify-content: space-between;
-      gap: 12px; flex-wrap: wrap;
+    .toolbar {
+      width: 100%; max-width: 700px;
+      display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;
     }
-    .screen-toolbar-title{ font-size: 15px; font-weight: 700; color: #334155 }
-    .screen-toolbar-sub{ font-size: 12px; color: #64748b; margin-top: 2px }
-    .btn-print-action{
-      background: #0284C7; color: #fff; border: none; border-radius: 8px;
-      padding: 10px 20px; font-size: 14px; font-weight: 700; cursor: pointer;
+    .toolbar-info { font-size: 13px; color: #334155; font-weight: 600 }
+    .toolbar-info span { display: block; font-size: 11px; color: #64748b; font-weight: 400; margin-top: 2px }
+    .btn-p {
+      background: #111; color: #fff; border: none; border-radius: 7px;
+      padding: 10px 20px; font-size: 13px; font-weight: 700; cursor: pointer;
       font-family: inherit; display: inline-flex; align-items: center; gap: 7px;
-      transition: .15s ease;
     }
-    .btn-print-action:hover{ background: #0369a1 }
-    .btn-ghost-action{
+    .btn-p:hover { background: #333 }
+    .btn-back {
       background: #fff; color: #334155; border: 1px solid #cbd5e1;
-      border-radius: 8px; padding: 10px 16px; font-size: 13px; font-weight: 600;
+      border-radius: 7px; padding: 10px 14px; font-size: 13px; font-weight: 600;
       cursor: pointer; font-family: inherit;
     }
 
-    /* ── The Form Sheet ─────────────────────────────────────────── */
-    .sheet{
-      width: 100%; max-width: 820px;
+    /* ── Sheet ── */
+    .sheet {
+      width: 100%; max-width: 700px;
       background: #fff;
-      border-radius: 4px;
-      box-shadow: 0 4px 20px rgba(0,0,0,.12);
-      padding: 0;
-      overflow: hidden;
+      box-shadow: 0 4px 24px rgba(0,0,0,.14);
+      padding: 28px 32px 26px;
     }
 
-    /* ── Typography ─────────────────────────────────────────────── */
-    .form-head{
-      background: #0C2340;
-      color: #fff;
-      padding: 20px 28px 18px;
-      display: flex; align-items: center; gap: 18px;
+    /* ── Form elements ── */
+    .hd {
+      display: flex; align-items: flex-end; justify-content: space-between;
+      border-bottom: 2.5px solid #000;
+      padding-bottom: 8px; margin-bottom: 14px;
     }
-    .form-head-logo{
-      width: 48px; height: 48px; border-radius: 12px;
-      background: linear-gradient(135deg,#0284C7,#06B6D4);
-      display: grid; place-items: center; font-size: 24px; flex-shrink: 0;
+    .hd-name { font-size: 17px; font-weight: 800; letter-spacing: -.3px }
+    .hd-form { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: #555 }
+
+    /* Section */
+    .sec { margin-bottom: 13px }
+    .sec-label {
+      font-size: 8.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.2px;
+      color: #000; background: #000; color: #fff;
+      display: inline-block; padding: 2px 7px; margin-bottom: 7px;
     }
-    .form-head-school{ font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: #94a3b8; font-weight: 600; margin-bottom: 3px }
-    .form-head-title{ font-size: 20px; font-weight: 800; line-height: 1.1 }
-    .form-head-sub{ font-size: 11px; color: #7dd3fc; margin-top: 3px }
-    .form-head-right{ margin-left: auto; text-align: right }
-    .form-ref{ font-size: 11px; color: #94a3b8 }
-    .form-ref-box{
-      margin-top: 5px; border: 1px dashed #334155; border-radius: 4px;
-      padding: 4px 10px; font-size: 10px; color: #64748b; display: inline-block;
-      text-align: left; min-width: 140px;
+    .sec-label.light {
+      background: transparent; color: #000; border: 1px solid #000;
     }
 
-    .form-body{ padding: 22px 28px 28px }
-
-    /* Instructions strip */
-    .instructions{
-      background: #F0F9FF; border: 1px solid #BAE6FD; border-radius: 6px;
-      padding: 9px 13px; margin-bottom: 20px; font-size: 11px; color: #0369a1;
-      line-height: 1.5;
+    /* Row of fields */
+    .row { display: flex; gap: 14px; align-items: flex-end; margin-bottom: 10px; flex-wrap: wrap }
+    .f { display: flex; flex-direction: column; min-width: 0 }
+    .f.grow { flex: 1 }
+    .f.w80 { flex: 0 0 80px }
+    .f.w100 { flex: 0 0 100px }
+    .f.w48 { flex: 0 0 48px }
+    .f.w36 { flex: 0 0 36px }
+    .lbl {
+      font-size: 7.5px; text-transform: uppercase; letter-spacing: .8px;
+      font-weight: 700; color: #555; margin-bottom: 3px; white-space: nowrap;
     }
-    .instructions strong{ color: #0369a1 }
-
-    /* Section header */
-    .section{
-      margin-bottom: 18px;
-      page-break-inside: avoid;
+    .lbl .req { color: #000 }
+    .line {
+      border: none; border-bottom: 1px solid #333;
+      min-height: 20px; width: 100%;
     }
-    .section-head{
-      display: flex; align-items: center; gap: 10px;
-      margin-bottom: 10px; border-bottom: 2px solid #0C2340; padding-bottom: 5px;
-    }
-    .section-badge{
-      background: #0C2340; color: #fff;
-      font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .8px;
-      padding: 3px 8px; border-radius: 4px; flex-shrink: 0;
-    }
-    .section-badge.swimmer-1{ background: #0E7490 }
-    .section-badge.swimmer-2{ background: #5B21B6 }
-    .section-badge.swimmer-3{ background: #9F1239 }
-    .section-title{ font-size: 13px; font-weight: 800; color: #0f172a }
-    .section-optional{ font-size: 10.5px; color: #94a3b8; margin-left: 4px; font-weight: 400 }
-
-    /* Field layout */
-    .row{ display: flex; gap: 16px; margin-bottom: 13px; flex-wrap: wrap }
-    .field{ display: flex; flex-direction: column; flex: 1; min-width: 0 }
-    .field.w-half{ flex: 0 0 calc(50% - 8px); max-width: calc(50% - 8px) }
-    .field.w-third{ flex: 0 0 calc(33.3% - 11px); max-width: calc(33.3% - 11px) }
-    .field.w-quarter{ flex: 0 0 calc(25% - 12px); max-width: calc(25% - 12px) }
-    .field.w-auto{ flex: 0 0 auto }
-    .field.w-fill{ flex: 1 }
-
-    .field-label{
-      font-size: 9.5px; text-transform: uppercase; letter-spacing: .7px;
-      font-weight: 800; color: #64748b; margin-bottom: 4px; white-space: nowrap;
-    }
-    .field-label .req{ color: #e11d48; margin-left: 2px }
-    .field-line{
-      border-bottom: 1.5px solid #334155; min-height: 24px;
-      padding-bottom: 3px;
-    }
-    .field-line-dotted{
-      border-bottom: 1.5px dotted #94a3b8; min-height: 24px;
-    }
+    .line-tall { min-height: 26px }
 
     /* Checkboxes */
-    .check-row{ display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-bottom: 4px }
-    .check-item{ display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600 }
-    .check-box{
-      width: 14px; height: 14px; border: 1.5px solid #334155; border-radius: 2px;
-      flex-shrink: 0; display: inline-block;
-    }
-    .check-box.round{ border-radius: 50% }
+    .checks { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center }
+    .ck { display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 600; white-space: nowrap }
+    .box { width: 10px; height: 10px; border: 1.2px solid #000; border-radius: 1.5px; flex-shrink: 0; display: inline-block }
+    .box.r { border-radius: 50% }
 
-    /* Lesson type grid */
-    .lt-grid{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 5px 16px }
-    .lt-item{ display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px }
-
-    /* Swimmer cards — subtle accent on left */
-    .swimmer-card{
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 14px 16px 10px;
-      margin-bottom: 14px;
+    /* Swimmer block */
+    .sw { border: 1px solid #bbb; padding: 9px 11px 7px; margin-bottom: 10px }
+    .sw-head {
+      font-size: 8px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;
+      margin-bottom: 7px; display: flex; align-items: center; gap: 7px;
     }
-    .swimmer-card.sw-1{ border-left: 4px solid #06B6D4 }
-    .swimmer-card.sw-2{ border-left: 4px solid #8B5CF6 }
-    .swimmer-card.sw-3{ border-left: 4px solid #F43F5E }
+    .sw-num { font-size: 11px; font-weight: 800 }
+    .sw-label { color: #555 }
 
-    /* More swimmers note */
-    .more-note{
-      background: #fafafa; border: 1px dashed #cbd5e1; border-radius: 6px;
-      padding: 12px 16px; font-size: 11px; color: #475569;
-      display: flex; align-items: flex-start; gap: 10px; margin-bottom: 16px;
-    }
-    .more-note-icon{ font-size: 18px; flex-shrink: 0; margin-top: 1px }
-    .more-note-text strong{ color: #0f172a; display: block; margin-bottom: 3px; font-size: 12px }
+    /* Lesson type checkboxes — tighter 2-col */
+    .lt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 20px; margin-top: 6px }
+    .lt-item { display: inline-flex; align-items: center; gap: 5px; font-size: 8.5px; font-weight: 600 }
 
     /* Divider */
-    .divider{ border: none; border-top: 1px dashed #e2e8f0; margin: 16px 0 }
+    hr { border: none; border-top: 1px solid #ccc; margin: 12px 0 }
 
-    /* Signature section */
-    .sig-block{ display: flex; gap: 20px; align-items: flex-end; flex-wrap: wrap }
-    .sig-block .field{ min-width: 200px }
+    /* Signature */
+    .sig { display: flex; gap: 14px; align-items: flex-end; margin-top: 14px; flex-wrap: wrap }
 
-    /* Declaration box */
-    .declaration{
-      background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;
-      padding: 12px 14px; margin-bottom: 16px; font-size: 10.5px; color: #475569; line-height: 1.6;
+    .note {
+      font-size: 7.5px; color: #555; margin-top: 10px; line-height: 1.5;
+      border-top: 1px dashed #ccc; padding-top: 7px;
     }
-    .declaration strong{ color: #0f172a }
-
-    /* Form footer */
-    .form-footer{
-      background: #f8fafc; border-top: 1px solid #e2e8f0;
-      padding: 10px 28px; display: flex; justify-content: space-between; align-items: center;
-      font-size: 10px; color: #94a3b8; flex-wrap: wrap; gap: 6px;
+    .footer-line {
+      font-size: 7.5px; color: #777; text-align: center; margin-top: 10px;
+      border-top: 1px solid #ddd; padding-top: 6px;
     }
-    .form-footer a{ color: #0284C7; text-decoration: none }
 
-    /* ── Print styles ────────────────────────────────────────────── */
-    @page{
-      size: A4 portrait;
-      margin: 10mm 12mm 12mm;
-    }
-    @media print{
-      body{
-        background: #fff;
-        padding: 0;
-      }
-      .screen-toolbar,
-      .print-hint{
-        display: none !important;
-      }
-      .sheet{
-        box-shadow: none;
-        border-radius: 0;
-        max-width: none;
-        width: 100%;
-      }
-      .form-body{ padding: 16px 20px 20px }
-      .form-head{ padding: 14px 20px 12px }
-      .swimmer-card{ page-break-inside: avoid }
-      .section{ page-break-inside: avoid }
-      .more-note{ page-break-inside: avoid }
-      /* Ensure the signature stays on same page as declaration */
-      .sig-section{ page-break-inside: avoid }
+    /* ── Print ── */
+    @page { size: A4 portrait; margin: 9mm 11mm }
+    @media print {
+      body { background: #fff; padding: 0 }
+      .toolbar, .hint { display: none !important }
+      .sheet { box-shadow: none; padding: 0; max-width: none; width: 100% }
     }
   </style>
 </head>
 <body>
-  <!-- Screen toolbar (hidden on print) -->
-  <div class="screen-toolbar">
+
+<div class="toolbar">
+  <div class="toolbar-info">
+    SSB Registration — Hard Copy Form
+    <span>Print or save as PDF via your browser print dialog · one page · A4</span>
+  </div>
+  <div style="display:flex;gap:8px">
+    <button class="btn-back" onclick="window.close()">← Back</button>
+    <button class="btn-p" onclick="window.print()">🖨 Print / Save as PDF</button>
+  </div>
+</div>
+
+<div class="sheet">
+
+  <!-- Header -->
+  <div class="hd">
     <div>
-      <div class="screen-toolbar-title">SSB Swimmer Registration — Print Form</div>
-      <div class="screen-toolbar-sub">This form is ready to print. Use your browser's Print dialog and set Destination to "Save as PDF" to generate a PDF, or select a printer for physical copies.</div>
+      <div class="hd-name">🏊 Star Swim Sdn Bhd</div>
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn-ghost-action" onclick="window.close()">← Back</button>
-      <button class="btn-print-action" onclick="window.print()">🖨 Print / Save as PDF</button>
+    <div class="hd-form">Swimmer Registration Form</div>
+  </div>
+
+  <!-- Account Holder -->
+  <div class="sec">
+    <div class="sec-label">Account Holder / Parent / Guardian</div>
+    <div class="row">
+      <div class="f grow"><div class="lbl">Full Name <span class="req">*</span></div><div class="line line-tall"></div></div>
+      <div class="f grow"><div class="lbl">Email Address <span class="req">*</span></div><div class="line line-tall"></div></div>
+      <div class="f w100"><div class="lbl">Mobile Phone <span class="req">*</span></div><div class="line line-tall"></div></div>
     </div>
   </div>
 
-  <!-- The print sheet -->
-  <div class="sheet" id="form">
-
-    <!-- Header -->
-    <div class="form-head">
-      <div class="form-head-logo">🏊</div>
-      <div>
-        <div class="form-head-school">Star Swim Sdn Bhd</div>
-        <div class="form-head-title">Swimmer Registration Form</div>
-        <div class="form-head-sub">Hard-copy — please print clearly in BLOCK CAPITALS</div>
+  <!-- Emergency Contact -->
+  <div class="sec">
+    <div class="sec-label">Emergency Contact</div>
+    <div class="row" style="margin-bottom:6px">
+      <div class="f w80" style="justify-content:flex-end">
+        <div class="lbl">Same as above?</div>
+        <div class="checks"><label class="ck"><span class="box r"></span> Yes</label><label class="ck"><span class="box r"></span> No</label></div>
       </div>
-      <div class="form-head-right">
-        <div class="form-ref">For office use</div>
-        <div class="form-ref-box">
-          Date received: ___________<br>
-          Staff initials: ___________<br>
-          Entered by: ___________
-        </div>
-      </div>
+      <div class="f grow"><div class="lbl">Emergency Contact Name</div><div class="line line-tall"></div></div>
+      <div class="f w100"><div class="lbl">Phone Number</div><div class="line line-tall"></div></div>
+      <div class="f w100"><div class="lbl">Relationship</div><div class="line line-tall"></div></div>
     </div>
-
-    <div class="form-body">
-
-      <!-- Instructions -->
-      <div class="instructions">
-        <strong>How to submit:</strong> Complete all mandatory fields marked <span style="color:#e11d48">*</span>
-        and return to our staff at the pool. For same-day digital registration and instant confirmation,
-        visit <strong>our online intake form</strong> — ask staff for the link or QR code.
-        Each form accommodates up to <strong>3 swimmers</strong>; if your family has more, please request
-        an Additional Swimmer Supplement from our staff (or print a second copy and complete Section C only).
-      </div>
-
-      <!-- SECTION A: Account Holder -->
-      <div class="section">
-        <div class="section-head">
-          <span class="section-badge">Section A</span>
-          <span class="section-title">Account Holder / Parent / Guardian</span>
-        </div>
-        <div class="row">
-          <div class="field w-fill">
-            <div class="field-label">Full Name <span class="req">*</span></div>
-            <div class="field-line"></div>
-          </div>
-          <div class="field w-third">
-            <div class="field-label">Relationship to swimmer(s)</div>
-            <div class="field-line"></div>
-          </div>
-        </div>
-        <div class="row">
-          <div class="field w-half">
-            <div class="field-label">Email Address <span class="req">*</span></div>
-            <div class="field-line"></div>
-          </div>
-          <div class="field w-quarter">
-            <div class="field-label">Mobile Phone <span class="req">*</span></div>
-            <div class="field-line"></div>
-          </div>
-          <div class="field w-quarter">
-            <div class="field-label">Alternate Phone</div>
-            <div class="field-line"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- SECTION B: Emergency Contact -->
-      <div class="section">
-        <div class="section-head">
-          <span class="section-badge">Section B</span>
-          <span class="section-title">Emergency Contact</span>
-        </div>
-        <div class="row" style="margin-bottom:8px">
-          <div class="field w-auto">
-            <div class="field-label">Same as account holder?</div>
-            <div class="check-row">
-              <label class="check-item"><span class="check-box round"></span> Yes — skip to Section C</label>
-              <label class="check-item"><span class="check-box round"></span> No — complete below</label>
-            </div>
-          </div>
-        </div>
-        <div class="row">
-          <div class="field w-half">
-            <div class="field-label">Emergency Contact Full Name</div>
-            <div class="field-line"></div>
-          </div>
-          <div class="field w-quarter">
-            <div class="field-label">Phone Number</div>
-            <div class="field-line"></div>
-          </div>
-          <div class="field w-quarter">
-            <div class="field-label">Relationship</div>
-            <div class="field-line"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- SECTION C: Swimmers -->
-      <div class="section">
-        <div class="section-head">
-          <span class="section-badge swimmer-1">Swimmer 1</span>
-          <span class="section-title">Swimmer Details <span class="section-optional">— mandatory if registering any swimmer</span></span>
-        </div>
-        <div class="swimmer-card sw-1">
-          <div class="row">
-            <div class="field w-fill">
-              <div class="field-label">Swimmer Full Name <span class="req">*</span></div>
-              <div class="field-line"></div>
-            </div>
-            <div class="field" style="flex:0 0 130px">
-              <div class="field-label">Date of Birth <span class="req">*</span></div>
-              <div class="field-line"></div>
-            </div>
-            <div class="field" style="flex:0 0 48px">
-              <div class="field-label">Age</div>
-              <div class="field-line"></div>
-            </div>
-            <div class="field" style="flex:0 0 auto">
-              <div class="field-label">Gender <span class="req">*</span></div>
-              <div class="check-row">
-                <label class="check-item"><span class="check-box"></span> F</label>
-                <label class="check-item"><span class="check-box"></span> M</label>
-              </div>
-            </div>
-          </div>
-          <div class="row">
-            <div class="field w-fill">
-              <div class="field-label">Lesson Type(s) <span class="req">*</span> — tick all that apply</div>
-              <div class="lt-grid" style="margin-top:4px">
-                <label class="lt-item"><span class="check-box"></span> LTS Group (5 – 18 yrs, 1:6)</label>
-                <label class="lt-item"><span class="check-box"></span> Personal 1:1 (5 yrs+)</label>
-                <label class="lt-item"><span class="check-box"></span> LTS Toddler Group (2 – 4 yrs, 1:4)</label>
-                <label class="lt-item"><span class="check-box"></span> Personal Duo 1:2 (5 yrs+)</label>
-                <label class="lt-item"><span class="check-box"></span> LTS Adult 18+ (1:4)</label>
-                <label class="lt-item"><span class="check-box"></span> Personal Toddler 1:1 (1 – 2 yrs)</label>
-                <label class="lt-item"><span class="check-box"></span> Family 3 / Family 4 / Family 5</label>
-                <label class="lt-item"><span class="check-box"></span> StrokeLab / StrokeLab Elite</label>
-                <label class="lt-item"><span class="check-box"></span> Premium Personal (2:1)</label>
-                <label class="lt-item"><span class="check-box"></span> Premium Clara</label>
-              </div>
-            </div>
-            <div class="field" style="flex:0 0 180px">
-              <div class="field-label">Package / Plan</div>
-              <div class="field-line" style="margin-bottom:7px"></div>
-              <div class="field-label">Medical / Special Notes</div>
-              <div class="field-line"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Swimmer 2 -->
-      <div class="section">
-        <div class="section-head">
-          <span class="section-badge swimmer-2">Swimmer 2</span>
-          <span class="section-title">Swimmer Details <span class="section-optional">— complete only if registering a second swimmer</span></span>
-        </div>
-        <div class="swimmer-card sw-2">
-          <div class="row">
-            <div class="field w-fill">
-              <div class="field-label">Swimmer Full Name</div>
-              <div class="field-line"></div>
-            </div>
-            <div class="field" style="flex:0 0 130px">
-              <div class="field-label">Date of Birth</div>
-              <div class="field-line"></div>
-            </div>
-            <div class="field" style="flex:0 0 48px">
-              <div class="field-label">Age</div>
-              <div class="field-line"></div>
-            </div>
-            <div class="field" style="flex:0 0 auto">
-              <div class="field-label">Gender</div>
-              <div class="check-row">
-                <label class="check-item"><span class="check-box"></span> F</label>
-                <label class="check-item"><span class="check-box"></span> M</label>
-              </div>
-            </div>
-          </div>
-          <div class="row">
-            <div class="field w-fill">
-              <div class="field-label">Lesson Type(s) — tick all that apply</div>
-              <div class="lt-grid" style="margin-top:4px">
-                <label class="lt-item"><span class="check-box"></span> LTS Group (5 – 18 yrs, 1:6)</label>
-                <label class="lt-item"><span class="check-box"></span> Personal 1:1 (5 yrs+)</label>
-                <label class="lt-item"><span class="check-box"></span> LTS Toddler Group (2 – 4 yrs, 1:4)</label>
-                <label class="lt-item"><span class="check-box"></span> Personal Duo 1:2 (5 yrs+)</label>
-                <label class="lt-item"><span class="check-box"></span> LTS Adult 18+ (1:4)</label>
-                <label class="lt-item"><span class="check-box"></span> Personal Toddler 1:1 (1 – 2 yrs)</label>
-                <label class="lt-item"><span class="check-box"></span> Family 3 / Family 4 / Family 5</label>
-                <label class="lt-item"><span class="check-box"></span> StrokeLab / StrokeLab Elite</label>
-                <label class="lt-item"><span class="check-box"></span> Premium Personal (2:1)</label>
-                <label class="lt-item"><span class="check-box"></span> Premium Clara</label>
-              </div>
-            </div>
-            <div class="field" style="flex:0 0 180px">
-              <div class="field-label">Package / Plan</div>
-              <div class="field-line" style="margin-bottom:7px"></div>
-              <div class="field-label">Medical / Special Notes</div>
-              <div class="field-line"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Swimmer 3 -->
-      <div class="section">
-        <div class="section-head">
-          <span class="section-badge swimmer-3">Swimmer 3</span>
-          <span class="section-title">Swimmer Details <span class="section-optional">— complete only if registering a third swimmer</span></span>
-        </div>
-        <div class="swimmer-card sw-3">
-          <div class="row">
-            <div class="field w-fill">
-              <div class="field-label">Swimmer Full Name</div>
-              <div class="field-line"></div>
-            </div>
-            <div class="field" style="flex:0 0 130px">
-              <div class="field-label">Date of Birth</div>
-              <div class="field-line"></div>
-            </div>
-            <div class="field" style="flex:0 0 48px">
-              <div class="field-label">Age</div>
-              <div class="field-line"></div>
-            </div>
-            <div class="field" style="flex:0 0 auto">
-              <div class="field-label">Gender</div>
-              <div class="check-row">
-                <label class="check-item"><span class="check-box"></span> F</label>
-                <label class="check-item"><span class="check-box"></span> M</label>
-              </div>
-            </div>
-          </div>
-          <div class="row">
-            <div class="field w-fill">
-              <div class="field-label">Lesson Type(s) — tick all that apply</div>
-              <div class="lt-grid" style="margin-top:4px">
-                <label class="lt-item"><span class="check-box"></span> LTS Group (5 – 18 yrs, 1:6)</label>
-                <label class="lt-item"><span class="check-box"></span> Personal 1:1 (5 yrs+)</label>
-                <label class="lt-item"><span class="check-box"></span> LTS Toddler Group (2 – 4 yrs, 1:4)</label>
-                <label class="lt-item"><span class="check-box"></span> Personal Duo 1:2 (5 yrs+)</label>
-                <label class="lt-item"><span class="check-box"></span> LTS Adult 18+ (1:4)</label>
-                <label class="lt-item"><span class="check-box"></span> Personal Toddler 1:1 (1 – 2 yrs)</label>
-                <label class="lt-item"><span class="check-box"></span> Family 3 / Family 4 / Family 5</label>
-                <label class="lt-item"><span class="check-box"></span> StrokeLab / StrokeLab Elite</label>
-                <label class="lt-item"><span class="check-box"></span> Premium Personal (2:1)</label>
-                <label class="lt-item"><span class="check-box"></span> Premium Clara</label>
-              </div>
-            </div>
-            <div class="field" style="flex:0 0 180px">
-              <div class="field-label">Package / Plan</div>
-              <div class="field-line" style="margin-bottom:7px"></div>
-              <div class="field-label">Medical / Special Notes</div>
-              <div class="field-line"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- More swimmers note -->
-      <div class="more-note">
-        <div class="more-note-icon">➕</div>
-        <div class="more-note-text">
-          <strong>Registering more than 3 swimmers?</strong>
-          Please request an <em>Additional Swimmer Supplement</em> from our staff — it is a single-page
-          form that covers one extra swimmer and clips onto this form before submission. Alternatively,
-          print a second copy of this form and complete Sections C (Swimmer 1, 2, 3) only;
-          you do not need to re-fill Sections A and B.
-        </div>
-      </div>
-
-      <hr class="divider">
-
-      <!-- Section D: Terms and Conditions -->
-      <div class="sig-section section">
-        <div class="section-head">
-          <span class="section-badge">Section D</span>
-          <span class="section-title">Declaration &amp; Terms and Conditions</span>
-        </div>
-        <div class="declaration">
-          By signing below, I confirm that:
-          (1) all information provided on this form is accurate and complete;
-          (2) I have read, understood, and agree to the <strong>Terms and Conditions of Enrolment</strong>
-          as communicated by Star Swim Sdn Bhd, including the class cancellation, replacement, and credit policies;
-          (3) I consent to the collection and use of the personal data provided for the purpose of administering
-          swim lessons and communicating class updates;
-          (4) I acknowledge that swimming carries inherent physical risks and that Star Swim and its instructors
-          take reasonable precautions to ensure participant safety.
-        </div>
-        <div class="sig-block">
-          <div class="field" style="flex:1 1 240px">
-            <div class="field-label">Parent / Guardian Signature <span class="req">*</span></div>
-            <div class="field-line" style="min-height:36px"></div>
-          </div>
-          <div class="field" style="flex:0 0 160px">
-            <div class="field-label">Full Name (print) <span class="req">*</span></div>
-            <div class="field-line"></div>
-          </div>
-          <div class="field" style="flex:0 0 110px">
-            <div class="field-label">Date <span class="req">*</span></div>
-            <div class="field-line"></div>
-          </div>
-        </div>
-        <div class="field" style="margin-top:10px">
-          <div class="field-label">Relationship to swimmer(s)</div>
-          <div class="check-row">
-            <label class="check-item"><span class="check-box round"></span> Parent</label>
-            <label class="check-item"><span class="check-box round"></span> Legal guardian</label>
-            <label class="check-item"><span class="check-box round"></span> Adult swimmer (self)</label>
-            <label class="check-item"><span class="check-box round"></span> Other: <span style="display:inline-block;border-bottom:1px solid #334155;min-width:120px;">&nbsp;</span></label>
-          </div>
-        </div>
-      </div>
-
-    </div><!-- /form-body -->
-
-    <!-- Footer -->
-    <div class="form-footer">
-      <span>Star Swim Sdn Bhd &nbsp;·&nbsp; Swimmer Registration Form &nbsp;·&nbsp; v1</span>
-      <span>Digital registration: ask staff for the online intake link &nbsp;·&nbsp; Once submitted, your data is securely held per our Privacy Policy</span>
-    </div>
-
-  </div><!-- /sheet -->
-
-  <!-- Print hint below the form (screen only) -->
-  <div class="print-hint" style="max-width:820px;width:100%;text-align:center;font-size:12px;color:#64748b;padding-bottom:8px">
-    Tip: In the print dialog, set <strong>Paper size</strong> to A4 and <strong>Margins</strong> to Default or Minimum for the best fit.
-    Tick <strong>Background graphics</strong> if you want the accent bars printed. Untick it for a clean black-and-white copy.
   </div>
+
+  <hr>
+
+  <!-- Swimmer 1 -->
+  <div class="sw">
+    <div class="sw-head"><span class="sw-num">1</span><span class="sw-label">Swimmer One</span></div>
+    <div class="row">
+      <div class="f grow"><div class="lbl">Full Name <span class="req">*</span></div><div class="line line-tall"></div></div>
+      <div class="f w100"><div class="lbl">Date of Birth <span class="req">*</span></div><div class="line line-tall"></div></div>
+      <div class="f w36"><div class="lbl">Age</div><div class="line line-tall"></div></div>
+      <div class="f w48" style="justify-content:flex-end">
+        <div class="lbl">Gender <span class="req">*</span></div>
+        <div class="checks"><label class="ck"><span class="box"></span> F</label><label class="ck"><span class="box"></span> M</label></div>
+      </div>
+    </div>
+    <div class="lbl" style="margin-bottom:3px">Lesson Type — tick all that apply <span class="req">*</span></div>
+    <div class="lt-grid">
+      <label class="lt-item"><span class="box"></span> LTS Group (5–18 yrs · 1:6)</label>
+      <label class="lt-item"><span class="box"></span> Personal 1:1 (5 yrs+)</label>
+      <label class="lt-item"><span class="box"></span> LTS Toddler Group (2–4 yrs · 1:4)</label>
+      <label class="lt-item"><span class="box"></span> Personal Duo 1:2 (5 yrs+)</label>
+      <label class="lt-item"><span class="box"></span> LTS Adult 18+ (1:4)</label>
+      <label class="lt-item"><span class="box"></span> Personal Toddler 1:1 (1–2 yrs)</label>
+      <label class="lt-item"><span class="box"></span> Family 3 / Family 4 / Family 5</label>
+      <label class="lt-item"><span class="box"></span> StrokeLab / StrokeLab Elite</label>
+      <label class="lt-item"><span class="box"></span> Premium Personal 2:1</label>
+      <label class="lt-item"><span class="box"></span> Premium Clara</label>
+    </div>
+  </div>
+
+  <!-- Swimmer 2 -->
+  <div class="sw">
+    <div class="sw-head"><span class="sw-num">2</span><span class="sw-label">Swimmer Two &nbsp;<span style="font-weight:400;font-size:7.5px;color:#888">— complete if applicable</span></span></div>
+    <div class="row">
+      <div class="f grow"><div class="lbl">Full Name</div><div class="line line-tall"></div></div>
+      <div class="f w100"><div class="lbl">Date of Birth</div><div class="line line-tall"></div></div>
+      <div class="f w36"><div class="lbl">Age</div><div class="line line-tall"></div></div>
+      <div class="f w48" style="justify-content:flex-end">
+        <div class="lbl">Gender</div>
+        <div class="checks"><label class="ck"><span class="box"></span> F</label><label class="ck"><span class="box"></span> M</label></div>
+      </div>
+    </div>
+    <div class="lbl" style="margin-bottom:3px">Lesson Type</div>
+    <div class="lt-grid">
+      <label class="lt-item"><span class="box"></span> LTS Group (5–18 yrs · 1:6)</label>
+      <label class="lt-item"><span class="box"></span> Personal 1:1 (5 yrs+)</label>
+      <label class="lt-item"><span class="box"></span> LTS Toddler Group (2–4 yrs · 1:4)</label>
+      <label class="lt-item"><span class="box"></span> Personal Duo 1:2 (5 yrs+)</label>
+      <label class="lt-item"><span class="box"></span> LTS Adult 18+ (1:4)</label>
+      <label class="lt-item"><span class="box"></span> Personal Toddler 1:1 (1–2 yrs)</label>
+      <label class="lt-item"><span class="box"></span> Family 3 / Family 4 / Family 5</label>
+      <label class="lt-item"><span class="box"></span> StrokeLab / StrokeLab Elite</label>
+      <label class="lt-item"><span class="box"></span> Premium Personal 2:1</label>
+      <label class="lt-item"><span class="box"></span> Premium Clara</label>
+    </div>
+  </div>
+
+  <!-- Swimmer 3 -->
+  <div class="sw">
+    <div class="sw-head"><span class="sw-num">3</span><span class="sw-label">Swimmer Three &nbsp;<span style="font-weight:400;font-size:7.5px;color:#888">— complete if applicable</span></span></div>
+    <div class="row">
+      <div class="f grow"><div class="lbl">Full Name</div><div class="line line-tall"></div></div>
+      <div class="f w100"><div class="lbl">Date of Birth</div><div class="line line-tall"></div></div>
+      <div class="f w36"><div class="lbl">Age</div><div class="line line-tall"></div></div>
+      <div class="f w48" style="justify-content:flex-end">
+        <div class="lbl">Gender</div>
+        <div class="checks"><label class="ck"><span class="box"></span> F</label><label class="ck"><span class="box"></span> M</label></div>
+      </div>
+    </div>
+    <div class="lbl" style="margin-bottom:3px">Lesson Type</div>
+    <div class="lt-grid">
+      <label class="lt-item"><span class="box"></span> LTS Group (5–18 yrs · 1:6)</label>
+      <label class="lt-item"><span class="box"></span> Personal 1:1 (5 yrs+)</label>
+      <label class="lt-item"><span class="box"></span> LTS Toddler Group (2–4 yrs · 1:4)</label>
+      <label class="lt-item"><span class="box"></span> Personal Duo 1:2 (5 yrs+)</label>
+      <label class="lt-item"><span class="box"></span> LTS Adult 18+ (1:4)</label>
+      <label class="lt-item"><span class="box"></span> Personal Toddler 1:1 (1–2 yrs)</label>
+      <label class="lt-item"><span class="box"></span> Family 3 / Family 4 / Family 5</label>
+      <label class="lt-item"><span class="box"></span> StrokeLab / StrokeLab Elite</label>
+      <label class="lt-item"><span class="box"></span> Premium Personal 2:1</label>
+      <label class="lt-item"><span class="box"></span> Premium Clara</label>
+    </div>
+  </div>
+
+  <!-- Signature -->
+  <div class="note">
+    By signing below I confirm that the information provided is accurate and that I agree to Star Swim Sdn Bhd's Terms and Conditions of Enrolment, including class, cancellation, replacement and credit policies.
+    &nbsp;&nbsp;For additional swimmers, please request a supplement form from our staff.
+  </div>
+  <div class="sig">
+    <div class="f grow"><div class="lbl">Parent / Guardian Signature <span class="req">*</span></div><div class="line" style="min-height:30px"></div></div>
+    <div class="f grow"><div class="lbl">Full Name (print) <span class="req">*</span></div><div class="line" style="min-height:30px"></div></div>
+    <div class="f w100"><div class="lbl">Date <span class="req">*</span></div><div class="line" style="min-height:30px"></div></div>
+  </div>
+
+  <div class="footer-line">Star Swim Sdn Bhd &nbsp;·&nbsp; Swimmer Registration</div>
+
+</div><!-- /sheet -->
+
+<div class="hint" style="max-width:700px;width:100%;text-align:center;font-size:11px;color:#64748b;padding:4px 0 8px">
+  Tip: In the print dialog set <strong>Paper</strong> to A4, <strong>Margins</strong> to Minimum, and deselect "Headers and footers" for the cleanest result.
+</div>
 
 </body>
 </html>
