@@ -255,6 +255,7 @@ function App(){
   const [sessions,setSessions] = useState([]);
   const [students,setStudents] = useState([]);
   const [familyGroups,setFamilyGroups] = useState([]);
+  const [groupMemberships,setGroupMemberships] = useState([]); // junction-table rows: {familyGroupId, studentId}
   const [creditBalances,setCreditBalances] = useState([]);
   const [creditPurchases,setCreditPurchases] = useState([]);
   const [subscriptions,setSubscriptions] = useState([]);
@@ -283,7 +284,7 @@ function App(){
     try{
       setLoading(true); setError('');
       await loadOptions();
-      await Promise.all([loadSessions(), loadStudents(), loadGroups(), loadCreditBalances(), loadCreditPurchases(), loadSubscriptions(), loadCodes(), loadReplacementPending(), loadTcAcceptances(), loadRemarks(monthCursor)]);
+      await Promise.all([loadSessions(), loadStudents(), loadGroups(), loadGroupMemberships(), loadCreditBalances(), loadCreditPurchases(), loadSubscriptions(), loadCodes(), loadReplacementPending(), loadTcAcceptances(), loadRemarks(monthCursor)]);
       setStatus('Connected');
     } catch(err){ handleErr(err); }
     finally{ setLoading(false); }
@@ -409,6 +410,22 @@ function App(){
       const rows = await selectRows('family_groups', '*', '&order=name.asc');
       setFamilyGroups((rows || []).map(r => ({ id:r.id, name:r.name || '', packageId:r.package_id || null, groupType: r.group_type || 'discount' })));
     } catch(e){ console.warn('Family groups not available yet (run the family groups migration):', e?.message || e); setFamilyGroups([]); }
+  }
+
+  // Many-to-many membership loader. A swimmer can belong to multiple
+  // family groups (one per unique lesson_type+package). See migration
+  // `supabase_family_group_members_migration.sql`. On a fresh DB before
+  // that migration runs, the query 404s and we fall back to deriving
+  // memberships from the legacy students.family_group_id column.
+  async function loadGroupMemberships(){
+    try{
+      const rows = await selectRows('family_group_members', '*');
+      setGroupMemberships((rows || []).map(r => ({ familyGroupId: r.family_group_id, studentId: r.student_id })));
+    } catch(e){
+      console.warn('family_group_members table not yet available (run the migration). Falling back to legacy single-FK derivation:', e?.message || e);
+      // Fallback: derive from students.family_group_id (read in loadStudents)
+      setGroupMemberships(null);  // null sentinel — useMemo uses students as source instead
+    }
   }
 
   async function loadCreditBalances(){
@@ -1761,17 +1778,66 @@ function App(){
     } catch(err){ handleErr(err); alert(err.message || 'Failed to update family group'); }
   }
   async function deleteGroup(row){
-    const members = students.filter(s => s.familyGroupId === row.id).length;
-    if(!confirm(members > 0
-      ? `Delete family group "${row.name}"? Its ${members} member${members===1?'':'s'} stay in the swimmer registry but will no longer be billed as a group.`
+    const memberCount = (membersByGroup[row.id] || []).length;
+    if(!confirm(memberCount > 0
+      ? `Delete family group "${row.name}"? Its ${memberCount} member${memberCount===1?'':'s'} stay in the swimmer registry but will no longer be billed as a group.`
       : `Delete family group "${row.name}"?`)) return;
-    try{ setError(''); await deleteRows('family_groups', { id: row.id }); await loadGroups(); await loadStudents(); }
+    try{ setError(''); await deleteRows('family_groups', { id: row.id }); await loadGroups(); await loadGroupMemberships(); await loadStudents(); }
     catch(err){ handleErr(err); alert(err.message || 'Failed to delete family group'); }
   }
-  // Add or remove a swimmer from a group (groupId null = remove).
+  // ── Multi-group membership write API ────────────────────────────────
+  // A swimmer can be in many groups (one per unique lesson_type+package).
+  // Uniqueness — "swimmer can't be in two groups with the same (lesson_type,
+  // package)" — is enforced here because it touches two tables and can't
+  // be a single DB constraint without denormalization. We check before
+  // inserting; the UI also surfaces a "Already in <other group>" message
+  // earlier so users see it without hitting the alert.
+  async function addStudentToGroup(studentId, groupId){
+    try{
+      setError('');
+      const target = familyGroups.find(g => g.id === groupId);
+      if(!target){ alert('Group not found.'); return false; }
+      // Check uniqueness: is the swimmer already in another group with
+      // the same (lesson_type, package)? Skip if target group has no
+      // package set yet — that's a misconfiguration the UI surfaces
+      // separately.
+      if(target.packageId){
+        const existingGroupIds = groupIdsByStudent[studentId] || new Set();
+        for(const otherId of existingGroupIds){
+          if(otherId === groupId) return true; // already in this group — no-op
+          const other = familyGroups.find(g => g.id === otherId);
+          if(other && other.packageId === target.packageId){
+            alert(`This swimmer is already in "${other.name}" which has the same package. A swimmer can only be in one group per (lesson type, package) combination — remove them from "${other.name}" first.`);
+            return false;
+          }
+        }
+      }
+      await insertRows('family_group_members', { family_group_id: groupId, student_id: studentId });
+      await loadGroupMemberships();
+      return true;
+    } catch(err){
+      // Idempotent: PK conflict on duplicate add is silently OK
+      if(err?.message && /duplicate|conflict|23505/i.test(err.message)){ await loadGroupMemberships(); return true; }
+      handleErr(err); alert(err.message || 'Failed to add swimmer to group'); return false;
+    }
+  }
+  async function removeStudentFromGroup(studentId, groupId){
+    try{
+      setError('');
+      await deleteRows('family_group_members', { family_group_id: groupId, student_id: studentId });
+      await loadGroupMemberships();
+      return true;
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to remove swimmer from group'); return false; }
+  }
+  // Back-compat shim — old call sites still pass setStudentGroup(id, groupId|null).
+  // groupId is non-null → ADD to group (with uniqueness check).
+  // groupId is null     → REMOVE from any/all groups (used when "uncheck all").
   async function setStudentGroup(studentId, groupId){
-    try{ setError(''); await patchRows('students', { id: studentId }, { family_group_id: groupId || null }); await loadStudents(); }
-    catch(err){ handleErr(err); alert(err.message || 'Failed to update group membership'); }
+    if(groupId){ return addStudentToGroup(studentId, groupId); }
+    // null = remove from all groups the swimmer is in
+    const ids = Array.from(groupIdsByStudent[studentId] || []);
+    for(const gid of ids){ await removeStudentFromGroup(studentId, gid); }
+    return true;
   }
 
   // Move an item from one index to another (used by drag-and-drop), then reindex.
@@ -1983,7 +2049,11 @@ function App(){
     return m;
   }, [sessions]);
 
-  const studentById = useMemo(() => { const m = {}; students.forEach(s => m[s.id] = s); return m; }, [students]);
+  // Indexed by id but using the ENRICHED row set so callers can read
+  // `.familyGroupIds` (the multi-group array) — needed by the SessionModal's
+  // bound-cascade logic, the Billing Preview, and any other consumer that
+  // wants to know all groups a swimmer is in.
+  const studentById = useMemo(() => { const m = {}; studentsWithGroups.forEach(s => m[s.id] = s); return m; }, [studentsWithGroups]);
   // Set of swimmer IDs currently on a "trial" package (one-off bookings). Drives
   // the trial annotation in the modal/cards and the duplicate-week skip rule.
   const trialStudentIds = useMemo(() => {
@@ -2008,7 +2078,40 @@ function App(){
     return m;
   }, [students, trialStudentIds]);
   const groupById = useMemo(() => { const m = {}; familyGroups.forEach(g => m[g.id] = g); return m; }, [familyGroups]);
-  const membersByGroup = useMemo(() => { const m = {}; students.forEach(s => { if(s.familyGroupId){ (m[s.familyGroupId] = m[s.familyGroupId] || []).push(s); } }); return m; }, [students]);
+  // Multi-group membership derived from the junction table when available,
+  // falling back to the legacy single-FK column. Two related maps:
+  //   • groupIdsByStudent: studentId → Set<groupId>
+  //   • membersByGroup:    groupId → student rows
+  const { groupIdsByStudent, membersByGroup, studentsWithGroups } = useMemo(() => {
+    const idsByStu = {};
+    const byGroup = {};
+    if(groupMemberships === null){
+      // Legacy fallback path (junction table not migrated yet)
+      students.forEach(s => {
+        if(s.familyGroupId){
+          idsByStu[s.id] = new Set([s.familyGroupId]);
+          (byGroup[s.familyGroupId] = byGroup[s.familyGroupId] || []).push(s);
+        }
+      });
+    } else {
+      const stuById = {}; students.forEach(s => { stuById[s.id] = s; });
+      (groupMemberships || []).forEach(m => {
+        if(!idsByStu[m.studentId]) idsByStu[m.studentId] = new Set();
+        idsByStu[m.studentId].add(m.familyGroupId);
+        const s = stuById[m.studentId];
+        if(s){ (byGroup[m.familyGroupId] = byGroup[m.familyGroupId] || []).push(s); }
+      });
+    }
+    // Enriched student rows carrying their full group-set for downstream consumers.
+    const withGroups = students.map(s => ({
+      ...s,
+      familyGroupIds: idsByStu[s.id] ? Array.from(idsByStu[s.id]) : [],
+      // Keep legacy singular `familyGroupId` populated with the first group
+      // for back-compat with code paths that haven't been refactored yet.
+      familyGroupId: idsByStu[s.id] ? Array.from(idsByStu[s.id])[0] : null
+    }));
+    return { groupIdsByStudent: idsByStu, membersByGroup: byGroup, studentsWithGroups: withGroups };
+  }, [students, groupMemberships]);
 
   // parentGroups: nest swimmers under their guardian (parent) account.
   // No explicit parents table — we cluster on guardian_email (most
@@ -2017,7 +2120,7 @@ function App(){
   // pseudo-parent so they're still findable.
   const parentGroups = useMemo(() => {
     const m = {};
-    students.forEach(s => {
+    studentsWithGroups.forEach(s => {
       const emailKey = (s.guardianEmail || '').toLowerCase().trim();
       const phoneKey = (s.guardianPhone || '').replace(/\s+/g,'').trim();
       const nameKey = (s.guardianName || '').toLowerCase().trim();
@@ -2052,7 +2155,7 @@ function App(){
       if(b.key === '__unassigned__') return -1;
       return a.name.localeCompare(b.name);
     });
-  }, [students]);
+  }, [studentsWithGroups]);
 
   // Which sessions (in the selected week) each swimmer is already in — drives the
   // double-booking warning in the enrollment modal.
@@ -2211,6 +2314,9 @@ function App(){
         updateGroup={updateGroup}
         deleteGroup={deleteGroup}
         setStudentGroup={setStudentGroup}
+        addStudentToGroup={addStudentToGroup}
+        removeStudentFromGroup={removeStudentFromGroup}
+        groupIdsByStudent={groupIdsByStudent}
         addSubscription={addSubscription}
         cancelSubscription={cancelSubscription}
         adjustBalanceTo={adjustBalanceTo}
@@ -4324,7 +4430,7 @@ function swimmerAccent(idx){ return SWIMMER_ACCENTS[idx % SWIMMER_ACCENTS.length
 //     subscription log, ledger
 // The Swimmers page is intentionally read-only — use this page to admin.
 // ============================================================================
-function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, packageById, familyGroups, groupById, membersByGroup, creditByKey, subscriptions, addStudent, updateStudent, deleteStudent, addGroup, updateGroup, deleteGroup, setStudentGroup, addSubscription, cancelSubscription, adjustBalanceTo, setView }){
+function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, packageById, familyGroups, groupById, membersByGroup, creditByKey, subscriptions, addStudent, updateStudent, deleteStudent, addGroup, updateGroup, deleteGroup, setStudentGroup, addStudentToGroup, removeStudentFromGroup, groupIdsByStudent, addSubscription, cancelSubscription, adjustBalanceTo, setView }){
   const [searchQ, setSearchQ] = useState('');
   const [statusFilter, setStatusFilter] = useState('active');   // 'active' | 'archived' | 'all'
   const [expandedKey, setExpandedKey] = useState(null);
@@ -4426,11 +4532,11 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
       }, 0);
       const parentSubs = (subscriptions || []).filter(s => {
         if(s.subject_type === 'student' && pg.swimmers.some(sw => sw.id === s.subject_id)) return true;
-        if(s.subject_type === 'family_group' && pg.swimmers.some(sw => sw.familyGroupId === s.subject_id)) return true;
+        if(s.subject_type === 'family_group' && pg.swimmers.some(sw => (sw.familyGroupIds || []).includes(s.subject_id))) return true;
         return false;
       });
       // Distinct family groups that involve this parent's swimmers.
-      const parentGroupsInPlay = [...new Set(pg.swimmers.map(s => s.familyGroupId).filter(Boolean))]
+      const parentGroupsInPlay = [...new Set(pg.swimmers.flatMap(s => s.familyGroupIds || []))]
         .map(gid => groupById?.[gid]).filter(Boolean);
 
       return <div key={pg.key} className={`parent-card ${!pg.isActive?'is-archived':''}`}>
@@ -4552,6 +4658,7 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
             familyGroups={familyGroups}
             groupById={groupById}
             membersByGroup={membersByGroup}
+            groupIdsByStudent={groupIdsByStudent}
             lessonTypes={lessonTypes}
             packages={packages}
             packageById={packageById}
@@ -4559,6 +4666,8 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
             updateGroup={updateGroup}
             deleteGroup={deleteGroup}
             setStudentGroup={setStudentGroup}
+            addStudentToGroup={addStudentToGroup}
+            removeStudentFromGroup={removeStudentFromGroup}
             onClose={()=>setGroupPanelKey(null)}
           />}
 
@@ -4805,8 +4914,10 @@ function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packag
   let groupTotal = 0;
   let individualTotal = 0;
 
-  // 1. Family group bundles (deduplicated by groupId)
-  const accountGroupIds = [...new Set(pg.swimmers.map(s => s.familyGroupId).filter(Boolean))];
+  // 1. Family group bundles (deduplicated by groupId).
+  // Multi-group: collect every group ID that any swimmer in this account
+  // belongs to (flatten across familyGroupIds arrays).
+  const accountGroupIds = [...new Set(pg.swimmers.flatMap(s => s.familyGroupIds || []))];
   accountGroupIds.forEach(gid => {
     const g = groupById?.[gid];
     if(!g) return;
@@ -4818,11 +4929,11 @@ function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packag
       // members' matching enrolments incorrectly fall through to individual
       // billing. The warning makes the broken state visible instead of
       // silently miscomputing the total.
-      const members = pg.swimmers.filter(s => s.familyGroupId === gid);
+      const members = pg.swimmers.filter(s => (s.familyGroupIds || []).includes(gid));
       unconfiguredGroups.push({ id: gid, name: g.name, groupType: g.groupType, memberCount: members.length, memberNames: members.map(m => m.name).join(', ') });
       return;
     }
-    const members = pg.swimmers.filter(s => s.familyGroupId === gid);
+    const members = pg.swimmers.filter(s => (s.familyGroupIds || []).includes(gid));
     const memberCount = members.length;
     const required = pkg.pax != null ? Number(pkg.pax) : null;
     const bundle = pkg.amount != null ? Number(pkg.amount) : 0;
@@ -4860,15 +4971,22 @@ function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packag
     groupTotal += amount;
   });
 
-  // 2. Individual lessons NOT covered by the swimmer's family group
+  // 2. Individual lessons NOT covered by ANY of the swimmer's family groups.
+  // Multi-group: a swimmer might be in several groups (e.g. LTS+Fam3 AND
+  // Personal Class 2+Duo). Each group covers a distinct package. We build
+  // the set of "covered package IDs" by walking ALL their groups, then
+  // skip any enrolment whose packageId is in that set.
   pg.swimmers.forEach(sw => {
     const enrolledIn = sw.enrollments || [];
-    const swGroup = sw.familyGroupId ? groupById?.[sw.familyGroupId] : null;
-    const coveredPkgId = swGroup?.packageId || null;
+    const coveredPkgIds = new Set();
+    (sw.familyGroupIds || []).forEach(gid => {
+      const grp = groupById?.[gid];
+      if(grp?.packageId) coveredPkgIds.add(grp.packageId);
+    });
     enrolledIn.forEach(e => {
       if(!e.lessonTypeId || !e.packageId) return;
-      // Skip the enrollment that's covered by this swimmer's family group bundle
-      if(coveredPkgId && e.packageId === coveredPkgId) return;
+      // Skip enrolments covered by ANY group bundle the swimmer is in
+      if(coveredPkgIds.has(e.packageId)) return;
       const pkg = typeof pkgById === 'function' ? pkgById(e.packageId) : pkgById[e.packageId];
       if(!pkg) return;
       const amount = pkg.amount != null ? Number(pkg.amount) : 0;
@@ -5022,15 +5140,30 @@ function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packag
 //      live-previews which family swimmers are eligible (have that exact
 //      package enrollment). The user ticks who to include and one click
 //      creates the group and assigns members in a single transaction.
-function ParentGroupManager({ pg, familyGroups, groupById, membersByGroup, lessonTypes, packages, packageById, addGroup, updateGroup, deleteGroup, setStudentGroup, onClose }){
-  // ── Eligibility helper ───────────────────────────────────────────────
-  // A swimmer in this account is eligible for a (lessonTypeId, packageId)
-  // group iff they have an enrollment row with that exact pair. This is
-  // the precise filter the user asked for: only swimmers with matching
-  // package can be slotted into the group.
+function ParentGroupManager({ pg, familyGroups, groupById, membersByGroup, groupIdsByStudent, lessonTypes, packages, packageById, addGroup, updateGroup, deleteGroup, setStudentGroup, addStudentToGroup, removeStudentFromGroup, onClose }){
+  // ── Eligibility helpers ──────────────────────────────────────────────
+  // (1) A swimmer is "package-eligible" for a (lessonTypeId, packageId)
+  //     iff they have an enrolment row with that exact pair.
+  // (2) But uniqueness also applies: a swimmer can only be in ONE group
+  //     per unique (lesson_type, package). So if the swimmer is already
+  //     in some OTHER group with the same package, they're not eligible
+  //     for THIS one — they'd be hopping, which is what we're patching.
+  //     We surface the conflicting group's name so the UI can explain why.
   function eligibleFor(lessonTypeId, packageId){
     if(!lessonTypeId || !packageId) return [];
     return pg.swimmers.filter(s => (s.enrollments || []).some(e => e.lessonTypeId === lessonTypeId && e.packageId === packageId));
+  }
+  // For a candidate package, return any OTHER group the swimmer is in with
+  // the same package_id — null if they're free to join.
+  function conflictingGroupFor(swimmerId, packageId, excludeGroupId){
+    const ids = groupIdsByStudent?.[swimmerId];
+    if(!ids) return null;
+    for(const gid of ids){
+      if(gid === excludeGroupId) continue;
+      const g = familyGroups.find(x => x.id === gid);
+      if(g && g.packageId === packageId) return g;
+    }
+    return null;
   }
 
   // ── State for the create form ────────────────────────────────────────
@@ -5064,10 +5197,13 @@ function ParentGroupManager({ pg, familyGroups, groupById, membersByGroup, lesso
   function selectAllEligible(){ setCreatingMemberIds(new Set(previewEligible.map(s => s.id))); }
   function selectNone(){ setCreatingMemberIds(new Set()); }
 
-  // When lessonType/package changes, default member selection to all eligible
-  // (saves a click — most common case is "create and add everyone").
+  // When lessonType/package changes, default member selection to all
+  // FREE eligible swimmers (excludes those already in another group with
+  // the same package — they're locked out by the uniqueness rule).
   React.useEffect(() => {
-    setCreatingMemberIds(new Set(previewEligible.map(s => s.id)));
+    if(!creatingPkgId){ setCreatingMemberIds(new Set()); return; }
+    const free = previewEligible.filter(sw => !conflictingGroupFor(sw.id, creatingPkgId, null));
+    setCreatingMemberIds(new Set(free.map(s => s.id)));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [creatingLtId, creatingPkgId]);
 
@@ -5077,17 +5213,22 @@ function ParentGroupManager({ pg, familyGroups, groupById, membersByGroup, lesso
     if(!creatingLtId || !creatingPkgId){ alert('Pick a Lesson Type and Package first.'); return; }
     const inserted = await addGroup({ name, packageId: creatingPkgId, groupType: creatingType });
     if(!inserted){ return; }  // addGroup already alerted on failure
-    // Bulk-assign each selected swimmer to the new group.
+    // Bulk-assign each selected swimmer to the new group. addStudentToGroup
+    // enforces uniqueness — a swimmer who's already in another group with
+    // the same package will be filtered out in the UI before this point,
+    // but the write API blocks duplicates as a defensive backstop.
     for(const sid of creatingMemberIds){
       // eslint-disable-next-line no-await-in-loop
-      await setStudentGroup(sid, inserted.id);
+      await addStudentToGroup(sid, inserted.id);
     }
     // Reset create form
     setCreatingName(''); setCreatingLtId(''); setCreatingPkgId(''); setCreatingType('discount'); setCreatingMemberIds(new Set()); setCreatingOpen(false);
   }
 
   // ── Existing groups touching this family ─────────────────────────────
-  const involvedGroupIds = [...new Set(pg.swimmers.map(s => s.familyGroupId).filter(Boolean))];
+  // Multi-group: a swimmer may be in several groups, so flatMap over the
+  // familyGroupIds array. The Set dedupes.
+  const involvedGroupIds = [...new Set(pg.swimmers.flatMap(s => s.familyGroupIds || []))];
   const involvedGroups = involvedGroupIds.map(gid => groupById?.[gid]).filter(Boolean);
 
   function packageLabel(pkgId){
@@ -5110,7 +5251,8 @@ function ParentGroupManager({ pg, familyGroups, groupById, membersByGroup, lesso
         // a package_id on the group (legacy data) we fall back to "all
         // swimmers in this family" so legacy groups remain editable.
         const eligibleHere = g.packageId ? eligibleFor(pkgInfo ? (packageById?.(g.packageId)?.lesson_type_id) : null, g.packageId) : pg.swimmers;
-        const memberSetForThisParent = pg.swimmers.filter(s => s.familyGroupId === g.id);
+        // Multi-group: membership comes from the junction-derived Set on each swimmer.
+        const memberSetForThisParent = pg.swimmers.filter(s => (s.familyGroupIds || []).includes(g.id));
         const isEditingPkg = editPkgFor === g.id;
         const editPkgChoices = editPkgLtId ? packages.filter(p => p.lesson_type_id === editPkgLtId) : [];
         return <div key={g.id} className="parent-group-block">
@@ -5164,8 +5306,19 @@ function ParentGroupManager({ pg, familyGroups, groupById, membersByGroup, lesso
 
           <div className="parent-group-members">
             {eligibleHere.length === 0 ? <span className="subtle small">No swimmers in this family have the matching package.</span> : eligibleHere.map(sw => {
-              const inThis = sw.familyGroupId === g.id;
-              return <label key={sw.id} className="parent-group-member"><input type="checkbox" checked={inThis} onChange={(e)=>setStudentGroup(sw.id, e.target.checked ? g.id : null)} /> {sw.name}</label>;
+              const inThis = (sw.familyGroupIds || []).includes(g.id);
+              // If this swimmer is NOT already in this group but IS in
+              // another group with the same package, lock them out — they
+              // can't be moved without removing them from the other group
+              // first (that's the patched "no hopping" rule).
+              const other = !inThis && g.packageId ? conflictingGroupFor(sw.id, g.packageId, g.id) : null;
+              const locked = !!other;
+              return <label key={sw.id} className="parent-group-member" style={locked ? {opacity:.45} : null} title={locked ? `Already in "${other.name}" — remove from there first` : undefined}>
+                <input type="checkbox" checked={inThis} disabled={locked} onChange={(e)=>{
+                  if(e.target.checked){ addStudentToGroup(sw.id, g.id); }
+                  else { removeStudentFromGroup(sw.id, g.id); }
+                }} /> {sw.name}{locked ? <span className="subtle small"> · in {other.name}</span> : null}
+              </label>;
             })}
             {/* Show any non-eligible swimmers as muted, so user understands why they can't be added */}
             {g.packageId && pg.swimmers.filter(s => !eligibleHere.includes(s)).map(sw => <label key={sw.id} className="parent-group-member" style={{opacity:.45}} title="Does not have the matching package enrollment"><input type="checkbox" disabled /> {sw.name}</label>)}
@@ -5215,27 +5368,42 @@ function ParentGroupManager({ pg, familyGroups, groupById, membersByGroup, lesso
           </div>
         </div>
 
-        {/* Step 3: Eligible swimmers (filtered by selected package) */}
-        {creatingPkgId && <div className="parent-group-block" style={{background:'#F0F9FF',borderColor:'#BFDBFE'}}>
-          <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginBottom:6}}>
-            <strong>Eligible swimmers</strong>
-            <span className="subtle small">{previewEligible.length} match the selected package</span>
-            <div style={{marginLeft:'auto',display:'flex',gap:4}}>
-              <button className="btn btn-ghost small" onClick={selectAllEligible} disabled={previewEligible.length===0}>All</button>
-              <button className="btn btn-ghost small" onClick={selectNone} disabled={creatingMemberIds.size===0}>None</button>
+        {/* Step 3: Eligible swimmers (filtered by selected package +
+             uniqueness check). Three buckets:
+               • free       — checkable; package-eligible AND not in another group with same package
+               • conflicted — disabled; package-eligible BUT already in another group with same package
+               • ineligible — disabled; no matching enrolment */}
+        {creatingPkgId && (() => {
+          const free = previewEligible.filter(sw => !conflictingGroupFor(sw.id, creatingPkgId, null));
+          const conflicted = previewEligible.filter(sw => !!conflictingGroupFor(sw.id, creatingPkgId, null));
+          const lacking = pg.swimmers.filter(s => !previewEligible.includes(s));
+          return <div className="parent-group-block" style={{background:'#F0F9FF',borderColor:'#BFDBFE'}}>
+            <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginBottom:6}}>
+              <strong>Eligible swimmers</strong>
+              <span className="subtle small">{free.length} free · {conflicted.length} already in another group · {lacking.length} no matching enrolment</span>
+              <div style={{marginLeft:'auto',display:'flex',gap:4}}>
+                <button className="btn btn-ghost small" onClick={()=>setCreatingMemberIds(new Set(free.map(s => s.id)))} disabled={free.length===0}>All</button>
+                <button className="btn btn-ghost small" onClick={selectNone} disabled={creatingMemberIds.size===0}>None</button>
+              </div>
             </div>
-          </div>
-          <div className="parent-group-members">
-            {previewEligible.length === 0
-              ? <span className="subtle small">No swimmers in this family have the selected package. Add the enrolment to a swimmer first via ✎ Edit on their row.</span>
-              : previewEligible.map(sw => {
-                  const checked = creatingMemberIds.has(sw.id);
-                  return <label key={sw.id} className="parent-group-member"><input type="checkbox" checked={checked} onChange={()=>toggleMember(sw.id)} /> {sw.name}</label>;
-                })}
-            {/* Show ineligible swimmers as muted, for transparency */}
-            {pg.swimmers.filter(s => !previewEligible.includes(s)).map(sw => <label key={sw.id} className="parent-group-member" style={{opacity:.45}} title="Does not have the selected package — add the enrolment to make eligible"><input type="checkbox" disabled /> {sw.name}</label>)}
-          </div>
-        </div>}
+            <div className="parent-group-members">
+              {free.length === 0 && conflicted.length === 0 && lacking.length === pg.swimmers.length
+                ? <span className="subtle small">No swimmers in this family have the selected package. Add the enrolment to a swimmer first via ✎ Edit on their row.</span>
+                : null}
+              {free.map(sw => {
+                const checked = creatingMemberIds.has(sw.id);
+                return <label key={sw.id} className="parent-group-member"><input type="checkbox" checked={checked} onChange={()=>toggleMember(sw.id)} /> {sw.name}</label>;
+              })}
+              {/* Conflicted: package matches BUT already in another group with same package. Tooltip names the conflicting group. */}
+              {conflicted.map(sw => {
+                const other = conflictingGroupFor(sw.id, creatingPkgId, null);
+                return <label key={sw.id} className="parent-group-member" style={{opacity:.45}} title={`Already in "${other?.name}" with the same package — one group per (lesson type, package) per swimmer`}><input type="checkbox" disabled /> {sw.name} <span className="subtle small">· already in {other?.name}</span></label>;
+              })}
+              {/* Ineligible: lacks the matching enrolment entirely. */}
+              {lacking.map(sw => <label key={sw.id} className="parent-group-member" style={{opacity:.45}} title="Does not have the selected package — add the enrolment to make eligible"><input type="checkbox" disabled /> {sw.name}</label>)}
+            </div>
+          </div>;
+        })()}
 
         <div style={{display:'flex',justifyContent:'flex-end',gap:6}}>
           <button className="btn btn-primary small" onClick={handleCreate} disabled={!creatingLtId || !creatingPkgId || !creatingName.trim()}>
@@ -5757,19 +5925,52 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
 
   function setRow(i, key, val){ const rows = (modal.form.studentRows || []).slice(); rows[i] = { ...rows[i], [key]: val }; setForm({ studentRows: rows }); }
   function addRow(){ setForm({ studentRows: [...(modal.form.studentRows || []), { studentId:null, name:'', age:'', remark:'', attendance:'pending' }] }); }
-  function removeRow(i){ const rows = (modal.form.studentRows || []).slice(); rows.splice(i, 1); if(!rows.length) rows.push({ studentId:null, name:'', age:'', remark:'', attendance:'pending' }); setForm({ studentRows: rows }); }
-
   function onInstructorChange(id){
     const inst = instructors.find(i => i.id === id);
     setForm({ instructorId: id || null, instructorName: inst?.name || '' });
   }
 
   // Pick a swimmer into a slot from the registry; snapshot name+age. null clears.
+  // Bound-group auto-fill: if the picked swimmer is in a BOUND group whose
+  // package matches this session's lesson type, also auto-add every other
+  // member of that group that isn't already in the session. Bound members
+  // must move through sessions together — this is the add counterpart of
+  // the bound-removal guard in removeRow.
   function pickStudent(i, student){
     const rows = (modal.form.studentRows || []).slice();
     const keepRemark = student ? (rows[i]?.remark || '') : '';
     const keepAtt = student ? (rows[i]?.attendance || 'pending') : 'pending';
     rows[i] = student ? { studentId: student.id, name: student.name, age: (student.age === null || student.age === undefined ? '' : String(student.age)), remark: keepRemark, attendance: keepAtt } : { studentId:null, name:'', age:'', remark:'', attendance:'pending' };
+
+    if(student && groupById && membersByGroup){
+      const ltId = currentLt?.id;
+      const stuFull = studentById[student.id] || student;
+      const groupIds = stuFull.familyGroupIds || (stuFull.familyGroupId ? [stuFull.familyGroupId] : []);
+      // Find a bound group whose package matches this session's lesson type.
+      let boundGrp = null;
+      for(const gid of groupIds){
+        const g = groupById[gid];
+        if(!g || g.groupType !== 'bound') continue;
+        const pkg = g.packageId ? packageById?.(g.packageId) : null;
+        if(pkg && ltId && pkg.lesson_type_id === ltId){ boundGrp = g; break; }
+      }
+      if(boundGrp){
+        const inSessionIds = new Set(rows.filter(r => r.studentId).map(r => r.studentId));
+        const missingMembers = (membersByGroup[boundGrp.id] || []).filter(m => m.id !== student.id && !inSessionIds.has(m.id));
+        if(missingMembers.length){
+          // Fill empty rows first, then append for any remaining.
+          let cursor = 0;
+          for(const m of missingMembers){
+            // Find next empty slot starting from cursor
+            while(cursor < rows.length && rows[cursor].studentId) cursor++;
+            const slot = { studentId: m.id, name: m.name, age: (m.age == null ? '' : String(m.age)), remark: '', attendance: 'pending' };
+            if(cursor < rows.length){ rows[cursor] = slot; cursor++; }
+            else { rows.push(slot); }
+          }
+        }
+      }
+    }
+
     setForm({ studentRows: rows });
   }
   function setRemark(i, val){ const rows = (modal.form.studentRows || []).slice(); rows[i] = { ...rows[i], remark: val }; setForm({ studentRows: rows }); }
@@ -5821,17 +6022,32 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
 
   // ── Bound-group removal guard: when the user clears a slot that holds
   // a bound-group member, offer to remove all other members of the same
-  // group from the session too.
+  // group from the session too. Multi-group aware: a swimmer can be in
+  // several groups; we look for ANY bound group whose package matches the
+  // current session's lesson type, because that's the group whose members
+  // must move together for THIS class.
   function removeRow(i){
     const row = (modal.form.studentRows || [])[i];
     if(row?.studentId && groupById){
       const stu = studentById[row.studentId];
-      const grp = stu?.familyGroupId ? groupById[stu.familyGroupId] : null;
-      if(grp?.groupType === 'bound'){
-        const groupMemberIds = new Set(((membersByGroup && membersByGroup[grp.id]) || []).map(m => m.id));
+      const groupIds = stu?.familyGroupIds || (stu?.familyGroupId ? [stu.familyGroupId] : []);
+      // Find a bound group of this swimmer that matches the session's lesson type
+      const ltId = currentLt?.id;
+      let boundGrp = null;
+      for(const gid of groupIds){
+        const g = groupById[gid];
+        if(!g || g.groupType !== 'bound') continue;
+        const pkg = g.packageId ? packageById?.(g.packageId) : null;
+        if(pkg && ltId && pkg.lesson_type_id === ltId){ boundGrp = g; break; }
+        // Fallback: if package isn't set or lesson type can't be confirmed,
+        // still treat as bound-cascade candidate (defensive for legacy data).
+        if(!boundGrp) boundGrp = g;
+      }
+      if(boundGrp){
+        const groupMemberIds = new Set(((membersByGroup && membersByGroup[boundGrp.id]) || []).map(m => m.id));
         const otherBoundInSession = (modal.form.studentRows || []).filter((r, ri) => ri !== i && r.studentId && groupMemberIds.has(r.studentId));
         if(otherBoundInSession.length){
-          if(confirm(`"${stu.name}" is in the bound group "${grp.name}". Remove all ${otherBoundInSession.length + 1} bound group members from this session?`)){
+          if(confirm(`"${stu.name}" is in the bound group "${boundGrp.name}". Bound members must move through sessions together — remove all ${otherBoundInSession.length + 1} bound group members from this session?`)){
             const removeIds = new Set([row.studentId, ...otherBoundInSession.map(r => r.studentId)]);
             const newRows = (modal.form.studentRows || []).map(r => removeIds.has(r.studentId) ? { studentId:null, name:'', age:'', attendance:'pending', remark:'' } : r);
             setModal({ ...modal, form: { ...modal.form, studentRows: newRows } });
