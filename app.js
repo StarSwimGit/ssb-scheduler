@@ -4882,12 +4882,17 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
       <div className="intake-banner-inner">
         <div className="intake-banner-icon" aria-hidden="true">🏊</div>
         <div className="intake-banner-text">
-          <div className="intake-banner-title">Parent Intake Form</div>
-          <div className="intake-banner-sub">Open a clean registration page on this tablet for parents to fill in their own details. Submitted swimmers appear here automatically. To add a swimmer manually or to edit any details, use the 👤 Accounts tab.</div>
+          <div className="intake-banner-title">Parent Intake</div>
+          <div className="intake-banner-sub">Open the digital form on this tablet for parents to self-register, or print a hard-copy form for walk-ins without a device. To add a swimmer manually or edit any details, use the 👤 Accounts tab.</div>
         </div>
-        <button type="button" className="btn btn-primary intake-banner-btn" onClick={()=>window.open('./intake.html', '_blank', 'noopener,noreferrer')} title="Opens the parent intake form in a new tab — hand the tablet over and tap 'Register Another Family' when done">
-          Open Form <span aria-hidden="true" style={{marginLeft:6}}>↗</span>
-        </button>
+        <div style={{display:'flex',gap:8,flexShrink:0,flexWrap:'wrap'}}>
+          <button type="button" className="btn btn-primary intake-banner-btn" onClick={()=>window.open('./intake.html', '_blank', 'noopener,noreferrer')} title="Opens the digital intake form in a new tab">
+            Digital Form <span aria-hidden="true" style={{marginLeft:6}}>↗</span>
+          </button>
+          <button type="button" className="btn btn-print intake-banner-btn" onClick={()=>window.open('./form.html', '_blank', 'noopener,noreferrer')} title="Open the printable hard-copy registration form (PDF-ready)">
+            🖨 Print Form
+          </button>
+        </div>
       </div>
     </div>
 
