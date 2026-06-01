@@ -114,10 +114,10 @@ function studentLabel(s){ return s.name + ageSuffix(s) + (s && s.remark ? ` — 
 // Build the modal's student rows: existing students first, padded with blanks
 // up to the lesson type's ratio (so "max 4" shows 4 boxes). Falls back to 4.
 function buildStudentRows(existing, cap){
-  const rows = (existing || []).map(s => ({ studentId: s.studentId || null, name: s.name || '', age: (s.age === null || s.age === undefined ? '' : String(s.age)), remark: s.remark || '', attendance: s.attendance || 'pending', isNew: !!s.isNew }));
+  const rows = (existing || []).map(s => ({ studentId: s.studentId || null, name: s.name || '', age: (s.age === null || s.age === undefined ? '' : String(s.age)), remark: s.remark || '', attendance: s.attendance || 'pending' }));
   const c = Number(cap) > 0 ? Number(cap) : 4;
   const target = Math.max(c, rows.length, 1);
-  while(rows.length < target) rows.push({ studentId:null, name:'', age:'', remark:'', attendance:'pending', isNew:false });
+  while(rows.length < target) rows.push({ studentId:null, name:'', age:'', remark:'', attendance:'pending' });
   return rows;
 }
 // Re-normalize rows when the lesson type changes: keep filled rows, pad to the new ratio.
@@ -126,7 +126,7 @@ function rebuildRowsForCap(rows, cap){
   const c = Number(cap) > 0 ? Number(cap) : 4;
   const target = Math.max(c, filled.length, 1);
   const out = filled.slice();
-  while(out.length < target) out.push({ studentId:null, name:'', age:'', remark:'', attendance:'pending', isNew:false });
+  while(out.length < target) out.push({ studentId:null, name:'', age:'', remark:'', attendance:'pending' });
   return out;
 }
 function formatRange(startMin, durationMin){ return `${minuteToTime(startMin)}–${minuteToTime(startMin + durationMin)}`; }
@@ -325,7 +325,7 @@ function App(){
     (studentRows || []).forEach(r => {
       const key = String(r.session_id);
       if(!studentsBySession[key]) studentsBySession[key] = [];
-      studentsBySession[key].push({ id:r.id, studentId:r.student_id || null, name:r.student_name || '', age:(r.student_age === null || r.student_age === undefined ? null : Number(r.student_age)), remark:r.remark || '', isReplacement: !!r.is_replacement, replacementFrom: r.replacement_from || '', attendance: r.attendance_status || 'pending', isNew: !!r.is_new });
+      studentsBySession[key].push({ id:r.id, studentId:r.student_id || null, name:r.student_name || '', age:(r.student_age === null || r.student_age === undefined ? null : Number(r.student_age)), remark:r.remark || '', isReplacement: !!r.is_replacement, replacementFrom: r.replacement_from || '', attendance: r.attendance_status || 'pending' });
     });
     const instructorsBySession = {};
     (instructorJoinRows || []).forEach(r => {
@@ -1399,9 +1399,9 @@ function App(){
         sessionId = inserted?.[0]?.id;
       }
       // Regular enrolled students
-      const rows = (modal.form.studentRows || []).map(r => ({ studentId:r.studentId || null, name:(r.name || '').trim(), age:r.age, remark:(r.remark || '').trim(), attendance: r.attendance || 'pending', isNew: !!r.isNew })).filter(r => r.name || r.studentId);
+      const rows = (modal.form.studentRows || []).map(r => ({ studentId:r.studentId || null, name:(r.name || '').trim(), age:r.age, remark:(r.remark || '').trim(), attendance: r.attendance || 'pending' })).filter(r => r.name || r.studentId);
       if(sessionId && rows.length){
-        await insertRows('weekly_session_students', rows.map(r => ({ session_id: sessionId, student_id: r.studentId, student_name: r.name, student_age: (r.age === '' || r.age === null || r.age === undefined) ? null : Number(r.age), remark: r.remark || null, is_replacement: false, attendance_status: r.attendance, is_new: !!r.isNew })));
+        await insertRows('weekly_session_students', rows.map(r => ({ session_id: sessionId, student_id: r.studentId, student_name: r.name, student_age: (r.age === '' || r.age === null || r.age === undefined) ? null : Number(r.age), remark: r.remark || null, is_replacement: false, attendance_status: r.attendance })));
       }
       // Replacement students (group classes) — one-off, tagged separately
       const replRows = (modal.form.replacementRows || []).filter(r => r.name || r.studentId);
@@ -6149,7 +6149,6 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
   }
   function setRemark(i, val){ const rows = (modal.form.studentRows || []).slice(); rows[i] = { ...rows[i], remark: val }; setForm({ studentRows: rows }); }
   function setAttendance(i, val){ const rows = (modal.form.studentRows || []).slice(); rows[i] = { ...rows[i], attendance: val }; setForm({ studentRows: rows }); }
-  function setNewFlag(i, val){ const rows = (modal.form.studentRows || []).slice(); rows[i] = { ...rows[i], isNew: !!val }; setForm({ studentRows: rows }); }
   function setReplAttendance(i, val){ const rows = (modal.form.replacementRows || []).slice(); rows[i] = { ...rows[i], attendance: val }; setForm({ replacementRows: rows }); }
 
   // Bind this session to a family group and drop ALL its members into the slots
@@ -6322,7 +6321,6 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
         trialByLessonType={trialByLessonType} pendingByKey={pendingByKey} weekStartDate={wk} lessonTypeId={ltId} />
                   {pkgLabel && !isTrial ? <span className="stu-pkg-label" title={`Enrolled package for ${currentLt?.name}`}>{pkgLabel}</span> : null}
                   {isTrial ? <span className="trial-pill" title="Trial package — one-off booking.">trial</span> : null}
-                  {(r.studentId || (r.name || '').trim()) ? <button type="button" className={`new-pill ${r.isNew ? 'is-on' : ''}`} title={r.isNew ? 'Marked NEW for this session only — click to clear' : 'Mark NEW for this session only (does not carry to duplicated weeks)'} onClick={()=>setNewFlag(i, !r.isNew)}>new</button> : null}
                   {canMarkReplacement ? <button type="button" className="repl-mark-btn" title="Move this swimmer out for replacement" onClick={async ()=>{
                     const ok = await markForReplacement({ studentId:r.studentId, sessionId:modal.id, weekStartDate:wk, lessonTypeId:ltId, lessonTypeName:currentLt.name, day:modal.day, startMinute:modal.startMinute });
                     if(ok){ setModal(null); }
