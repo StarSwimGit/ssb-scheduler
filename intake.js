@@ -59,9 +59,28 @@ const TC_CONTENT = [
   { h: '4. School-Initiated Cancellations', body: `4.1 Weather Conditions: Classes may be suspended or cancelled at the School's sole discretion during adverse weather. Participants will be notified as promptly as possible. Any class cancelled due to weather entitles the swimmer to a full replacement lesson at no additional cost.\n\n4.2 Instructor Cancellation: Should a class be cancelled by ${TC_COMPANY} or by an assigned instructor for reasons within the School's control, all affected swimmers are entitled to a replacement lesson.` },
   { h: '5. Replacement Class Policy', body: `5.1 Group Classes: Replacement sessions for group classes may be attended in any currently active class of the same lesson type, provided a slot is available.\n\n5.2 Personal & Private Classes: Replacement sessions for personal classes are to be arranged directly between the assigned instructor and the parent or guardian, subject to mutual time availability and pool space.\n\n5.3 Validity: Replacement lessons must be utilised within 14 calendar days of the missed class, unless otherwise agreed in writing.` },
   { h: '6. Credit System', body: `6.1 Students enrolled in personal or private lesson programmes are allocated a credit balance corresponding to the number of sessions purchased in their package.\n\n6.2 One (1) credit is deducted for each scheduled and attended class. Credits are not deducted for classes cancelled by the School or for classes where a valid MC has been provided.\n\n6.3 Credits are non-refundable and non-transferable to another swimmer. Unused credits at the end of a package cycle are forfeited unless otherwise agreed in writing.` },
-  { h: '7. Health, Safety & Medical Disclosure', body: `7.1 You confirm that the swimmer is in good health and is medically fit to participate in aquatic activities. Any pre-existing medical condition, allergy, or physical limitation must be disclosed to the School prior to the commencement of classes.\n\n7.2 In the event of a medical emergency, the School is authorised to administer basic first aid and to contact emergency services. All reasonable effort will be made to contact the designated emergency contact immediately.` },
+  { h: '7. Health, Safety & Medical Disclosure', body: `7.1 Good Health Confirmation: You confirm that the swimmer is in good health and is medically fit to participate in aquatic activities.
+
+7.2 Medical & Behavioural Declaration: You further declare that, to the best of your knowledge, the swimmer named in this registration:
+  (a) does not have any known medical, physical, or psychological condition that would prevent safe participation in swimming lessons;
+  (b) has not been advised by a medical professional to refrain from physical activity or aquatic programmes;
+  (c) is not under any medication or treatment that would interfere with swim lesson participation;
+  (d) does not require additional support unless previously disclosed.
+
+7.3 Disclosure Obligation: Any pre-existing medical condition, allergy, behavioural consideration, or physical limitation must be disclosed to the School prior to the commencement of classes. If any such conditions exist, you confirm that you have disclosed them during registration or will inform the School's administrators before lessons commence.
+
+7.4 Consequences of Non-Disclosure: You understand that failure to disclose relevant medical or behavioural information may affect the safety and quality of instruction and may result in withdrawal from the programme without refund.
+
+7.5 Liability: The School is not liable for injuries or health events arising from undisclosed medical or behavioural conditions.
+
+7.6 Emergency Authorisation: In the event of a medical emergency, the School is authorised to administer basic first aid and to contact emergency services. All reasonable effort will be made to contact the designated emergency contact immediately.` },
   { h: '8. Liability Waiver', body: `8.1 Participation in aquatic activities carries inherent risks. By accepting this Agreement, you acknowledge these risks and agree that ${TC_COMPANY}, its directors, instructors, and staff shall not be liable for any injury, loss, damage, or claim arising from participation in the School's programmes, except where caused by the School's gross negligence or wilful misconduct.` },
-  { h: '9. Acceptance & Governing Law', body: `This Agreement is governed by the laws of Malaysia. By electronically accepting, you confirm you have read and agree to all clauses above on behalf of yourself and/or the enrolled swimmer.` }
+  { h: '9. Photography, Video & Marketing Consent', body: `9.1 By accepting these Terms, you consent to ${TC_COMPANY} taking photographs and video recordings of the swimmer during lessons, classes, and events for the purposes of instructor training, social media, advertising, school newsletters, and other marketing activities undertaken by the School.
+
+9.2 Opt-Out: If you wish to withhold consent for the use of your swimmer's images in marketing materials, please notify the School in writing at the time of registration or thereafter. The School will then take reasonable steps to exclude the swimmer from marketing photography going forward; this opt-out does not retroactively remove already-published materials.
+
+9.3 This School-led photography consent is distinct from the third-party photography restrictions described in clause 2.4. Visitors and other guardians remain prohibited from photographing or recording any swimmer (including their own child within shared pool areas) without prior written consent from ${TC_COMPANY} and the relevant guardians of every swimmer present.` },
+  { h: '10. Acceptance & Governing Law', body: `This Agreement is governed by the laws of Malaysia. By electronically accepting, you confirm you have read and agree to all clauses above on behalf of yourself and/or the enrolled swimmer.` }
 ];
 
 function IntakeForm(){
@@ -82,6 +101,9 @@ function IntakeForm(){
 
   const [tcOpen, setTcOpen] = useState(false);
   const [tcAccepted, setTcAccepted] = useState(false);
+  // Referral / discount code captured at intake (free-text, optional). Validation
+  // and redemption happen later at invoice time; we just record what was given.
+  const [referralCode, setReferralCode] = useState('');
 
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState('');
@@ -138,6 +160,7 @@ function IntakeForm(){
           emergency_phone: emergencyPhone,
           emergency_relationship: emergencyRel,
           emergency_same_as_guardian: !!sameAsGuardian,
+          referral_code: referralCode.trim() || null,
           lesson_type_ids: []
         });
         const studentId = inserted?.[0]?.id;
@@ -170,7 +193,7 @@ function IntakeForm(){
     setGName(''); setGEmail(''); setGPhone('');
     setChildren([{ name:'', dob:'', gender:null }]);
     setSameAsGuardian(false); setEName(''); setEPhone(''); setERel('');
-    setTcAccepted(false); setTcOpen(false);
+    setTcAccepted(false); setTcOpen(false); setReferralCode('');
     setErr(''); setDone(null);
     window.scrollTo({ top:0, behavior:'smooth' });
   }
@@ -243,6 +266,17 @@ function IntakeForm(){
       <div className="field-row">
         <div className="field"><label>Phone Number{sameAsGuardian?'':<span className="req">*</span>}</label><input className="input" type="tel" value={sameAsGuardian ? gPhone : ePhone} onChange={e=>setEPhone(e.target.value)} disabled={sameAsGuardian} placeholder="+60 1X-XXX XXXX" inputMode="tel" /></div>
         <div className="field"><label>Relationship to Swimmer{sameAsGuardian?'':<span className="req">*</span>}</label><input className="input" value={sameAsGuardian ? 'Parent / Guardian' : eRel} onChange={e=>setERel(e.target.value)} disabled={sameAsGuardian} placeholder="e.g. Grandparent, Aunt" /></div>
+      </div>
+    </div>
+
+    {/* Referral / Discount Code — optional. Just captured here; the
+        invoice module (future) handles validation and benefit application. */}
+    <div className="card">
+      <div className="section-title">Referral or Discount Code <span className="optional-tag">optional</span></div>
+      <div className="section-hint">If you were referred by an existing customer or have a promotional code, enter it below. We'll apply any applicable benefits when your first invoice is generated.</div>
+      <div className="field" style={{marginTop:6}}>
+        <label>Code</label>
+        <input className="input" value={referralCode} onChange={e=>setReferralCode(e.target.value.toUpperCase())} placeholder="e.g. SARAH2025 or NEW50" maxLength={32} style={{textTransform:'uppercase',letterSpacing:'.5px'}} />
       </div>
     </div>
 
