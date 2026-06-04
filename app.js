@@ -4775,6 +4775,24 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
       if((pg.phone || '').toLowerCase().includes(q)) return true;
       return pg.swimmers.some(s => (s.name || '').toLowerCase().includes(q));
     });
+
+  // Cross-filter hits: accounts matching the search query that live in the
+  // OTHER status bucket — visible only when a specific filter is active and
+  // the search returns no results (or fewer results) from the current view.
+  function matchesSearch(pg){
+    if(!searchQ.trim()) return false;
+    const q = searchQ.toLowerCase();
+    if((pg.name || '').toLowerCase().includes(q)) return true;
+    if((pg.email || '').toLowerCase().includes(q)) return true;
+    if((pg.phone || '').toLowerCase().includes(q)) return true;
+    return pg.swimmers.some(s => (s.name || '').toLowerCase().includes(q));
+  }
+  const archiveHits = searchQ.trim() && statusFilter === 'active'
+    ? (parentGroups || []).filter(pg => !pg.isActive && matchesSearch(pg))
+    : [];
+  const activeHits = searchQ.trim() && statusFilter === 'archived'
+    ? (parentGroups || []).filter(pg => pg.isActive && matchesSearch(pg))
+    : [];
   const activeCount = (parentGroups || []).filter(p => p.isActive).length;
   const archivedCount = (parentGroups || []).filter(p => !p.isActive).length;
   const totalSwimmers = (parentGroups || []).reduce((sum, p) => sum + p.swimmers.length, 0);
@@ -4853,6 +4871,20 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
             because it bypassed the T&C gate. */}
       </div>
     </div>
+
+    {/* Cross-filter notice — shown when matching accounts exist in the other status bucket */}
+    {archiveHits.length > 0 && <div className="cross-filter-notice">
+      <span>🗄 {archiveHits.length} {archiveHits.length === 1 ? 'result' : 'results'} found in <strong>Archives</strong>{archiveHits.length === 1 ? `: ${archiveHits[0].name}` : ': ' + archiveHits.map(p => p.name).join(', ')}</span>
+      <button className="btn btn-ghost small" onClick={()=>{ setStatusFilter('archived'); if(archiveHits.length === 1) setExpandedKey(archiveHits[0].key); }}>
+        {archiveHits.length === 1 ? 'Go to account →' : 'Switch to Archives →'}
+      </button>
+    </div>}
+    {activeHits.length > 0 && <div className="cross-filter-notice">
+      <span>👤 {activeHits.length} {activeHits.length === 1 ? 'result' : 'results'} found in <strong>Active accounts</strong>{activeHits.length === 1 ? `: ${activeHits[0].name}` : ': ' + activeHits.map(p => p.name).join(', ')}</span>
+      <button className="btn btn-ghost small" onClick={()=>{ setStatusFilter('active'); if(activeHits.length === 1) setExpandedKey(activeHits[0].key); }}>
+        {activeHits.length === 1 ? 'Go to account →' : 'Switch to Active →'}
+      </button>
+    </div>}
 
     {filtered.length === 0 && <div className="card empty" style={{padding:30}}>No accounts match.</div>}
 
