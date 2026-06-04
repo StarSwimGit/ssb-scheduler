@@ -685,6 +685,24 @@
     .adult-self-toggle span{flex:1}
 
     /* ════════════════════════════════════════════════════════════════
+       Admin Hub — left sidebar + content panel (replaces Settings)
+       ════════════════════════════════════════════════════════════════ */
+    .admin-hub{display:grid;grid-template-columns:220px 1fr;gap:16px;align-items:start}
+    .admin-hub-sidebar{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:10px;position:sticky;top:70px}
+    .admin-hub-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;color:var(--text-3);padding:6px 10px 8px;border-bottom:1px solid var(--border);margin-bottom:6px}
+    .admin-hub-item{display:flex;align-items:center;gap:9px;width:100%;padding:9px 10px;border:none;background:transparent;border-radius:8px;color:var(--text-2);font-size:13px;font-weight:600;cursor:pointer;text-align:left;transition:.1s ease}
+    .admin-hub-item:hover{background:var(--surface-2);color:var(--text)}
+    .admin-hub-item.is-on{background:var(--primary-soft);color:var(--primary-on-soft);font-weight:800}
+    .admin-hub-icon{font-size:15px;flex-shrink:0;width:22px;text-align:center}
+    .admin-hub-content{min-width:0}
+    @media(max-width:768px){
+      .admin-hub{grid-template-columns:1fr}
+      .admin-hub-sidebar{position:static;display:flex;flex-wrap:wrap;gap:4px;padding:8px}
+      .admin-hub-title{display:none}
+      .admin-hub-item{width:auto;padding:6px 10px;font-size:12px}
+    }
+
+    /* ════════════════════════════════════════════════════════════════
        Sub-navigation inside the Accounts top tab
        Two children: "Accounts — Administration" and
                      "Family Groups — Administration"
@@ -759,6 +777,10 @@
     .parent-card.is-archived{opacity:0.62;background:#FAFAFC}
     .parent-card.is-archived .parent-name{color:var(--text-2)}
     .parent-archived-badge{display:inline-block;font-size:9.5px;font-weight:800;background:var(--surface-3);color:var(--text-2);border:1px solid var(--border-2);border-radius:4px;padding:2px 7px;margin-left:8px;text-transform:uppercase;letter-spacing:.4px;vertical-align:middle}
+    /* Green dot: account has ≥1 swimmer in a session this week */
+    .acct-session-dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#22C55E;box-shadow:0 0 0 3px rgba(34,197,94,.18);margin-right:7px;vertical-align:middle;flex-shrink:0}
+    @keyframes dot-pulse{0%,100%{box-shadow:0 0 0 2px rgba(34,197,94,.2)}50%{box-shadow:0 0 0 5px rgba(34,197,94,.05)}}
+    .acct-session-dot{animation:dot-pulse 2.4s ease-in-out infinite}
 
     /* RecordPurchaseForm */
     .record-purchase-form{padding:11px 13px;background:#fff;border:1px solid var(--border-2);border-radius:8px;margin-bottom:10px}
