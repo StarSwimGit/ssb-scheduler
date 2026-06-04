@@ -4464,7 +4464,7 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
       return '<div style="margin-top:14px;padding:10px 12px;border:1px solid #ccc;border-radius:6px">' +
         '<div style="font-size:12pt;font-weight:700">' + sw.name +
         (sw.age != null ? ' · ' + sw.age + 'y' : '') +
-        (sw.gender ? ' · ' + (sw.gender === 'male' ? '♂' : sw.gender === 'female' ? '♀' : sw.gender) : '') + '</div>' +
+        (sw.gender ? ' · ' + (sw.gender === 'male' ? 'M' : sw.gender === 'female' ? 'F' : sw.gender) : '') + '</div>' +
         (enrolHtml || '<div style="font-size:10pt;color:#999;margin-top:4px">No enrolments</div>') + '</div>';
     }).join('');
     const html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Account Summary – ' + pg.name + '</title>' +
