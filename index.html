@@ -703,6 +703,63 @@
     }
 
     /* ════════════════════════════════════════════════════════════════
+       Invoicing — BillingPreviewPanel, InvoicesView, InvoiceDetailPanel,
+       RecordPaymentForm, PendingCreditsView
+       ════════════════════════════════════════════════════════════════ */
+    .billing-row-muted td{opacity:.38}
+    .billing-type-chip{display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.3px}
+    .billing-type-chip.group{background:#DBEAFE;color:#1E3A8A;border:1px solid #93C5FD}
+    .billing-type-chip.individual{background:#F0FDF4;color:#14532D;border:1px solid #86EFAC}
+    .billing-type-chip.other{background:#F3F4F6;color:#374151;border:1px solid #D1D5DB}
+
+    /* Invoice bulk action bar */
+    .inv-bulk-bar{display:flex;align-items:center;gap:8px;padding:7px 10px;background:#0b2040;border:1px solid var(--primary);border-radius:8px;margin-top:6px}
+
+    /* Invoice column header */
+    .inv-col-head{display:flex;align-items:center;gap:0;padding:4px 12px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-3);font-weight:700}
+
+    /* Invoice card list */
+    .inv-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;transition:.12s ease}
+    .inv-card.is-expanded{border-color:var(--primary)}
+    .inv-card.is-overdue{border-color:#EF444466}
+    .inv-row{display:flex;align-items:center;gap:12px;padding:11px 12px;cursor:pointer;flex-wrap:wrap}
+    .inv-row:hover{background:var(--surface-2)}
+    .inv-status-chip{display:inline-block;padding:3px 8px;border-radius:5px;font-size:10.5px;font-weight:800;border:1px solid transparent}
+
+    /* Invoice detail panel */
+    .inv-detail{padding:14px 16px;border-top:1px solid var(--border);background:var(--surface-2)}
+    .inv-detail-meta{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;margin-bottom:12px}
+    .inv-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+    .inv-overdue-banner{padding:8px 12px;background:#2a0808;border:1px solid #EF4444;border-radius:7px;color:#FCA5A5;font-size:12px;font-weight:700;margin-bottom:12px}
+
+    /* Add custom line form */
+    .add-line-form{padding:12px;background:#071525;border:1px dashed var(--border-2);border-radius:8px;margin-bottom:10px}
+
+    /* Payment rows */
+    .pmt-row{display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px}
+
+    /* Record payment form */
+    .pay-form{padding:14px;background:#071525;border:1px solid var(--primary);border-radius:10px;margin-bottom:10px}
+    .pay-form-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:10px}
+
+    /* Pending credit rows */
+    .pc-card{border:1px solid var(--border);border-radius:10px;overflow:hidden}
+    .pc-card-body{display:flex;align-items:flex-start;gap:12px;padding:12px 14px;flex-wrap:wrap}
+    .pc-card.status-pending{border-color:#F59E0B44;background:#1a1200}
+    .pc-card.status-confirmed{border-color:#10B98144;background:#001a0d}
+    .pc-card.status-reversed{border-color:#EF444444;background:#1a0000;opacity:.7}
+    .pc-status-chip{display:inline-block;padding:3px 8px;border-radius:5px;font-size:10.5px;font-weight:800}
+    .pc-status-chip.status-pending{background:#FEF3C7;color:#92400E}
+    .pc-status-chip.status-confirmed{background:#D1FAE5;color:#065F46}
+    .pc-status-chip.status-reversed{background:#FEE2E2;color:#7F1D1D}
+    .pc-row{display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:7px}
+    .pc-row.status-confirmed{opacity:.6}
+    .pc-row.status-reversed{opacity:.45}
+
+    /* Aging report */
+    td.num,th.num{text-align:right}
+
+    /* ════════════════════════════════════════════════════════════════
        Sub-navigation inside the Accounts top tab
        Two children: "Accounts — Administration" and
                      "Family Groups — Administration"
