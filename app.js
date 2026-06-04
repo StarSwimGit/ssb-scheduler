@@ -2208,7 +2208,7 @@ function App(){
       </div>
       <div className="header-tabs">
         <div className="tabs">
-          {['day','week','month','accounts','students','enroll'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='week'?'📅 Weekly':v==='day'?'📋 Daily':v==='month'?'🗓️ Monthly':v==='accounts'?'👤 Accounts':v==='students'?'👥 Swimmers':'🎯 Enroll'}</button>)}
+          {['day','week','month','accounts','students','enroll'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='week'?'📅 Weekly':v==='day'?'📋 Daily':v==='month'?'🗓️ Monthly':v==='accounts'?'👤 Accounts':v==='students'?'👥 Swimmers':'🔍 Explore'}</button>)}
           {/* Intake opens intake.html in a new tab. */}
           <button type="button" className="tab tab-link" onClick={() => window.open('./intake.html', '_blank', 'noopener,noreferrer')} title="Open the digital parent intake form in a new tab">📝 Intake <span aria-hidden="true" style={{marginLeft:3,opacity:.6,fontSize:11}}>↗</span></button>
         </div>
