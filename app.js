@@ -276,8 +276,9 @@ function App(){
   // ── Invoicing state ────────────────────────────────────────────────
   const [invoices,setInvoices] = useState([]);
   const [invoiceLines,setInvoiceLines] = useState([]);
-  const [pmts,setPmts] = useState([]);          // "payments" clashes with existing var
+  const [pmts,setPmts] = useState([]);
   const [pendingCredits,setPendingCredits] = useState([]);
+  const [invoiceSettings,setInvoiceSettings] = useState({ invoice_prefix:'INV', receipt_prefix:'RCT', next_invoice_seq:1, next_receipt_seq:1, leading_zeros:3, include_date:true, date_format:'YYYYMM' });
 
   useEffect(() => { boot(); }, []);
   useEffect(() => { if(cfg.supabaseUrl && cfg.supabaseAnonKey) loadRemarks(monthCursor).catch(handleErr); }, [monthCursor]);
@@ -299,27 +300,70 @@ function App(){
   // ── Invoice loaders ────────────────────────────────────────────────
   async function loadInvoiceData(){
     try{
-      const [invRows, lineRows, payRows, pcRows] = await Promise.all([
+      const [invRows, lineRows, payRows, pcRows, settRows] = await Promise.all([
         selectRows('invoices','*','&order=created_at.desc'),
         selectRows('invoice_lines','*','&order=invoice_id.asc,sort_order.asc'),
         selectRows('payments','*','&order=invoice_id.asc,created_at.asc'),
         selectRows('pending_credits','*','&order=created_at.desc'),
+        selectRows('invoice_settings','*').catch(()=>[]),
       ]);
       setInvoices(invRows||[]);
       setInvoiceLines(lineRows||[]);
       setPmts(payRows||[]);
       setPendingCredits(pcRows||[]);
-    }catch(e){ console.warn('Invoice tables not found — run supabase_invoicing_migration.sql first.',e); }
+      if(settRows?.[0]) setInvoiceSettings(settRows[0]);
+    }catch(e){ console.warn('Invoice tables not found — run migrations first.',e); }
+  }
+
+  // ── Number formatting ──────────────────────────────────────────────
+  // Pure helper — builds a formatted number string from a settings object
+  // and a raw sequence integer. Used for live preview and generation.
+  function formatInvoiceNumber(sett, seq){
+    const now = new Date();
+    const y = now.getFullYear(), m = String(now.getMonth()+1).padStart(2,'0');
+    const datePart = sett.include_date !== false ? {
+      YYYYMM: `-${y}${m}`,
+      YYYY:   `-${y}`,
+      MM:     `-${m}`,
+      none:   '',
+    }[sett.date_format||'YYYYMM'] ?? `-${y}${m}` : '';
+    const pad = Math.max(1, Number(sett.leading_zeros)||3);
+    const seqStr = String(seq).padStart(pad,'0');
+    return `${sett.invoice_prefix||'INV'}${datePart}-${seqStr}`;
+  }
+  function formatReceiptNumber(sett, seq){
+    const now = new Date();
+    const y = now.getFullYear(), m = String(now.getMonth()+1).padStart(2,'0');
+    const datePart = sett.include_date !== false ? {
+      YYYYMM: `-${y}${m}`,
+      YYYY:   `-${y}`,
+      MM:     `-${m}`,
+      none:   '',
+    }[sett.date_format||'YYYYMM'] ?? `-${y}${m}` : '';
+    const pad = Math.max(1, Number(sett.leading_zeros)||3);
+    const seqStr = String(seq).padStart(pad,'0');
+    return `${sett.receipt_prefix||'RCT'}${datePart}-${seqStr}`;
+  }
+
+  // Save invoice settings (upsert on id=1)
+  async function saveInvoiceSettings(patch){
+    try{
+      await patchRows('invoice_settings',{id:1},patch);
+      await loadInvoiceData();
+    }catch(err){ handleErr(err); alert(err.message||'Failed to save settings'); }
   }
 
   // ── Invoice CRUD ───────────────────────────────────────────────────
   async function createInvoice({ accountName, accountEmail, accountPhone, lines, notes, dueDate }){
-    const now = new Date();
-    const yyyymm = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}`;
-    const allInv = await selectRows('invoices','id').catch(()=>[]);
-    const seq = (allInv?.length||0)+1;
-    const invoiceNumber = `INV-${yyyymm}-${String(seq).padStart(3,'0')}`;
+    // Read current settings (fresh from DB to get latest seq)
+    const settRows = await selectRows('invoice_settings','*').catch(()=>[]);
+    const sett = settRows?.[0] || invoiceSettings;
+    const seq = Number(sett.next_invoice_seq)||1;
+    const invoiceNumber = formatInvoiceNumber(sett, seq);
+    // Increment counter immediately so concurrent creates don't collide
+    await patchRows('invoice_settings',{id:1},{next_invoice_seq: seq+1}).catch(()=>{});
     const totalAmount = lines.reduce((s,l)=>s+Number(l.amount||0),0);
+    const now = new Date();
     const inserted = await insertRows('invoices',{
       invoice_number:invoiceNumber, account_name:accountName,
       account_email:accountEmail||null, account_phone:accountPhone||null,
@@ -345,11 +389,12 @@ function App(){
   }
 
   async function recordPayment({ invoiceId, amount, paymentDate, paymentMethod, referenceNumber, notes:pNotes }){
-    const now = new Date();
-    const yyyymm = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}`;
-    const allPay = await selectRows('payments','id').catch(()=>[]);
-    const seq = (allPay?.length||0)+1;
-    const receiptNumber = `RCT-${yyyymm}-${String(seq).padStart(3,'0')}`;
+    // Read current settings (fresh) for receipt number
+    const settRows = await selectRows('invoice_settings','*').catch(()=>[]);
+    const sett = settRows?.[0] || invoiceSettings;
+    const seq = Number(sett.next_receipt_seq)||1;
+    const receiptNumber = formatReceiptNumber(sett, seq);
+    await patchRows('invoice_settings',{id:1},{next_receipt_seq: seq+1}).catch(()=>{});
     const inserted = await insertRows('payments',{
       invoice_id:invoiceId, receipt_number:receiptNumber,
       amount:Number(amount), payment_date:paymentDate||toDateStr(now),
@@ -2611,6 +2656,10 @@ function App(){
             lessonTypeById={lessonTypeById}
             packageById={packageById}
             studentById={studentById}
+            invoiceSettings={invoiceSettings}
+            onSaveSettings={saveInvoiceSettings}
+            formatInvoiceNumber={formatInvoiceNumber}
+            formatReceiptNumber={formatReceiptNumber}
             onVoid={voidInvoice}
             onUpdateStatus={updateInvoiceStatus}
             onRecordPayment={recordPayment}
@@ -7028,11 +7077,12 @@ ${pmt.notes?`<div class="row"><span>Notes</span><span>${pmt.notes}</span></div>`
 // ============================================================================
 // InvoicesView — Phase 2: bulk select, overdue badges, batch actions
 // ============================================================================
-function InvoicesView({ invoices, invoiceLines, pmts, pendingCredits, lessonTypeById, packageById, studentById, onVoid, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
+function InvoicesView({ invoices, invoiceLines, pmts, pendingCredits, lessonTypeById, packageById, studentById, invoiceSettings, onSaveSettings, formatInvoiceNumber, formatReceiptNumber, onVoid, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
   const [statusFilter,setStatusFilter]=useState('all');
   const [searchQ,setSearchQ]=useState('');
   const [expandedId,setExpandedId]=useState(null);
   const [selectedIds,setSelectedIds]=useState(new Set());
+  const [showSettings,setShowSettings]=useState(false);
   const today=todayStr();
 
   function isOverdue(inv){ return inv.due_date && inv.due_date < today && inv.status !== 'paid' && inv.status !== 'void'; }
@@ -7077,8 +7127,10 @@ function InvoicesView({ invoices, invoiceLines, pmts, pendingCredits, lessonType
           {counts.overdue>0&&<div><div className="small subtle">Overdue</div><div style={{fontSize:20,fontWeight:800,color:'#EF4444'}}>{counts.overdue}</div></div>}
           <div><div className="small subtle">Outstanding</div><div style={{fontSize:20,fontWeight:800,color:'#F59E0B'}}>RM{outstanding.toFixed(2)}</div></div>
           <div><div className="small subtle">Collected this month</div><div style={{fontSize:20,fontWeight:800,color:'#10B981'}}>RM{collectedMonth.toFixed(2)}</div></div>
+          <button className={`btn btn-ghost small ${showSettings?'active':''}`} onClick={()=>setShowSettings(v=>!v)} title="Invoice number settings">⚙ Numbering</button>
         </div>
       </div>
+      {showSettings && <InvoiceSettingsPanel settings={invoiceSettings} onSave={onSaveSettings} formatInvoiceNumber={formatInvoiceNumber} formatReceiptNumber={formatReceiptNumber} />}
       <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',marginBottom:selCount>0?8:0}}>
         <input className="input" style={{flex:1,minWidth:200,maxWidth:300}} placeholder="Search invoice # or account…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
         <div style={{display:'flex',gap:3,flexWrap:'wrap'}}>
@@ -7386,6 +7438,139 @@ function PendingCreditsView({ pendingCredits, invoices, studentById, familyGroup
       })}
     </div>
   </>;
+}
+
+// ============================================================================
+// InvoiceSettingsPanel — number format + sequence control
+// ============================================================================
+function InvoiceSettingsPanel({ settings, onSave, formatInvoiceNumber, formatReceiptNumber }){
+  const [form,setForm]=useState({
+    invoice_prefix: settings.invoice_prefix||'INV',
+    receipt_prefix: settings.receipt_prefix||'RCT',
+    next_invoice_seq: String(settings.next_invoice_seq||1),
+    next_receipt_seq: String(settings.next_receipt_seq||1),
+    leading_zeros: String(settings.leading_zeros||3),
+    include_date: settings.include_date !== false,
+    date_format: settings.date_format||'YYYYMM',
+  });
+  const [saving,setSaving]=useState(false);
+  const [saved,setSaved]=useState(false);
+
+  // Sync when settings prop updates
+  React.useEffect(()=>{
+    setForm({
+      invoice_prefix: settings.invoice_prefix||'INV',
+      receipt_prefix: settings.receipt_prefix||'RCT',
+      next_invoice_seq: String(settings.next_invoice_seq||1),
+      next_receipt_seq: String(settings.next_receipt_seq||1),
+      leading_zeros: String(settings.leading_zeros||3),
+      include_date: settings.include_date !== false,
+      date_format: settings.date_format||'YYYYMM',
+    });
+  },[settings]);
+
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const draftSettings={...form,leading_zeros:Number(form.leading_zeros)||3,include_date:!!form.include_date};
+
+  // Live preview
+  const invPreview = formatInvoiceNumber ? formatInvoiceNumber(draftSettings, Number(form.next_invoice_seq)||1) : '—';
+  const rctPreview = formatReceiptNumber ? formatReceiptNumber(draftSettings, Number(form.next_receipt_seq)||1) : '—';
+
+  async function handleSave(){
+    setSaving(true); setSaved(false);
+    await onSave({
+      invoice_prefix: form.invoice_prefix.trim()||'INV',
+      receipt_prefix: form.receipt_prefix.trim()||'RCT',
+      next_invoice_seq: Math.max(1,Number(form.next_invoice_seq)||1),
+      next_receipt_seq: Math.max(1,Number(form.next_receipt_seq)||1),
+      leading_zeros: Math.min(8,Math.max(1,Number(form.leading_zeros)||3)),
+      include_date: !!form.include_date,
+      date_format: form.date_format,
+    });
+    setSaving(false); setSaved(true);
+    setTimeout(()=>setSaved(false),2000);
+  }
+
+  function handleReset(){
+    if(!confirm('Reset both counters to 1?\n\nExisting invoice and receipt numbers are unchanged — only the NEXT number generated will restart from 1.\n\nUse this for testing only.')) return;
+    set('next_invoice_seq','1');
+    set('next_receipt_seq','1');
+  }
+
+  return <div className="inv-settings-panel">
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14,flexWrap:'wrap',gap:8}}>
+      <div style={{fontWeight:800,fontSize:14}}>⚙ Invoice Numbering Settings</div>
+      <div style={{display:'flex',gap:8,alignItems:'center'}}>
+        <button className="btn btn-danger small" onClick={handleReset} title="Reset both counters to 1">↺ Reset to 1</button>
+        <button className="btn btn-primary small" onClick={handleSave} disabled={saving}>{saving?'Saving…':saved?'✓ Saved':'Save Settings'}</button>
+      </div>
+    </div>
+
+    <div className="inv-settings-grid">
+      {/* Prefixes */}
+      <div className="field">
+        <label>Invoice Prefix</label>
+        <input className="input" value={form.invoice_prefix} onChange={e=>set('invoice_prefix',e.target.value.replace(/\s/g,''))} placeholder="INV" maxLength={12} />
+        <div className="hint">No spaces. e.g. INV, SSB, SWIM</div>
+      </div>
+      <div className="field">
+        <label>Receipt Prefix</label>
+        <input className="input" value={form.receipt_prefix} onChange={e=>set('receipt_prefix',e.target.value.replace(/\s/g,''))} placeholder="RCT" maxLength={12} />
+        <div className="hint">No spaces. e.g. RCT, RCPT, PAY</div>
+      </div>
+
+      {/* Date segment */}
+      <div className="field">
+        <label>Date in Number</label>
+        <select className="select" value={form.include_date?form.date_format:'none'} onChange={e=>{
+          if(e.target.value==='none'){set('include_date',false);}
+          else{set('include_date',true);set('date_format',e.target.value);}
+        }}>
+          <option value="YYYYMM">Year + Month (202606)</option>
+          <option value="YYYY">Year only (2026)</option>
+          <option value="MM">Month only (06)</option>
+          <option value="none">None — sequence only</option>
+        </select>
+      </div>
+
+      {/* Leading zeros */}
+      <div className="field">
+        <label>Leading Zeros</label>
+        <select className="select" value={form.leading_zeros} onChange={e=>set('leading_zeros',e.target.value)}>
+          {[1,2,3,4,5].map(n=><option key={n} value={n}>{n} → {String(1).padStart(n,'0')}</option>)}
+        </select>
+        <div className="hint">Pad width for the sequence number</div>
+      </div>
+
+      {/* Sequence counters */}
+      <div className="field">
+        <label>Next Invoice #</label>
+        <input className="input" type="number" min="1" value={form.next_invoice_seq} onChange={e=>set('next_invoice_seq',e.target.value)} />
+        <div className="hint">The sequence integer used for the next invoice generated</div>
+      </div>
+      <div className="field">
+        <label>Next Receipt #</label>
+        <input className="input" type="number" min="1" value={form.next_receipt_seq} onChange={e=>set('next_receipt_seq',e.target.value)} />
+        <div className="hint">The sequence integer used for the next receipt generated</div>
+      </div>
+    </div>
+
+    {/* Live preview */}
+    <div className="inv-settings-preview">
+      <div className="inv-settings-preview-label">Live Preview</div>
+      <div style={{display:'flex',gap:24,flexWrap:'wrap'}}>
+        <div>
+          <div className="small subtle">Next Invoice</div>
+          <div className="inv-settings-preview-num">{invPreview}</div>
+        </div>
+        <div>
+          <div className="small subtle">Next Receipt</div>
+          <div className="inv-settings-preview-num">{rctPreview}</div>
+        </div>
+      </div>
+      <div className="hint" style={{marginTop:8}}>Changes are applied when you click <strong>Save Settings</strong>. Existing invoice and receipt numbers are never modified.</div>
+    </div>
+  </div>;
 }
 
 // ============================================================================
