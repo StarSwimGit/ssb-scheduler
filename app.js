@@ -2330,6 +2330,8 @@ function App(){
         addSubscription={addSubscription}
         cancelSubscription={cancelSubscription}
         adjustBalanceTo={adjustBalanceTo}
+        scheduleByStudent={scheduleByStudent}
+        selectedWeekStart={selectedWeekStart}
         setView={setView}
       />}
 
@@ -2373,6 +2375,7 @@ function App(){
         colorsFor={colorsFor}
         gridBounds={gridBounds}
         packages={options.packages}
+        instructors={activeInstructors()}
         initialWeekStart={selectedWeekStart}
         onEnroll={openEnroll}
         onCreate={openCreateFor}
@@ -3722,133 +3725,118 @@ function LessonTypeEditor({ row, pools, onSave }){
 // M4: deterministic enrollment matcher. Given an age (or a registered swimmer)
 // plus availability, it filters the selected week's sessions to age-eligible
 // lesson types, ranks them by open capacity, and offers one-tap enroll/create.
-function EnrollView({ sessions, students, studentById, lessonTypes, lessonTypeById, lessonTypeByName, poolById, colorsFor, gridBounds, packages, initialWeekStart, onEnroll, onCreate }){
+function EnrollView({ sessions, students, studentById, lessonTypes, lessonTypeById, lessonTypeByName, poolById, colorsFor, gridBounds, packages, instructors, initialWeekStart, onEnroll, onCreate }){
   const [weekStart, setWeekStart] = useState(initialWeekStart);
-  const [slotIds, setSlotIds] = useState([null]); // up to 3 swimmer ids
 
-  function setSlotAt(idx, id){ setSlotIds(s => s.map((x,i)=>i===idx?id:x)); }
-  function addSlot(){ setSlotIds(s => s.length < 3 ? [...s, null] : s); }
-  function removeSlotAt(idx){ setSlotIds(s => s.length > 1 ? s.filter((_,i)=>i!==idx) : [null]); }
+  // ── Filter state ──────────────────────────────────────────────────
+  // Lesson Types: empty Set = no filter (show all). Non-empty = show only matching.
+  const [activeLts, setActiveLts] = useState(new Set());
+  // Not Full: OFF = show all (including full). ON = hide full sessions.
+  const [notFull, setNotFull] = useState(false);
+  // Instructors: all ON by default. Toggle off to hide that instructor's sessions.
+  const allInstNames = useMemo(() => (instructors || []).map(i => i.name), [instructors]);
+  const [activeInsts, setActiveInsts] = useState(() => new Set(allInstNames));
+  // Gender quick-toggle: applies to instructor pills in bulk.
+  const [genderMode, setGenderMode] = useState('all'); // 'all' | 'male' | 'female'
+  React.useEffect(() => { setActiveInsts(new Set(allInstNames)); }, [allInstNames]);
 
-  const selectedSwimmers = slotIds.map(id => id ? studentById[id] : null).filter(Boolean);
-  const selectedCount = selectedSwimmers.length;
-  const selectedIdSet = new Set(slotIds.filter(Boolean));
+  function toggleLt(id){ setActiveLts(s => { const n = new Set(s); if(n.has(id)) n.delete(id); else n.add(id); return n; }); }
+  function toggleInst(name){ setActiveInsts(s => { const n = new Set(s); if(n.has(name)) n.delete(name); else n.add(name); return n; }); setGenderMode('custom'); }
+  function setGender(mode){
+    setGenderMode(mode);
+    if(mode === 'all'){ setActiveInsts(new Set(allInstNames)); return; }
+    const filtered = (instructors || []).filter(i => (i.gender || '').toLowerCase() === mode).map(i => i.name);
+    setActiveInsts(new Set(filtered));
+  }
 
-  // Union of lesson types — used to show classes that ANY of the selected
-  // swimmers could attend (broader visibility, no blank screen if their types
-  // diverge). Intersection ("sharedLtIds") marks the prime targets where ALL
-  // selected swimmers could join the same class.
-  const unionLtIds = useMemo(() => {
-    const s = new Set();
-    selectedSwimmers.forEach(sw => (sw.lessonTypeIds || []).forEach(id => s.add(id)));
-    return s;
-  }, [selectedSwimmers]);
+  // ── Session analysis + filtering ──────────────────────────────────
+  const weekSessions = useMemo(() => sessions.filter(s => s.weekStartDate === weekStart), [sessions, weekStart]);
 
-  const sharedLtIds = useMemo(() => {
-    if(selectedCount === 0) return new Set();
-    const sets = selectedSwimmers.map(s => new Set(s.lessonTypeIds || []));
-    const out = new Set();
-    sets[0].forEach(id => { if(sets.every(s => s.has(id))) out.add(id); });
-    return out;
-  }, [selectedSwimmers, selectedCount]);
-
-  // Analyze each session in the visible week. The downstream renderer uses
-  // these flags to paint the grid: fitsAll → prime target, hasRoom →
-  // enrollable, splittable → opportunity to reorganize.
   const analyzed = useMemo(() => {
-    const ws = sessions.filter(s => s.weekStartDate === weekStart);
-    return ws.map(s => {
+    return weekSessions.map(s => {
       const lt = (s.lessonTypeId && lessonTypeById(s.lessonTypeId)) || lessonTypeByName(s.type);
       const cap = sessionCapacity(s, lt);
-      const hasRoom = cap.max === 0 || cap.current < cap.max;
-      const ltId = lt?.id;
-      const compatible = ltId ? selectedSwimmers.filter(sw => (sw.lessonTypeIds || []).includes(ltId)) : [];
-      const alreadyIn = new Set((s.students || []).map(st => st.studentId).filter(Boolean));
-      const enrollable = compatible.filter(sw => !alreadyIn.has(sw.id));
-      const allCompatible = selectedCount > 0 && enrollable.length === selectedCount;
-      const fitsAll = allCompatible && hasRoom && (cap.max === 0 || cap.current + enrollable.length <= cap.max);
-      const wouldOverflow = !hasRoom && enrollable.length > 0;
-      // Splittable: full + adding the new swimmers would yield ≥6 total (so
-      // a 4/4 or 5/3 split into two sustainable groups is possible).
-      const splittable = wouldOverflow && (cap.current + enrollable.length) >= 6;
-      return { s, lt, ltId, cap, hasRoom, compatible, enrollable, allCompatible, fitsAll, wouldOverflow, splittable };
+      const isFull = cap.max > 0 && cap.current >= cap.max;
+      const instName = (s.instructors?.[0]?.name) || s.legacyInstructor || '';
+      return { s, lt, ltId: lt?.id, cap, isFull, instName };
     });
-  }, [sessions, weekStart, selectedSwimmers, selectedCount, lessonTypeById, lessonTypeByName]);
+  }, [weekSessions, lessonTypeById, lessonTypeByName]);
 
-  // Filter logic: when no swimmer selected, show all (calendar-week parity).
-  // When swimmers selected, narrow to classes serving at least one of them.
-  const visible = selectedCount === 0 ? analyzed : analyzed.filter(a => a.compatible.length > 0);
+  const visible = useMemo(() => {
+    return analyzed.filter(a => {
+      // 1. Lesson type: if any selected, must match
+      if(activeLts.size > 0 && !activeLts.has(a.ltId)) return false;
+      // 2. Not Full filter
+      if(notFull && a.isFull) return false;
+      // 3. Instructor filter
+      if(a.instName && !activeInsts.has(a.instName)) return false;
+      return true;
+    });
+  }, [analyzed, activeLts, notFull, activeInsts]);
 
-  const stats = useMemo(() => {
-    const total = visible.length;
-    const fitsAll = visible.filter(v => v.fitsAll).length;
-    const partial = visible.filter(v => v.hasRoom && v.enrollable.length > 0 && !v.fitsAll).length;
-    const full = visible.filter(v => !v.hasRoom).length;
-    const splittable = visible.filter(v => v.splittable).length;
-    return { total, fitsAll, partial, full, splittable };
-  }, [visible]);
-
-  const byDay = useMemo(() => Array.from({length:7}, (_,di) => visible.filter(v => v.s.day === di).sort((a,b)=>a.s.startMinute - b.s.startMinute)), [visible]);
+  const byDay = useMemo(() => Array.from({length:7}, (_,di) => visible.filter(v => v.s.day === di).sort((a,b) => a.s.startMinute - b.s.startMinute)), [visible]);
 
   const startHour = Math.floor(gridBounds.startMin / 60) * 60;
   const hours = []; for(let h = startHour; h < gridBounds.endMin; h += 60) hours.push(h);
   const wb = weekBounds(weekStart);
 
-  function handleEnroll(info){
-    if(!info.s) return;
-    onEnroll(info.s, info.enrollable);
-  }
-  function handleOpenNew(day, startMinute){
-    let lt = null;
-    if(sharedLtIds.size > 0) lt = lessonTypeById([...sharedLtIds][0]);
-    else if(unionLtIds.size > 0) lt = lessonTypeById([...unionLtIds][0]);
-    onCreate(weekStart, day, startMinute, lt, selectedSwimmers);
-  }
+  // Stats
+  const totalShown = visible.length;
+  const totalAll = analyzed.length;
+  const fullCount = visible.filter(v => v.isFull).length;
+  const openCount = totalShown - fullCount;
 
   return <>
     <div className="card" style={{marginBottom:16}}>
       <div className="view-head">
         <div>
-          <div className="view-title">Enroll Swimmers</div>
-          <div className="small subtle">Pick up to 3 swimmers — the weekly grid below narrows to classes any of them can join. Green-outlined classes can take all selected swimmers. Empty slots show opportunities to open a new class.</div>
+          <div className="view-title">Schedule Explorer</div>
+          <div className="small subtle">Filter the weekly schedule by lesson type, availability, and instructor. Click any session to view or edit.</div>
+        </div>
+        <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+          <span className="enroll-stat fits">{openCount} open</span>
+          <span className="enroll-stat full">{fullCount} full</span>
+          <span className="small subtle">{totalShown}/{totalAll} shown</span>
         </div>
       </div>
       <PeriodNav rangeLabel={weekRangeLabel(weekStart)} onPrev={()=>setWeekStart(addDays(weekStart,-7))} onNext={()=>setWeekStart(addDays(weekStart,7))} onToday={()=>setWeekStart(initialWeekStart)} isCurrent={weekStart===initialWeekStart} />
 
-      <div className="enroll-slots">
-        {slotIds.map((id, i) => {
-          const candidates = students.filter(s => !selectedIdSet.has(s.id) || s.id === id);
-          const sw = id ? studentById[id] : null;
-          return <div key={i} className="enroll-slot">
-            <span className="enroll-slot-num">{i+1}</span>
-            <div className="enroll-slot-pick">
-              <StudentSelect valueId={id} fallbackLabel={null} studentById={studentById} candidates={candidates} onPick={(stu)=>setSlotAt(i, stu?stu.id:null)} conflict={null} />
-            </div>
-            <div className="enroll-slot-tags">
-              {sw ? (sw.lessonTypeIds || []).map(ltId => {
-                const t = lessonTypeById(ltId);
-                if(!t) return null;
-                const isShared = sharedLtIds.has(ltId);
-                return <span key={ltId} className="chip" style={{background:t.bg_color,borderColor:t.border_color,color:t.text_color,fontSize:10,padding:'2px 7px',outline:isShared&&selectedCount>1?'2px solid var(--primary)':'none',outlineOffset:isShared&&selectedCount>1?'1px':'0'}}>{t.name}{isShared&&selectedCount>1?' ✓':''}</span>;
-              }) : null}
-            </div>
-            <button type="button" className="enroll-slot-x" onClick={()=>removeSlotAt(i)} title="Clear slot">×</button>
-          </div>;
-        })}
-        {slotIds.length < 3 ? <button type="button" className="enroll-slot-add" onClick={addSlot}>+ Add another swimmer ({slotIds.length}/3)</button> : <div className="small subtle" style={{padding:'6px 2px'}}>Maximum 3 swimmers — clear a slot to swap.</div>}
+      {/* ── Lesson Type pills (additive: none selected = show all) ─── */}
+      <div className="enroll-filter-section">
+        <div className="enroll-filter-label">Lesson Type</div>
+        <div className="enroll-filter-pills">
+          {lessonTypes.map(lt => {
+            const isOn = activeLts.has(lt.id);
+            const c = colorsFor(lt.name);
+            return <button key={lt.id} type="button" className={`enroll-pill ${isOn ? 'is-on' : ''}`} style={isOn ? {background:c.bg, borderColor:c.bd, color:c.tx} : {}} onClick={()=>toggleLt(lt.id)}>{lt.name}</button>;
+          })}
+          {activeLts.size > 0 ? <button type="button" className="enroll-pill-clear" onClick={()=>setActiveLts(new Set())}>✕ Clear</button> : null}
+        </div>
       </div>
 
-      {selectedCount > 0 && <div className="enroll-summary">
-        <strong>{selectedCount}</strong> swimmer{selectedCount===1?'':'s'} selected
-        {selectedCount > 1 && sharedLtIds.size > 0 && <span className="enroll-summary-shared"> · Shared lesson types: {[...sharedLtIds].map(id => lessonTypeById(id)?.name).filter(Boolean).join(', ')}</span>}
-        {selectedCount > 1 && sharedLtIds.size === 0 && <span className="enroll-summary-warn"> · ⚠ No shared lesson types — these swimmers can only enroll into separate classes</span>}
-      </div>}
+      {/* ── Availability toggle ──────────────────────────────────────── */}
+      <div className="enroll-filter-section">
+        <div className="enroll-filter-label">Availability</div>
+        <div className="enroll-filter-pills">
+          <button type="button" className={`enroll-pill ${notFull ? 'is-on' : ''}`} style={notFull ? {background:'#D1FAE5',borderColor:'#10B981',color:'#065F46'} : {}} onClick={()=>setNotFull(v=>!v)}>Not Full Only</button>
+        </div>
+      </div>
 
-      {selectedCount > 0 && <div className="enroll-stats">
-        <span className="enroll-stat fits">{stats.fitsAll} fits all</span>
-        <span className="enroll-stat partial">{stats.partial} partial</span>
-        <span className="enroll-stat full">{stats.full} full{stats.splittable ? ` · ${stats.splittable} splittable` : ''}</span>
-      </div>}
+      {/* ── Instructor filters + gender quick-toggles ────────────────── */}
+      <div className="enroll-filter-section">
+        <div className="enroll-filter-label">Instructor</div>
+        <div className="enroll-filter-pills" style={{marginBottom:4}}>
+          <button type="button" className={`enroll-pill ${genderMode==='all'?'is-on':''}`} style={genderMode==='all'?{background:'#DBEAFE',borderColor:'#3B82F6',color:'#1E3A8A'}:{}} onClick={()=>setGender('all')}>All</button>
+          <button type="button" className={`enroll-pill ${genderMode==='male'?'is-on':''}`} style={genderMode==='male'?{background:'#DBEAFE',borderColor:'#3B82F6',color:'#1E3A8A'}:{}} onClick={()=>setGender('male')}>♂ Male</button>
+          <button type="button" className={`enroll-pill ${genderMode==='female'?'is-on':''}`} style={genderMode==='female'?{background:'#FCE7F3',borderColor:'#EC4899',color:'#831843'}:{}} onClick={()=>setGender('female')}>♀ Female</button>
+        </div>
+        <div className="enroll-filter-pills">
+          {(instructors || []).map(inst => {
+            const isOn = activeInsts.has(inst.name);
+            return <button key={inst.id||inst.name} type="button" className={`enroll-pill ${isOn ? 'is-on' : ''}`} onClick={()=>toggleInst(inst.name)}>{inst.name}</button>;
+          })}
+        </div>
+      </div>
     </div>
 
     <div className="card">
@@ -3865,53 +3853,21 @@ function EnrollView({ sessions, students, studentById, lessonTypes, lessonTypeBy
           <div className="enroll-grid-time">{hourLabel(h)}</div>
           {DAYS_S.map((_,di) => {
             const cellInfos = byDay[di].filter(v => v.s.startMinute >= h && v.s.startMinute < h + 60);
-            const isEmpty = cellInfos.length === 0;
-            // Opportunity: an empty slot where the selected swimmers could
-            // anchor a new class. Gold = all selected share a lesson type AND
-            // we have ≥3 swimmers (sustainable new group threshold).
-            const isOpportunity = isEmpty && selectedCount >= 1 && (sharedLtIds.size > 0 || unionLtIds.size > 0);
-            const isGold = isOpportunity && selectedCount >= 3 && sharedLtIds.size > 0;
-            return <div
-              key={'c'+di+'-'+h}
-              className={`enroll-grid-cell ${isOpportunity?'is-opportunity':''} ${isGold?'is-gold':''}`}
-              onClick={isEmpty ? () => handleOpenNew(di, h) : undefined}
-              title={isOpportunity ? `Open a new class at ${DAYS_F[di]} ${hourLabel(h)}` : ''}
-            >
+            return <div key={'c'+di+'-'+h} className="enroll-grid-cell">
               {cellInfos.map(info => {
                 const c = colorsFor(info.s.type);
-                const inst = (info.s.instructors[0] && info.s.instructors[0].name) || info.s.legacyInstructor || '';
-                let cls = 'enroll-mini';
-                if(selectedCount > 0){
-                  if(info.fitsAll) cls += ' mini-fits';
-                  else if(info.hasRoom && info.enrollable.length > 0) cls += ' mini-partial';
-                  else if(info.splittable) cls += ' mini-split';
-                  else if(!info.hasRoom) cls += ' mini-full';
-                }
                 const capLabel = info.cap.max > 0 ? `${info.cap.current}/${info.cap.max}` : `${info.cap.current}`;
-                return <div key={info.s.id} className={cls} style={{borderLeftColor:c.bd,background:c.bg}} onClick={(e)=>{ e.stopPropagation(); handleEnroll(info); }}>
+                return <div key={info.s.id} className={`enroll-mini ${info.isFull ? 'mini-full' : 'mini-fits'}`} style={{borderLeftColor:c.bd,background:c.bg}} onClick={(e)=>{ e.stopPropagation(); onEnroll(info.s, []); }}>
                   <div className="enroll-mini-top">
                     <span className="enroll-mini-type" style={{color:c.tx}}>{info.s.type}</span>
                     <span className="enroll-mini-cap">{capLabel}</span>
                   </div>
-                  <div className="enroll-mini-meta">{minuteToTime(info.s.startMinute)}{inst?` · ${inst}`:''}</div>
-                  {selectedCount > 0 && info.fitsAll && <div className="enroll-mini-cta cta-fits">Enroll {info.enrollable.length} ✓</div>}
-                  {selectedCount > 0 && info.hasRoom && !info.fitsAll && info.enrollable.length > 0 && <div className="enroll-mini-cta cta-partial">Enroll {info.enrollable.length} of {selectedCount}</div>}
-                  {selectedCount > 0 && !info.hasRoom && info.splittable && <div className="enroll-mini-cta cta-split">Splittable</div>}
-                  {selectedCount > 0 && !info.hasRoom && !info.splittable && <div className="enroll-mini-cta cta-full">FULL</div>}
+                  <div className="enroll-mini-meta">{minuteToTime(info.s.startMinute)}{info.instName ? ` · ${info.instName}` : ''}</div>
                 </div>;
               })}
-              {isOpportunity && <div className="enroll-cell-hint">{isGold ? '+ Open new class' : '+'}</div>}
             </div>;
           })}
         </React.Fragment>)}
-      </div>
-      <div className="enroll-legend">
-        <span><i className="enroll-swatch swatch-fits" />Fits all selected</span>
-        <span><i className="enroll-swatch swatch-partial" />Some swimmers can join</span>
-        <span><i className="enroll-swatch swatch-split" />Full · splittable opportunity</span>
-        <span><i className="enroll-swatch swatch-full" />Full</span>
-        <span><i className="enroll-swatch swatch-gold" />Gold slot · open a new class</span>
-        <span className="small subtle" style={{marginLeft:'auto'}}>Click a class to enroll · click an empty cell to open a new one · splits = parallel sessions, not replacements</span>
       </div>
     </div>
   </>;
@@ -4440,19 +4396,78 @@ function swimmerAccent(idx){ return SWIMMER_ACCENTS[idx % SWIMMER_ACCENTS.length
 //     subscription log, ledger
 // The Swimmers page is intentionally read-only — use this page to admin.
 // ============================================================================
-function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, packageById, familyGroups, groupById, membersByGroup, creditByKey, subscriptions, addStudent, updateStudent, deleteStudent, addGroup, updateGroup, deleteGroup, setStudentGroup, addStudentToGroup, removeStudentFromGroup, groupIdsByStudent, addSubscription, cancelSubscription, adjustBalanceTo, setView }){
+function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, packageById, familyGroups, groupById, membersByGroup, creditByKey, subscriptions, addStudent, updateStudent, deleteStudent, addGroup, updateGroup, deleteGroup, setStudentGroup, addStudentToGroup, removeStudentFromGroup, groupIdsByStudent, addSubscription, cancelSubscription, adjustBalanceTo, scheduleByStudent, selectedWeekStart, setView }){
   // ── Sub-view: which Accounts admin pane is showing ──────────────────
-  // 'accounts'      → existing per-account admin (the original ParentsView)
-  // 'familyGroups'  → system-wide family-groups admin (audit + cleanup)
   const [adminView, setAdminView] = useState('accounts');
   const [searchQ, setSearchQ] = useState('');
-  const [statusFilter, setStatusFilter] = useState('active');   // 'active' | 'archived' | 'all'
+  const [statusFilter, setStatusFilter] = useState('active');
   const [expandedKey, setExpandedKey] = useState(null);
-  const [contactEditKey, setContactEditKey] = useState(null);   // parent key whose contact is being edited
-  const [addingSwimmerFor, setAddingSwimmerFor] = useState(null); // parent key for which we're adding a new swimmer
-  const [editingSwimmerId, setEditingSwimmerId] = useState(null); // swimmer id being edited inline
-  const [groupPanelKey, setGroupPanelKey] = useState(null);     // parent key whose group management is open
-  const [billingKey, setBillingKey] = useState(null);           // parent key whose billing preview is open
+  const [contactEditKey, setContactEditKey] = useState(null);
+  const [addingSwimmerFor, setAddingSwimmerFor] = useState(null);
+  const [editingSwimmerId, setEditingSwimmerId] = useState(null);
+  const [groupPanelKey, setGroupPanelKey] = useState(null);
+  const [billingKey, setBillingKey] = useState(null);
+
+  // ── Account printout ────────────────────────────────────────────────
+  // Opens a popup with a clean, parent-friendly summary: account holder,
+  // family groups, each swimmer's lesson types + packages, and their
+  // scheduled class sessions for the viewed week.
+  function printAccountSummary(pg){
+    const wb = weekBounds(selectedWeekStart || todayStr());
+    const weekLabel = `${wb.start.toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'})} – ${wb.end.toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'})}`;
+    const groupsInPlay = [...new Set(pg.swimmers.flatMap(s => s.familyGroupIds || []))].map(gid => groupById?.[gid]).filter(Boolean);
+    const groupsHtml = groupsInPlay.length ? groupsInPlay.map(g => {
+      const pkg = g.packageId ? packageById?.(g.packageId) : null;
+      const lt = pkg?.lesson_type_id ? lessonTypeById?.(pkg.lesson_type_id) : null;
+      const members = (membersByGroup?.[g.id] || []).map(m => m.name).join(', ');
+      return '<div style="margin-top:4px;font-size:10.5pt">' +
+        (g.groupType === 'bound' ? '🔗' : '👪') + ' <strong>' + g.name + '</strong>' +
+        (lt && pkg ? ' · ' + lt.name + ' · ' + pkg.name : '') +
+        '<div style="font-size:10pt;color:#555;margin-left:18px">Members: ' + (members || 'None') + '</div></div>';
+    }).join('') : '<div style="font-size:10pt;color:#999">No family groups</div>';
+    const swimmerSections = pg.swimmers.map(sw => {
+      const enrolments = sw.enrollments || [];
+      const allSlots = (scheduleByStudent?.[sw.id] || []).filter(sl => sl.weekStartDate === (selectedWeekStart || ''));
+      const slotsByLt = {};
+      allSlots.forEach(sl => { const k = sl.lessonTypeId || '_'; (slotsByLt[k] = slotsByLt[k] || []).push(sl); });
+      const enrolHtml = enrolments.map(e => {
+        const lt = lessonTypeById?.(e.lessonTypeId);
+        const pkg = packageById?.(e.packageId);
+        const ltSlots = (slotsByLt[e.lessonTypeId] || []).slice().sort((a,b) => a.day - b.day || a.startMinute - b.startMinute);
+        const slotLines = ltSlots.map(sl => '<div style="margin-left:22px;font-size:10pt;color:#333">' +
+          DAYS_F[sl.day] + ' ' + minuteToTime(sl.startMinute) + '–' + minuteToTime(sl.startMinute + sl.durationMinutes) +
+          (sl.poolName ? ' · ' + sl.poolName : '') +
+          (sl.instructor ? ' · ' + sl.instructor : '') +
+          '</div>').join('');
+        return '<div style="margin-top:6px"><div style="font-size:10.5pt;font-weight:600">' +
+          (lt?.name || 'Lesson') + ' · ' + (pkg?.name || 'Package') +
+          '</div>' + (slotLines || '<div style="margin-left:22px;font-size:10pt;color:#999">No sessions this week</div>') + '</div>';
+      }).join('');
+      return '<div style="margin-top:14px;padding:10px 12px;border:1px solid #ccc;border-radius:6px">' +
+        '<div style="font-size:12pt;font-weight:700">' + sw.name +
+        (sw.age != null ? ' · ' + sw.age + 'y' : '') +
+        (sw.gender ? ' · ' + (sw.gender === 'male' ? '♂' : sw.gender === 'female' ? '♀' : sw.gender) : '') + '</div>' +
+        (enrolHtml || '<div style="font-size:10pt;color:#999;margin-top:4px">No enrolments</div>') + '</div>';
+    }).join('');
+    const html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Account Summary – ' + pg.name + '</title>' +
+      '<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Inter,system-ui,-apple-system,sans-serif;color:#111;padding:24px 28px;max-width:720px;margin:0 auto}' +
+      '@page{size:A4 portrait;margin:20mm 16mm}@media print{body{padding:0}}' +
+      '.hdr{border-bottom:2px solid #111;padding-bottom:10px;margin-bottom:14px}' +
+      '.hdr h1{font-size:16pt;font-weight:800;letter-spacing:-.3px}' +
+      '.hdr-meta{font-size:10.5pt;color:#444;margin-top:3px}' +
+      '.section{margin-top:16px}.section-title{font-size:11pt;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#666;border-bottom:1px solid #ddd;padding-bottom:3px;margin-bottom:6px}</style>' +
+      '<script>window.onload=function(){setTimeout(function(){window.print()},400)}<\/script>' +
+      '</head><body>' +
+      '<div class="hdr"><h1>' + pg.name + '</h1>' +
+      '<div class="hdr-meta">' + [pg.email, pg.phone].filter(Boolean).join(' · ') + '</div>' +
+      '<div class="hdr-meta" style="margin-top:2px">Week: ' + weekLabel + '</div></div>' +
+      '<div class="section"><div class="section-title">Family Groups</div>' + groupsHtml + '</div>' +
+      '<div class="section"><div class="section-title">Swimmers & Schedule</div>' + swimmerSections + '</div>' +
+      '<div style="margin-top:24px;font-size:9pt;color:#999;border-top:1px solid #ddd;padding-top:8px">Generated ' + new Date().toLocaleDateString(undefined,{dateStyle:'long'}) + ' · Star Swim Sdn Bhd</div>' +
+      '</body></html>';
+    const w = window.open('', '_blank');
+    if(w){ w.document.write(html); w.document.close(); }
+  }
 
   const filtered = (parentGroups || [])
     .filter(pg => {
@@ -4609,6 +4624,7 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
                 purchases that didn't match the swimmers' actual
                 enrolments, leading to inconsistencies. */}
             <button className="btn btn-ghost small" onClick={()=>setBillingKey(billingKey===pg.key?null:pg.key)} title="Preview what this account would be billed based on current enrolments + family groups">{billingKey===pg.key?'Close':'🧾 Billing Preview'}</button>
+            <button className="btn btn-print small" onClick={()=>printAccountSummary(pg)} title="Print account summary with groups, enrolments, and class schedule">🖨 Print</button>
             <div style={{marginLeft:'auto'}}>
               <button className={`btn small ${pg.isActive?'btn-ghost':'btn-primary'}`} onClick={()=>setParentArchived(pg, pg.isActive)} title={pg.isActive ? 'Archive this parent and all their swimmers' : 'Restore this parent and all their swimmers'}>
                 {pg.isActive ? '📦 Archive' : '✓ Restore'}
