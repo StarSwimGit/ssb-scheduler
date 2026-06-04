@@ -2331,6 +2331,8 @@ function App(){
         cancelSubscription={cancelSubscription}
         adjustBalanceTo={adjustBalanceTo}
         scheduleByStudent={scheduleByStudent}
+        sessions={sessions}
+        poolById={poolById}
         selectedWeekStart={selectedWeekStart}
         setView={setView}
       />}
@@ -4396,7 +4398,7 @@ function swimmerAccent(idx){ return SWIMMER_ACCENTS[idx % SWIMMER_ACCENTS.length
 //     subscription log, ledger
 // The Swimmers page is intentionally read-only — use this page to admin.
 // ============================================================================
-function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, packageById, familyGroups, groupById, membersByGroup, creditByKey, subscriptions, addStudent, updateStudent, deleteStudent, addGroup, updateGroup, deleteGroup, setStudentGroup, addStudentToGroup, removeStudentFromGroup, groupIdsByStudent, addSubscription, cancelSubscription, adjustBalanceTo, scheduleByStudent, selectedWeekStart, setView }){
+function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, packageById, familyGroups, groupById, membersByGroup, creditByKey, subscriptions, addStudent, updateStudent, deleteStudent, addGroup, updateGroup, deleteGroup, setStudentGroup, addStudentToGroup, removeStudentFromGroup, groupIdsByStudent, addSubscription, cancelSubscription, adjustBalanceTo, scheduleByStudent, sessions, poolById, selectedWeekStart, setView }){
   // ── Sub-view: which Accounts admin pane is showing ──────────────────
   const [adminView, setAdminView] = useState('accounts');
   const [searchQ, setSearchQ] = useState('');
@@ -4427,18 +4429,25 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
     }).join('') : '<div style="font-size:10pt;color:#999">No family groups</div>';
     const swimmerSections = pg.swimmers.map(sw => {
       const enrolments = sw.enrollments || [];
-      const allSlots = (scheduleByStudent?.[sw.id] || []).filter(sl => sl.weekStartDate === (selectedWeekStart || ''));
+      // Build per-swimmer schedule from sessions directly (scheduleByStudent
+      // doesn't carry weekStartDate or instructor/pool context).
+      const weekSessions = (sessions || []).filter(s => s.weekStartDate === (selectedWeekStart || ''));
+      const swSessions = weekSessions.filter(s => (s.students || []).some(st => st.studentId === sw.id));
       const slotsByLt = {};
-      allSlots.forEach(sl => { const k = sl.lessonTypeId || '_'; (slotsByLt[k] = slotsByLt[k] || []).push(sl); });
+      swSessions.forEach(s => { const k = s.lessonTypeId || '_'; (slotsByLt[k] = slotsByLt[k] || []).push(s); });
       const enrolHtml = enrolments.map(e => {
         const lt = lessonTypeById?.(e.lessonTypeId);
         const pkg = packageById?.(e.packageId);
         const ltSlots = (slotsByLt[e.lessonTypeId] || []).slice().sort((a,b) => a.day - b.day || a.startMinute - b.startMinute);
-        const slotLines = ltSlots.map(sl => '<div style="margin-left:22px;font-size:10pt;color:#333">' +
-          DAYS_F[sl.day] + ' ' + minuteToTime(sl.startMinute) + '–' + minuteToTime(sl.startMinute + sl.durationMinutes) +
-          (sl.poolName ? ' · ' + sl.poolName : '') +
-          (sl.instructor ? ' · ' + sl.instructor : '') +
-          '</div>').join('');
+        const slotLines = ltSlots.map(sl => {
+          const pool = sl.poolId && poolById ? poolById(sl.poolId) : null;
+          const inst = (sl.instructors && sl.instructors[0] && sl.instructors[0].name) || sl.legacyInstructor || '';
+          return '<div style="margin-left:22px;font-size:10pt;color:#333">' +
+            DAYS_F[sl.day] + ' ' + minuteToTime(sl.startMinute) + '–' + minuteToTime(sl.startMinute + sl.durationMinutes) +
+            (pool ? ' · ' + pool.name : '') +
+            (inst ? ' · ' + inst : '') +
+            '</div>';
+        }).join('');
         return '<div style="margin-top:6px"><div style="font-size:10.5pt;font-weight:600">' +
           (lt?.name || 'Lesson') + ' · ' + (pkg?.name || 'Package') +
           '</div>' + (slotLines || '<div style="margin-left:22px;font-size:10pt;color:#999">No sessions this week</div>') + '</div>';
