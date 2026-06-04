@@ -256,7 +256,7 @@ function App(){
   const [sessions,setSessions] = useState([]);
   const [students,setStudents] = useState([]);
   const [familyGroups,setFamilyGroups] = useState([]);
-  const [groupMemberships,setGroupMemberships] = useState([]); // junction-table rows: {familyGroupId, studentId}
+  const [groupMemberships,setGroupMemberships] = useState([]);
   const [creditBalances,setCreditBalances] = useState([]);
   const [creditPurchases,setCreditPurchases] = useState([]);
   const [subscriptions,setSubscriptions] = useState([]);
@@ -267,12 +267,17 @@ function App(){
   const [options,setOptions] = useState({ instructors:[], durations:[], lessonTypes:[], pools:[], operatingHours:[], packages:[] });
   const [monthCursor,setMonthCursor] = useState(new Date());
   const [selectedDate,setSelectedDate] = useState(todayStr());
-  const [selectedPoolId,setSelectedPoolId] = useState(null);  // M2: null = all pools
-  const [enabledTypes,setEnabledTypes] = useState(null);      // null = all lesson types shown
-  const [selectedInstructors,setSelectedInstructors] = useState(new Set()); // empty = no instructor filter
+  const [selectedPoolId,setSelectedPoolId] = useState(null);
+  const [enabledTypes,setEnabledTypes] = useState(null);
+  const [selectedInstructors,setSelectedInstructors] = useState(new Set());
   const [modal,setModal] = useState(null);
   const [saveBusy,setSaveBusy] = useState(false);
   const [remarkDraft,setRemarkDraft] = useState('');
+  // ── Invoicing state ────────────────────────────────────────────────
+  const [invoices,setInvoices] = useState([]);
+  const [invoiceLines,setInvoiceLines] = useState([]);
+  const [pmts,setPmts] = useState([]);          // "payments" clashes with existing var
+  const [pendingCredits,setPendingCredits] = useState([]);
 
   useEffect(() => { boot(); }, []);
   useEffect(() => { if(cfg.supabaseUrl && cfg.supabaseAnonKey) loadRemarks(monthCursor).catch(handleErr); }, [monthCursor]);
@@ -285,10 +290,193 @@ function App(){
     try{
       setLoading(true); setError('');
       await loadOptions();
-      await Promise.all([loadSessions(), loadStudents(), loadGroups(), loadGroupMemberships(), loadCreditBalances(), loadCreditPurchases(), loadSubscriptions(), loadCodes(), loadReplacementPending(), loadTcAcceptances(), loadRemarks(monthCursor)]);
+      await Promise.all([loadSessions(), loadStudents(), loadGroups(), loadGroupMemberships(), loadCreditBalances(), loadCreditPurchases(), loadSubscriptions(), loadCodes(), loadReplacementPending(), loadTcAcceptances(), loadRemarks(monthCursor), loadInvoiceData()]);
       setStatus('Connected');
     } catch(err){ handleErr(err); }
     finally{ setLoading(false); }
+  }
+
+  // ── Invoice loaders ────────────────────────────────────────────────
+  async function loadInvoiceData(){
+    try{
+      const [invRows, lineRows, payRows, pcRows] = await Promise.all([
+        selectRows('invoices','*','&order=created_at.desc'),
+        selectRows('invoice_lines','*','&order=invoice_id.asc,sort_order.asc'),
+        selectRows('payments','*','&order=invoice_id.asc,created_at.asc'),
+        selectRows('pending_credits','*','&order=created_at.desc'),
+      ]);
+      setInvoices(invRows||[]);
+      setInvoiceLines(lineRows||[]);
+      setPmts(payRows||[]);
+      setPendingCredits(pcRows||[]);
+    }catch(e){ console.warn('Invoice tables not found — run supabase_invoicing_migration.sql first.',e); }
+  }
+
+  // ── Invoice CRUD ───────────────────────────────────────────────────
+  async function createInvoice({ accountName, accountEmail, accountPhone, lines, notes, dueDate }){
+    const now = new Date();
+    const yyyymm = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}`;
+    const allInv = await selectRows('invoices','id').catch(()=>[]);
+    const seq = (allInv?.length||0)+1;
+    const invoiceNumber = `INV-${yyyymm}-${String(seq).padStart(3,'0')}`;
+    const totalAmount = lines.reduce((s,l)=>s+Number(l.amount||0),0);
+    const inserted = await insertRows('invoices',{
+      invoice_number:invoiceNumber, account_name:accountName,
+      account_email:accountEmail||null, account_phone:accountPhone||null,
+      status:'draft', issue_date:toDateStr(now), due_date:dueDate||null,
+      notes:notes||null, total_amount:totalAmount, amount_paid:0
+    });
+    const invoiceId = inserted?.[0]?.id;
+    if(invoiceId && lines.length){
+      await insertRows('invoice_lines', lines.map((l,i)=>({
+        invoice_id:invoiceId, description:l.description,
+        lesson_type_name:l.lessonTypeName||null, lesson_type_id:l.lessonTypeId||null,
+        package_name:l.packageName||null, package_id:l.packageId||null,
+        family_group_id:l.familyGroupId||null, family_group_name:l.familyGroupName||null,
+        student_names:l.studentNames||null, student_ids:l.studentIds||null,
+        amount:Number(l.amount||0), quantity:1, is_billable:true,
+        line_type:l.lineType||'package',
+        credits_per_swimmer:l.creditsPerSwimmer||null, billing_mode:l.billingMode||null,
+        sort_order:i
+      })));
+    }
+    await loadInvoiceData();
+    return invoiceId;
+  }
+
+  async function recordPayment({ invoiceId, amount, paymentDate, paymentMethod, referenceNumber, notes:pNotes }){
+    const now = new Date();
+    const yyyymm = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}`;
+    const allPay = await selectRows('payments','id').catch(()=>[]);
+    const seq = (allPay?.length||0)+1;
+    const receiptNumber = `RCT-${yyyymm}-${String(seq).padStart(3,'0')}`;
+    const inserted = await insertRows('payments',{
+      invoice_id:invoiceId, receipt_number:receiptNumber,
+      amount:Number(amount), payment_date:paymentDate||toDateStr(now),
+      payment_method:paymentMethod||'cash',
+      reference_number:referenceNumber||null, notes:pNotes||null
+    });
+    const paymentId = inserted?.[0]?.id;
+    // Seed pending_credits from billable lines
+    if(paymentId){
+      const invLines = invoiceLines.filter(l=>l.invoice_id===invoiceId && l.is_billable);
+      const creditRows = [];
+      invLines.forEach(l=>{
+        if(l.family_group_id){
+          creditRows.push({ invoice_id:invoiceId, payment_id:paymentId,
+            family_group_id:l.family_group_id, lesson_type_id:l.lesson_type_id,
+            package_id:l.package_id, description:l.description,
+            credits_per_swimmer:l.credits_per_swimmer||4, status:'pending' });
+        } else if(l.student_ids){
+          l.student_ids.split(',').map(s=>s.trim()).filter(Boolean).forEach(sid=>{
+            creditRows.push({ invoice_id:invoiceId, payment_id:paymentId,
+              student_id:sid, lesson_type_id:l.lesson_type_id,
+              package_id:l.package_id, description:l.description,
+              credits_per_swimmer:l.credits_per_swimmer||4, status:'pending' });
+          });
+        }
+      });
+      if(creditRows.length) await insertRows('pending_credits',creditRows);
+    }
+    // Recalculate invoice status
+    const invoice = invoices.find(i=>i.id===invoiceId);
+    const existingPaid = pmts.filter(p=>p.invoice_id===invoiceId).reduce((s,p)=>s+Number(p.amount),0);
+    const totalPaid = existingPaid + Number(amount);
+    const newStatus = totalPaid >= Number(invoice?.total_amount||0) ? 'paid' : totalPaid>0 ? 'partial' : 'sent';
+    await patchRows('invoices',{id:invoiceId},{amount_paid:totalPaid,status:newStatus,updated_at:new Date().toISOString()});
+    await loadInvoiceData();
+    return { receiptNumber };
+  }
+
+  async function confirmCredit(credit){
+    const pkg = options.packages?.find(p=>p.id===credit.package_id);
+    const creditsNum = credit.credits_per_swimmer || pkg?.billing_count || 4;
+    try{
+      await addSubscription({
+        subjectType: credit.family_group_id ? 'family_group' : 'student',
+        subjectId: credit.family_group_id || credit.student_id,
+        lessonTypeId: credit.lesson_type_id, packageId: credit.package_id,
+        creditsPerSwimmer: creditsNum, quantity:1, subscriptionDate: toDateStr(new Date())
+      });
+      await patchRows('pending_credits',{id:credit.id},{status:'confirmed',confirmed_at:new Date().toISOString()});
+      await loadInvoiceData(); await loadStudents();
+    }catch(err){ handleErr(err); alert(err.message||'Failed to confirm credit'); }
+  }
+
+  async function reverseCredit(credit){
+    if(!confirm('Reverse this pending credit? Credits will not be allocated.')) return;
+    try{
+      await patchRows('pending_credits',{id:credit.id},{status:'reversed',reversed_at:new Date().toISOString()});
+      await loadInvoiceData();
+    }catch(err){ handleErr(err); alert(err.message||'Failed to reverse'); }
+  }
+
+  async function voidInvoice(id){
+    if(!confirm('Void this invoice? This cannot be undone.')) return;
+    try{ await patchRows('invoices',{id},{status:'void',updated_at:new Date().toISOString()}); await loadInvoiceData(); }
+    catch(err){ handleErr(err); alert(err.message||'Failed to void'); }
+  }
+
+  async function updateInvoiceStatus(id,newStatus){
+    try{ await patchRows('invoices',{id},{status:newStatus,updated_at:new Date().toISOString()}); await loadInvoiceData(); }
+    catch(err){ handleErr(err); alert(err.message||'Failed to update status'); }
+  }
+
+  // ── Invoice line CRUD (Phase 2) ────────────────────────────────────
+  async function recalcInvoiceTotal(invoiceId){
+    // Re-sum billable lines and push to invoices.total_amount
+    const lines = invoiceLines.filter(l=>l.invoice_id===invoiceId && l.is_billable);
+    const total = lines.reduce((s,l)=>s+Number(l.amount||0),0);
+    await patchRows('invoices',{id:invoiceId},{total_amount:total,updated_at:new Date().toISOString()});
+  }
+
+  async function addInvoiceLine(invoiceId, lineData){
+    try{
+      const existing = invoiceLines.filter(l=>l.invoice_id===invoiceId);
+      await insertRows('invoice_lines',{
+        invoice_id:invoiceId, description:lineData.description||'Custom line',
+        amount:Number(lineData.amount||0), quantity:1, is_billable:true,
+        line_type:lineData.lineType||'other',
+        lesson_type_name:lineData.lessonTypeName||null, package_name:lineData.packageName||null,
+        sort_order: existing.length
+      });
+      await loadInvoiceData();
+      // Recalc after reload so new line is in invoiceLines
+      const refreshed = await selectRows('invoice_lines','*',`&invoice_id=eq.${invoiceId}&is_billable=eq.true`).catch(()=>[]);
+      const total = (refreshed||[]).reduce((s,l)=>s+Number(l.amount||0),0);
+      await patchRows('invoices',{id:invoiceId},{total_amount:total,updated_at:new Date().toISOString()});
+      await loadInvoiceData();
+    }catch(err){ handleErr(err); alert(err.message||'Failed to add line'); }
+  }
+
+  async function updateInvoiceLine(lineId, patch){
+    try{
+      await patchRows('invoice_lines',{id:lineId},patch);
+      // Find the invoice this line belongs to
+      const line = invoiceLines.find(l=>l.id===lineId);
+      if(line){
+        await loadInvoiceData();
+        const refreshed = await selectRows('invoice_lines','*',`&invoice_id=eq.${line.invoice_id}&is_billable=eq.true`).catch(()=>[]);
+        const total = (refreshed||[]).reduce((s,l)=>s+Number(l.amount||0),0);
+        await patchRows('invoices',{id:line.invoice_id},{total_amount:total,updated_at:new Date().toISOString()});
+      }
+      await loadInvoiceData();
+    }catch(err){ handleErr(err); alert(err.message||'Failed to update line'); }
+  }
+
+  async function deleteInvoiceLine(lineId){
+    if(!confirm('Remove this line from the invoice?')) return;
+    try{
+      const line = invoiceLines.find(l=>l.id===lineId);
+      await deleteRows('invoice_lines',{id:lineId});
+      if(line){
+        await loadInvoiceData();
+        const refreshed = await selectRows('invoice_lines','*',`&invoice_id=eq.${line.invoice_id}&is_billable=eq.true`).catch(()=>[]);
+        const total = (refreshed||[]).reduce((s,l)=>s+Number(l.amount||0),0);
+        await patchRows('invoices',{id:line.invoice_id},{total_amount:total,updated_at:new Date().toISOString()});
+      }
+      await loadInvoiceData();
+    }catch(err){ handleErr(err); alert(err.message||'Failed to delete line'); }
   }
 
   // M2: also loads pools and operating_hours.
@@ -2335,6 +2523,8 @@ function App(){
         sessions={sessions}
         poolById={poolById}
         selectedWeekStart={selectedWeekStart}
+        createInvoice={createInvoice}
+        setAdminSection={setAdminSection}
         setView={setView}
       />}
 
@@ -2394,6 +2584,9 @@ function App(){
             { key:'lessonTypes', icon:'📋', label:'Lesson Types' },
             { key:'codes',       icon:'🎟', label:'Referral & Discount Codes' },
             { key:'receipts',    icon:'💰', label:'Receipts' },
+            { key:'invoices',       icon:'🧾', label:'Invoices' },
+            { key:'pendingCredits', icon:'⏳', label:'Pending Credits' },
+            { key:'aging',          icon:'📈', label:'Aging Report' },
           ].map(item => <button key={item.key} className={`admin-hub-item ${adminSection===item.key?'is-on':''}`} onClick={()=>setAdminSection(item.key)}>
             <span className="admin-hub-icon">{item.icon}</span>
             <span>{item.label}</span>
@@ -2409,6 +2602,38 @@ function App(){
             groupById={groupById}
             lessonTypeById={lessonTypeById}
             cancelSubscription={cancelSubscription}
+          />}
+          {adminSection === 'invoices' && <InvoicesView
+            invoices={invoices}
+            invoiceLines={invoiceLines}
+            pmts={pmts}
+            pendingCredits={pendingCredits}
+            lessonTypeById={lessonTypeById}
+            packageById={packageById}
+            studentById={studentById}
+            onVoid={voidInvoice}
+            onUpdateStatus={updateInvoiceStatus}
+            onRecordPayment={recordPayment}
+            onConfirmCredit={confirmCredit}
+            onReverseCredit={reverseCredit}
+            onAddLine={addInvoiceLine}
+            onUpdateLine={updateInvoiceLine}
+            onDeleteLine={deleteInvoiceLine}
+          />}
+          {adminSection === 'pendingCredits' && <PendingCreditsView
+            pendingCredits={pendingCredits}
+            invoices={invoices}
+            studentById={studentById}
+            familyGroups={familyGroups}
+            groupById={groupById}
+            lessonTypeById={lessonTypeById}
+            packageById={packageById}
+            onConfirm={confirmCredit}
+            onReverse={reverseCredit}
+          />}
+          {adminSection === 'aging' && <AgingReportView
+            invoices={invoices}
+            pmts={pmts}
           />}
           {(adminSection === 'pools' || adminSection === 'instructors' || adminSection === 'lessonTypes' || adminSection === 'codes') && <SettingsView
             section={adminSection}
@@ -4407,7 +4632,7 @@ function swimmerAccent(idx){ return SWIMMER_ACCENTS[idx % SWIMMER_ACCENTS.length
 //     subscription log, ledger
 // The Swimmers page is intentionally read-only — use this page to admin.
 // ============================================================================
-function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, packageById, familyGroups, groupById, membersByGroup, creditByKey, subscriptions, addStudent, updateStudent, deleteStudent, addGroup, updateGroup, deleteGroup, setStudentGroup, addStudentToGroup, removeStudentFromGroup, groupIdsByStudent, addSubscription, cancelSubscription, adjustBalanceTo, scheduleByStudent, sessions, poolById, selectedWeekStart, setView }){
+function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, packageById, familyGroups, groupById, membersByGroup, creditByKey, subscriptions, addStudent, updateStudent, deleteStudent, addGroup, updateGroup, deleteGroup, setStudentGroup, addStudentToGroup, removeStudentFromGroup, groupIdsByStudent, addSubscription, cancelSubscription, adjustBalanceTo, scheduleByStudent, sessions, poolById, selectedWeekStart, createInvoice, setAdminSection, setView }){
   // ── Sub-view: which Accounts admin pane is showing ──────────────────
   const [adminView, setAdminView] = useState('accounts');
   const [searchQ, setSearchQ] = useState('');
@@ -4688,6 +4913,10 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
             subscriptions={subscriptions}
             addSubscription={addSubscription}
             onClose={()=>setBillingKey(null)}
+            onGenerateInvoice={async (lines, meta) => {
+              const id = await createInvoice({ accountName:pg.name, accountEmail:pg.email, accountPhone:pg.phone, lines, ...meta });
+              if(id){ setBillingKey(null); setAdminSection('invoices'); setView('settings'); }
+            }}
           />}
 
           {/* Contact editor */}
@@ -5027,312 +5256,166 @@ function ParentContactEditor({ pg, onSave, onCancel }){
 // Family group management for a parent — pick existing group or create new
 // from this parent's children, toggle membership per child, switch type.
 // ============================================================================
-// BillingPreviewPanel — forward-looking invoice preview for an account.
-// Shows exactly what the account would be billed based on:
-//   (1) Each family group involving this family: one bundle charge per group
-//       (NOT per swimmer). Bundle covers any size up to required.
-//   (2) Each non-grouped lesson enrolment per swimmer: charged at that
-//       package's individual amount.
-// This is a verification surface for the billing logic — staff reads it to
-// confirm the math adds up before the future invoice module runs.
+// BillingPreviewPanel — invoice generator for an account.
+// Detects billable items (group bundles + individual lessons).
+// Per-line checkboxes let staff exclude any item before generating.
+// "Generate Invoice" creates the invoice + lines + navigates to Admin > Invoices.
+// The old per-line "💳 Record" flow has been superseded by the invoice path.
 // ============================================================================
-function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packageById, groupById, membersByGroup, subscriptions, addSubscription, onClose }){
-  // Lookup helpers
+function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packageById, groupById, membersByGroup, subscriptions, addSubscription, onClose, onGenerateInvoice }){
   const ltById = lessonTypeById || ((id) => lessonTypes.find(x => x.id === id));
   const pkgById = packageById || ((id) => packages.find(p => p.id === id));
-  function ltName(id){ const lt = typeof ltById === 'function' ? ltById(id) : ltById[id]; return lt?.name || 'Lesson'; }
+  function ltName(id){ const lt = typeof ltById === 'function' ? ltById(id) : ltById?.[id]; return lt?.name || 'Lesson'; }
 
-  // ── Record Payment inline form state ─────────────────────────────────
-  // Only one Record form is open at a time. The `recordingKey` is a stable
-  // identifier — `group:{groupId}` for a bundle row, `ind:{swimmerId}:{ltId}:{pkgId}`
-  // for an individual row. The form lives inline beneath the row; submit
-  // calls addSubscription with the right subject routing then collapses.
-  const [recordingKey, setRecordingKey] = useState(null);
-  const [recForm, setRecForm] = useState({ date: new Date().toISOString().slice(0,10), amount:'', receipt:'', source:'cash', notes:'' });
-  const [recBusy, setRecBusy] = useState(false);
-  function openRecorder(key, defaultAmount){
-    setRecordingKey(key);
-    setRecForm({ date: new Date().toISOString().slice(0,10), amount: String(defaultAmount.toFixed(2)), receipt:'', source:'cash', notes:'' });
-  }
-  function closeRecorder(){ setRecordingKey(null); setRecBusy(false); }
-  // Submit handler — routes to family_group OR student subject depending on
-  // the line item type. Wraps the existing addSubscription contract; no DB
-  // schema changes required. creditsPerSwimmer falls back to 4 for
-  // monthly-billed packages that don't specify a credit count.
-  async function submitRecorder(item){
-    if(!addSubscription){ alert('Payment recording is not available in this view.'); return; }
-    const amountNum = Number(recForm.amount);
-    if(!isFinite(amountNum) || amountNum <= 0){ alert('Enter a valid amount.'); return; }
-    const creditsPerSwimmer = (item.billingMode === 'credit' && item.billingCount) ? Number(item.billingCount) : 4;
-    setRecBusy(true);
-    try{
-      const payload = {
-        subjectType: item.key.startsWith('group:') ? 'family_group' : 'student',
-        subjectId: item.key.startsWith('group:') ? item.groupId : item.swimmerId,
-        lessonTypeId: item.lessonTypeId,
-        packageId: item.packageId,
-        creditsPerSwimmer,
-        quantity: 1,
-        amountPaid: amountNum,
-        subscriptionDate: recForm.date,
-        receiptNumber: recForm.receipt || null,
-        source: recForm.source || 'cash',
-        notes: recForm.notes || null
-      };
-      const result = await addSubscription(payload);
-      if(result) closeRecorder();
-    } catch(err){
-      alert(err?.message || 'Failed to record payment.');
-    } finally {
-      setRecBusy(false);
-    }
-  }
-  // Render the inline recorder strip — appears beneath the line being paid.
-  function renderRecorder(item){
-    return <tr><td colSpan={5} style={{padding:0,borderBottom:'1px solid var(--border-2)'}}>
-      <div className="billing-recorder">
-        <div className="billing-recorder-title">💳 Record payment for: <strong>{item.key.startsWith('group:') ? `${item.groupName} bundle` : `${item.swimmerName} · ${item.pkgName}`}</strong></div>
-        <div className="billing-recorder-grid">
-          <div className="field"><label>Date paid</label><input className="input" type="date" value={recForm.date} onChange={e=>setRecForm({...recForm, date:e.target.value})} /></div>
-          <div className="field"><label>Amount (RM)</label><input className="input" type="number" min="0" step="0.01" value={recForm.amount} onChange={e=>setRecForm({...recForm, amount:e.target.value})} /></div>
-          <div className="field"><label>Receipt #</label><input className="input" value={recForm.receipt} onChange={e=>setRecForm({...recForm, receipt:e.target.value})} placeholder="optional" /></div>
-          <div className="field"><label>Source</label><select className="select" value={recForm.source} onChange={e=>setRecForm({...recForm, source:e.target.value})}>
-            <option value="cash">Cash</option>
-            <option value="bank_transfer">Bank Transfer</option>
-            <option value="duitnow">DuitNow</option>
-            <option value="card">Card</option>
-            <option value="other">Other</option>
-          </select></div>
-        </div>
-        <div className="field" style={{margin:'0 0 8px'}}><label>Notes</label><input className="input" value={recForm.notes} onChange={e=>setRecForm({...recForm, notes:e.target.value})} placeholder="optional" /></div>
-        <div style={{display:'flex',justifyContent:'flex-end',gap:6}}>
-          <button className="btn btn-ghost small" onClick={closeRecorder} disabled={recBusy}>Cancel</button>
-          <button className="btn btn-primary small" onClick={()=>submitRecorder(item)} disabled={recBusy}>{recBusy ? 'Recording…' : '💳 Confirm payment'}</button>
-        </div>
-      </div>
-    </td></tr>;
-  }
+  const [invoiceNotes, setInvoiceNotes] = useState('');
+  const [invoiceDueDate, setInvoiceDueDate] = useState('');
+  const [checked, setChecked] = useState(new Set());    // initialised after items computed
+  const [generating, setGenerating] = useState(false);
 
-  // Compute line items
+  // ── Compute line items ──────────────────────────────────────────────
   const groupItems = [];
   const individualItems = [];
-  const unconfiguredGroups = [];   // groups touching this account that lack a package_id
-  let groupTotal = 0;
-  let individualTotal = 0;
+  const unconfiguredGroups = [];
 
-  // 1. Family group bundles (deduplicated by groupId).
-  // Multi-group: collect every group ID that any swimmer in this account
-  // belongs to (flatten across familyGroupIds arrays).
   const accountGroupIds = [...new Set(pg.swimmers.flatMap(s => s.familyGroupIds || []))];
   accountGroupIds.forEach(gid => {
     const g = groupById?.[gid];
     if(!g) return;
-    const pkg = g.packageId ? (typeof pkgById === 'function' ? pkgById(g.packageId) : pkgById[g.packageId]) : null;
-    if(!pkg){
-      // Group exists but has no package set — flag it so the user can fix it
-      // via "Manage Group → Set package". Without a package the billing
-      // engine has no rate to apply, so the bundle line is omitted and
-      // members' matching enrolments incorrectly fall through to individual
-      // billing. The warning makes the broken state visible instead of
-      // silently miscomputing the total.
-      const members = pg.swimmers.filter(s => (s.familyGroupIds || []).includes(gid));
-      unconfiguredGroups.push({ id: gid, name: g.name, groupType: g.groupType, memberCount: members.length, memberNames: members.map(m => m.name).join(', ') });
-      return;
-    }
-    const members = pg.swimmers.filter(s => (s.familyGroupIds || []).includes(gid));
+    const pkg = g.packageId ? (typeof pkgById === 'function' ? pkgById(g.packageId) : pkgById?.[g.packageId]) : null;
+    if(!pkg){ const mems = pg.swimmers.filter(s=>(s.familyGroupIds||[]).includes(gid)); unconfiguredGroups.push({id:gid,name:g.name,groupType:g.groupType,memberCount:mems.length,memberNames:mems.map(m=>m.name).join(', ')}); return; }
+    const members = pg.swimmers.filter(s=>(s.familyGroupIds||[]).includes(gid));
     const memberCount = members.length;
     const required = pkg.pax != null ? Number(pkg.pax) : null;
     const bundle = pkg.amount != null ? Number(pkg.amount) : 0;
     const fb = pkg.fallback_per_pax != null ? Number(pkg.fallback_per_pax) : null;
-    // Bundle pricing per new rule: any size up to required pays bundle.
-    // Overfill adds per-pax surcharge if fb is set.
     let amount = bundle;
-    let surchargeNote = null;
-    if(required != null && memberCount > required && fb != null){
-      const extras = memberCount - required;
-      amount = bundle + extras * fb;
-      surchargeNote = `+ ${extras} × RM${fb} overfill`;
-    }
+    if(required != null && memberCount > required && fb != null) amount = bundle + (memberCount-required)*fb;
     groupItems.push({
-      key: `group:${gid}`,
-      groupId: gid,
-      groupName: g.name,
-      groupType: g.groupType,
-      lessonTypeId: pkg.lesson_type_id,
-      packageId: pkg.id,
-      ltName: ltName(pkg.lesson_type_id),
-      pkgName: pkg.name,
-      memberCount,
-      required,
-      memberIds: members.map(m => m.id),
-      memberNames: members.map(m => m.name).join(', '),
-      bundle,
-      amount,
-      surchargeNote,
-      billingMode: pkg.billing_mode || 'monthly',
-      billingCount: pkg.billing_count,
-      isUnderfilled: required != null && memberCount < required,
-      isEmpty: memberCount === 0
+      key:`group:${gid}`, groupId:gid, groupName:g.name, groupType:g.groupType,
+      lessonTypeId:pkg.lesson_type_id, packageId:pkg.id,
+      lessonTypeName:ltName(pkg.lesson_type_id), packageName:pkg.name,
+      familyGroupId:gid, familyGroupName:g.name,
+      memberCount, memberIds:members.map(m=>m.id),
+      memberNames:members.map(m=>m.name).join(', '),
+      studentIds:members.map(m=>m.id).join(','),
+      studentNames:members.map(m=>m.name).join(', '),
+      bundle, amount, lineType:'group_bundle',
+      billingMode:pkg.billing_mode||'monthly', billingCount:pkg.billing_count,
+      creditsPerSwimmer:pkg.billing_count||4,
+      description:`${g.groupType==='bound'?'🔗':'👪'} ${g.name} — ${ltName(pkg.lesson_type_id)} · ${pkg.name}`,
     });
-    groupTotal += amount;
   });
-
-  // 2. Individual lessons NOT covered by ANY of the swimmer's family groups.
-  // Multi-group: a swimmer might be in several groups (e.g. LTS+Fam3 AND
-  // Personal Class 2+Duo). Each group covers a distinct package. We build
-  // the set of "covered package IDs" by walking ALL their groups, then
-  // skip any enrolment whose packageId is in that set.
   pg.swimmers.forEach(sw => {
-    const enrolledIn = sw.enrollments || [];
     const coveredPkgIds = new Set();
-    (sw.familyGroupIds || []).forEach(gid => {
-      const grp = groupById?.[gid];
-      if(grp?.packageId) coveredPkgIds.add(grp.packageId);
-    });
-    enrolledIn.forEach(e => {
-      if(!e.lessonTypeId || !e.packageId) return;
-      // Skip enrolments covered by ANY group bundle the swimmer is in
-      if(coveredPkgIds.has(e.packageId)) return;
-      const pkg = typeof pkgById === 'function' ? pkgById(e.packageId) : pkgById[e.packageId];
+    (sw.familyGroupIds||[]).forEach(gid=>{ const grp=groupById?.[gid]; if(grp?.packageId) coveredPkgIds.add(grp.packageId); });
+    (sw.enrollments||[]).forEach(e => {
+      if(!e.lessonTypeId || !e.packageId || coveredPkgIds.has(e.packageId)) return;
+      const pkg = typeof pkgById === 'function' ? pkgById(e.packageId) : pkgById?.[e.packageId];
       if(!pkg) return;
-      const amount = pkg.amount != null ? Number(pkg.amount) : 0;
       individualItems.push({
-        key: `ind:${sw.id}:${e.lessonTypeId}:${e.packageId}`,
-        swimmerId: sw.id,
-        swimmerName: sw.name,
-        lessonTypeId: e.lessonTypeId,
-        packageId: e.packageId,
-        ltName: ltName(e.lessonTypeId),
-        pkgName: pkg.name,
-        billingMode: pkg.billing_mode || 'monthly',
-        billingCount: pkg.billing_count,
-        amount
+        key:`ind:${sw.id}:${e.lessonTypeId}:${e.packageId}`,
+        swimmerId:sw.id, swimmerName:sw.name,
+        lessonTypeId:e.lessonTypeId, packageId:e.packageId,
+        lessonTypeName:ltName(e.lessonTypeId), packageName:pkg.name,
+        studentIds:sw.id, studentNames:sw.name,
+        amount:pkg.amount != null ? Number(pkg.amount) : 0,
+        lineType:'individual', billingMode:pkg.billing_mode||'monthly',
+        billingCount:pkg.billing_count, creditsPerSwimmer:pkg.billing_count||4,
+        description:`${sw.name} — ${ltName(e.lessonTypeId)} · ${pkg.name}`,
       });
-      individualTotal += amount;
     });
   });
 
-  const grandTotal = groupTotal + individualTotal;
-  const hasAny = groupItems.length > 0 || individualItems.length > 0;
+  const allItems = [...groupItems, ...individualItems];
+  const allKeys = allItems.map(it=>it.key);
+
+  // Initialise checked set when items first load
+  React.useEffect(() => { setChecked(new Set(allKeys)); }, [allItems.length]);
+  function toggleCheck(key){ setChecked(s=>{ const n=new Set(s); if(n.has(key)) n.delete(key); else n.add(key); return n; }); }
+  function toggleAll(){ const c=allKeys.every(k=>checked.has(k)); setChecked(c?new Set():new Set(allKeys)); }
+
+  const checkedItems = allItems.filter(it=>checked.has(it.key));
+  const checkedTotal = checkedItems.reduce((s,it)=>s+it.amount,0);
+  const hasAny = allItems.length > 0;
+  const allChecked = allKeys.length > 0 && allKeys.every(k=>checked.has(k));
+
+  async function handleGenerate(){
+    if(checkedItems.length === 0){ alert('Select at least one line to include on the invoice.'); return; }
+    setGenerating(true);
+    try{ await onGenerateInvoice(checkedItems.map(it=>({...it})), { notes:invoiceNotes, dueDate:invoiceDueDate }); }
+    catch(e){ alert(e?.message||'Failed to generate invoice'); }
+    finally{ setGenerating(false); }
+  }
 
   return <div className="parent-billing-panel">
     <div className="parent-sub-log-title" style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
-      <span>🧾 Billing Preview — what this account would be billed</span>
+      <span>🧾 Invoice Preview — {pg.name}</span>
       <button className="btn btn-ghost small" onClick={onClose}>Close</button>
     </div>
     <div className="small subtle" style={{marginBottom:10}}>
-      Forward-looking calculation based on current enrolments + family group memberships.
-      Family group bundles are charged <strong>once per group</strong> regardless of how many swimmers are in it (underfill allowed).
-      Individual lessons not bound to a family group are charged per swimmer per package.
+      Tick the items to include on this invoice. Untick anything not being billed this cycle. Click <strong>Generate Invoice</strong> to create a draft invoice in Admin → Invoices.
     </div>
 
-    {!hasAny && unconfiguredGroups.length === 0 && <div className="empty" style={{padding:20,textAlign:'center',color:'var(--text-3)'}}>
-      No billable items — no swimmers have package enrolments yet.
-    </div>}
+    {!hasAny && unconfiguredGroups.length===0 && <div className="empty" style={{padding:20}}>No billable items — no swimmers have package enrolments yet.</div>}
 
-    {/* Warning: family groups without a package set — common for legacy
-        data. Without a package_id the billing engine can't apply a bundle
-        rate, so member enrolments incorrectly fall through to individual
-        billing. The fix is one click away in Manage Group → Set package. */}
     {unconfiguredGroups.length > 0 && <div className="billing-warning-box">
-      <div className="billing-warning-title">⚠ {unconfiguredGroups.length} family group{unconfiguredGroups.length===1?'':'s'} need{unconfiguredGroups.length===1?'s':''} a package assigned</div>
-      <div className="billing-warning-body">
-        Until a package is set on these groups, their members are billed individually below — which inflates the total. Open <strong>🔗 Manage Group</strong> in the toolbar above and click <strong>+ Set package</strong> on each:
-        <ul style={{margin:'6px 0 0',paddingLeft:18}}>
-          {unconfiguredGroups.map(ug => <li key={ug.id} style={{fontSize:11.5,marginTop:3}}>
-            <strong>{ug.groupType==='bound'?'🔗':'👪'} {ug.name}</strong>
-            <span className="subtle"> · {ug.memberCount} member{ug.memberCount===1?'':'s'}: {ug.memberNames}</span>
-          </li>)}
-        </ul>
-      </div>
+      <div className="billing-warning-title">⚠ {unconfiguredGroups.length} group{unconfiguredGroups.length===1?'':'s'} missing a package</div>
+      <div className="billing-warning-body">Open <strong>Manage Group</strong> and set a package on: {unconfiguredGroups.map(u=><strong key={u.id}> {u.name}</strong>)}.</div>
     </div>}
 
-    {/* Group bundles */}
-    {groupItems.length > 0 && <div className="billing-section">
-      <div className="billing-section-head">
-        <span className="billing-section-title">Family Group Bundles</span>
-        <span className="billing-section-sum">RM{groupTotal.toFixed(2)}</span>
-      </div>
+    {hasAny && <>
       <table className="billing-table">
         <thead>
           <tr>
-            <th>Group</th>
-            <th>Lesson · Package</th>
-            <th>Members</th>
-            <th className="num">Bundle</th>
-            <th className="num">Charge</th>
-            <th style={{width:1}}></th>
+            <th style={{width:32}}>
+              <input type="checkbox" checked={allChecked} onChange={toggleAll} title="Select all" />
+            </th>
+            <th>Description</th>
+            <th>Type</th>
+            <th className="num">Amount</th>
           </tr>
         </thead>
         <tbody>
-          {groupItems.map((it, i) => <React.Fragment key={i}>
-            <tr>
-              <td><strong>{it.groupType==='bound'?'🔗':'👪'} {it.groupName}</strong></td>
-              <td>{it.ltName} · {it.pkgName}</td>
-              <td>
-                <span style={{fontWeight:700}}>{it.memberCount}{it.required != null ? `/${it.required}` : ''}</span>
-                {it.memberNames ? <div className="small subtle" style={{marginTop:2}}>{it.memberNames}</div> : null}
-                {it.isEmpty ? <div className="billing-warn">⚠ No members — bundle still owed</div> : null}
-                {it.isUnderfilled && !it.isEmpty ? <div className="billing-info">Underfill OK — bundle covers any size</div> : null}
-              </td>
-              <td className="num">RM{it.bundle.toFixed(2)}</td>
-              <td className="num">
-                <strong>RM{it.amount.toFixed(2)}</strong>
-                {it.surchargeNote ? <div className="small subtle" style={{marginTop:2}}>{it.surchargeNote}</div> : null}
-              </td>
-              <td>
-                {addSubscription ? <button className="btn btn-primary small" onClick={()=>recordingKey===it.key ? closeRecorder() : openRecorder(it.key, it.amount)}>{recordingKey===it.key ? 'Close' : '💳 Record'}</button> : null}
-              </td>
-            </tr>
-            {recordingKey === it.key ? renderRecorder(it) : null}
-          </React.Fragment>)}
+          {groupItems.map(it => <tr key={it.key} className={checked.has(it.key)?'':'billing-row-muted'}>
+            <td><input type="checkbox" checked={checked.has(it.key)} onChange={()=>toggleCheck(it.key)} /></td>
+            <td>
+              <div style={{fontWeight:700}}>{it.groupType==='bound'?'🔗':'👪'} {it.groupName}</div>
+              <div className="small subtle">{it.lessonTypeName} · {it.packageName}</div>
+              <div className="small subtle">{it.memberNames}</div>
+            </td>
+            <td><span className="billing-type-chip group">Group Bundle</span></td>
+            <td className="num"><strong>RM{it.amount.toFixed(2)}</strong></td>
+          </tr>)}
+          {individualItems.map(it => <tr key={it.key} className={checked.has(it.key)?'':'billing-row-muted'}>
+            <td><input type="checkbox" checked={checked.has(it.key)} onChange={()=>toggleCheck(it.key)} /></td>
+            <td>
+              <div style={{fontWeight:700}}>{it.swimmerName}</div>
+              <div className="small subtle">{it.lessonTypeName} · {it.packageName}</div>
+            </td>
+            <td><span className="billing-type-chip individual">Individual</span></td>
+            <td className="num"><strong>RM{it.amount.toFixed(2)}</strong></td>
+          </tr>)}
         </tbody>
       </table>
-    </div>}
 
-    {/* Individual lessons */}
-    {individualItems.length > 0 && <div className="billing-section">
-      <div className="billing-section-head">
-        <span className="billing-section-title">Individual Lessons (not in a family group)</span>
-        <span className="billing-section-sum">RM{individualTotal.toFixed(2)}</span>
+      <div className="billing-total-row">
+        <span className="billing-total-label">{checkedItems.length} item{checkedItems.length===1?'':'s'} selected</span>
+        <span className="billing-total-value">RM{checkedTotal.toFixed(2)}</span>
       </div>
-      <table className="billing-table">
-        <thead>
-          <tr>
-            <th>Swimmer</th>
-            <th>Lesson · Package</th>
-            <th>Billing</th>
-            <th className="num">Charge</th>
-            <th style={{width:1}}></th>
-          </tr>
-        </thead>
-        <tbody>
-          {individualItems.map((it, i) => <React.Fragment key={i}>
-            <tr>
-              <td>{it.swimmerName}</td>
-              <td>{it.ltName} · {it.pkgName}</td>
-              <td className="small subtle">{it.billingMode === 'credit' && it.billingCount ? `${it.billingCount} credits` : it.billingMode || 'monthly'}</td>
-              <td className="num"><strong>RM{it.amount.toFixed(2)}</strong></td>
-              <td>
-                {addSubscription ? <button className="btn btn-primary small" onClick={()=>recordingKey===it.key ? closeRecorder() : openRecorder(it.key, it.amount)}>{recordingKey===it.key ? 'Close' : '💳 Record'}</button> : null}
-              </td>
-            </tr>
-            {recordingKey === it.key ? renderRecorder(it) : null}
-          </React.Fragment>)}
-        </tbody>
-      </table>
-    </div>}
 
-    {/* Grand total */}
-    {hasAny && <div className="billing-total-row">
-      <span className="billing-total-label">Account Total</span>
-      <span className="billing-total-value">RM{grandTotal.toFixed(2)}</span>
-    </div>}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 180px',gap:10,marginTop:12}}>
+        <div className="field"><label>Invoice Notes (optional)</label>
+          <input className="input" value={invoiceNotes} onChange={e=>setInvoiceNotes(e.target.value)} placeholder="e.g. June 2026 monthly fee" /></div>
+        <div className="field"><label>Due Date (optional)</label>
+          <input className="input" type="date" value={invoiceDueDate} onChange={e=>setInvoiceDueDate(e.target.value)} /></div>
+      </div>
 
-    <div className="hint" style={{marginTop:10}}>
-      This is a preview only — no invoice is generated yet. Actual invoicing will happen via the Invoice module (in development).
-      If a swimmer is in a family group, the price in that group's package replaces their individual price for that lesson type.
-    </div>
+      <div style={{display:'flex',justifyContent:'flex-end',marginTop:12}}>
+        <button className="btn btn-primary" onClick={handleGenerate} disabled={generating||checkedItems.length===0}>
+          {generating ? 'Generating…' : `🧾 Generate Invoice — RM${checkedTotal.toFixed(2)}`}
+        </button>
+      </div>
+    </>}
   </div>;
 }
 
@@ -5884,7 +5967,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:12}}>
         <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
           <div style={{fontSize:16,fontWeight:800}}>Swimmer Directory <span className="subtle" style={{fontWeight:600,fontSize:13}}>· {students.length}</span></div>
-          <div className="sort-tabs">{[['name','Name'],['type','Lesson Type'],['package','Package']].map(([k,lbl])=><button key={k} className={`sort-tab ${sortBy===k?'active':''}`} onClick={()=>setSortBy(k)}>{lbl}</button>)}</div>
+          <div className="sort-tabs">{[['name','Name'],['type','Lesson Type'],['package','Package']].map(([k,lbl])=><button key={k} className={`sort-tab ${sortBy===k?'active':''}`} onClick={()=>setSortBy(k)} data-key={k}>{lbl}</button>)}</div>
           <span className="subtle small" style={{marginLeft:6}}>Read-only · edit details in 👤 Accounts</span>
         </div>
         <input className="input" style={{maxWidth:220}} placeholder="Search swimmers…" value={q} onChange={e=>setQ(e.target.value)} />
@@ -6824,6 +6907,605 @@ class ErrorBoundary extends React.Component {
     }
     return this.props.children;
   }
+}
+
+// ============================================================================
+// Invoicing helpers
+// ============================================================================
+function invoiceStatusLabel(s){ return({draft:'Draft',sent:'Sent',partial:'Part Paid',paid:'Paid',void:'Void'})[s]||s; }
+function invoiceStatusColor(s){ return({draft:'#94A3B8',sent:'#3B82F6',partial:'#F59E0B',paid:'#10B981',void:'#EF4444'})[s]||'#94A3B8'; }
+function methodLabel(m){ return({cash:'Cash',bank_transfer:'Bank Transfer',duitnow:'DuitNow',card:'Card',cheque:'Cheque',other:'Other'})[m]||m; }
+
+function printInvoice(invoice, lines){
+  const billable=lines.filter(l=>l.is_billable);
+  const outstanding=Math.max(0,Number(invoice.total_amount)-Number(invoice.amount_paid));
+  const linesHtml=billable.map(l=>`<tr>
+    <td style="padding:7px 10px;border-bottom:1px solid #eee;font-size:11pt">${l.description||''}</td>
+    <td style="padding:7px 10px;border-bottom:1px solid #eee;font-size:10pt;color:#555">${l.line_type==='group_bundle'?'Group Bundle':'Individual'}</td>
+    <td style="padding:7px 10px;border-bottom:1px solid #eee;text-align:right;font-size:11pt;font-weight:600">RM${Number(l.amount).toFixed(2)}</td>
+  </tr>`).join('');
+  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invoice ${invoice.invoice_number}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Inter,system-ui,-apple-system,sans-serif;color:#111;padding:0;background:#fff}
+.page{max-width:740px;margin:0 auto;padding:32px 36px}
+@page{size:A4 portrait;margin:18mm 16mm}
+@media print{.page{padding:0}}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2.5px solid #111}
+.brand{font-size:18pt;font-weight:800;letter-spacing:-.3px}
+.brand-sub{font-size:10pt;color:#555;margin-top:3px}
+.inv-title{font-size:22pt;font-weight:800;color:#111}
+.inv-meta{font-size:10pt;color:#555;margin-top:4px;line-height:1.6}
+.status-pill{display:inline-block;padding:3px 10px;border-radius:4px;font-size:10pt;font-weight:700}
+.status-draft{background:#F1F5F9;color:#475569}
+.status-sent{background:#DBEAFE;color:#1D4ED8}
+.status-partial{background:#FEF3C7;color:#92400E}
+.status-paid{background:#D1FAE5;color:#065F46}
+.status-void{background:#FEE2E2;color:#7F1D1D}
+.bill-to{background:#F8FAFC;border-radius:8px;padding:12px 16px;margin-bottom:20px}
+.bill-to-label{font-size:9pt;text-transform:uppercase;letter-spacing:.6px;color:#888;font-weight:700;margin-bottom:4px}
+.bill-to-name{font-size:13pt;font-weight:800}
+.bill-to-contact{font-size:10pt;color:#555;margin-top:2px}
+table{width:100%;border-collapse:collapse;margin-bottom:16px}
+thead th{background:#111;color:#fff;padding:8px 10px;font-size:10pt;text-align:left;font-weight:700}
+thead th:last-child{text-align:right}
+.total-section{border-top:2px solid #111;padding-top:10px}
+.total-row{display:flex;justify-content:space-between;padding:4px 0;font-size:11pt}
+.total-row.grand{font-size:14pt;font-weight:800;padding-top:8px;border-top:1px solid #ccc;margin-top:4px}
+.total-row.paid{color:#10B981}
+.total-row.outstanding{color:#F59E0B;font-weight:800}
+.settled{color:#10B981;font-weight:800}
+.notes-box{margin-top:16px;padding:10px 14px;background:#F8FAFC;border-radius:6px;font-size:10pt;color:#555}
+.footer{margin-top:28px;padding-top:10px;border-top:1px solid #ddd;font-size:9pt;color:#999;text-align:center;line-height:1.5}
+</style>
+<script>window.onload=function(){setTimeout(function(){window.print()},400)}<\/script>
+</head><body><div class="page">
+<div class="hdr">
+  <div>
+    <div class="brand">Star Swim Sdn Bhd</div>
+    <div class="brand-sub">Professional Swimming Instruction</div>
+  </div>
+  <div style="text-align:right">
+    <div class="inv-title">${invoice.invoice_number}</div>
+    <div class="inv-meta">
+      Issued: ${invoice.issue_date||''}${invoice.due_date?`<br>Due: ${invoice.due_date}`:''}<br>
+      <span class="status-pill status-${invoice.status}">${invoiceStatusLabel(invoice.status)}</span>
+    </div>
+  </div>
+</div>
+<div class="bill-to">
+  <div class="bill-to-label">Bill To</div>
+  <div class="bill-to-name">${invoice.account_name}</div>
+  ${invoice.account_email||invoice.account_phone?`<div class="bill-to-contact">${[invoice.account_email,invoice.account_phone].filter(Boolean).join(' · ')}</div>`:''}
+</div>
+${invoice.notes?`<div class="notes-box">📝 ${invoice.notes}</div>`:''}
+<table style="margin-top:${invoice.notes?'14px':'4px'}">
+  <thead><tr>
+    <th style="width:60%">Description</th>
+    <th style="width:20%">Type</th>
+    <th style="width:20%;text-align:right">Amount</th>
+  </tr></thead>
+  <tbody>${linesHtml}</tbody>
+</table>
+<div class="total-section" style="max-width:260px;margin-left:auto">
+  <div class="total-row"><span>Subtotal</span><span>RM${Number(invoice.total_amount).toFixed(2)}</span></div>
+  ${Number(invoice.amount_paid)>0?`<div class="total-row paid"><span>Paid</span><span>- RM${Number(invoice.amount_paid).toFixed(2)}</span></div>`:''}
+  <div class="total-row grand ${outstanding<=0?'settled':'outstanding'}">
+    <span>${outstanding<=0?'Settled ✓':'Outstanding'}</span>
+    <span>${outstanding<=0?'RM 0.00':'RM'+outstanding.toFixed(2)}</span>
+  </div>
+</div>
+<div class="footer">Thank you for choosing Star Swim Sdn Bhd · Please retain this invoice for your records<br>Generated ${new Date().toLocaleDateString(undefined,{dateStyle:'long'})}</div>
+</div></body></html>`;
+  const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
+}
+
+function printReceipt(pmt, invoice){
+  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Receipt ${pmt.receipt_number}</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Inter,system-ui,sans-serif;color:#111;padding:28px;max-width:480px;margin:0 auto}
+@page{size:A5;margin:12mm}@media print{body{padding:0}}
+.rct-box{border:1.5px solid #111;border-radius:8px;padding:20px 22px}
+h1{font-size:15pt;font-weight:800;margin-bottom:4px}.sub{font-size:10pt;color:#555;margin-bottom:14px}
+.row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #eee;font-size:11pt}
+.row:last-child{border-bottom:none}.amount-row{font-size:14pt;font-weight:800;margin-top:10px;padding-top:10px;border-top:2px solid #111}
+.footer{margin-top:16px;font-size:9pt;color:#888;text-align:center}</style>
+<script>window.onload=function(){setTimeout(function(){window.print()},400)}<\/script>
+</head><body><div class="rct-box">
+<h1>Receipt</h1><div class="sub">Star Swim Sdn Bhd</div>
+<div class="row"><span>Receipt #</span><span>${pmt.receipt_number}</span></div>
+<div class="row"><span>Invoice</span><span>${invoice.invoice_number}</span></div>
+<div class="row"><span>Account</span><span>${invoice.account_name}</span></div>
+<div class="row"><span>Date</span><span>${pmt.payment_date||''}</span></div>
+<div class="row"><span>Method</span><span>${methodLabel(pmt.payment_method)}</span></div>
+${pmt.reference_number?`<div class="row"><span>Reference</span><span>${pmt.reference_number}</span></div>`:''}
+${pmt.notes?`<div class="row"><span>Notes</span><span>${pmt.notes}</span></div>`:''}
+<div class="row amount-row"><span>Amount Paid</span><span>RM${Number(pmt.amount).toFixed(2)}</span></div>
+</div><div class="footer">Thank you · Generated ${new Date().toLocaleDateString(undefined,{dateStyle:'long'})}</div>
+</body></html>`;
+  const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
+}
+
+// ============================================================================
+// InvoicesView — Phase 2: bulk select, overdue badges, batch actions
+// ============================================================================
+function InvoicesView({ invoices, invoiceLines, pmts, pendingCredits, lessonTypeById, packageById, studentById, onVoid, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
+  const [statusFilter,setStatusFilter]=useState('all');
+  const [searchQ,setSearchQ]=useState('');
+  const [expandedId,setExpandedId]=useState(null);
+  const [selectedIds,setSelectedIds]=useState(new Set());
+  const today=todayStr();
+
+  function isOverdue(inv){ return inv.due_date && inv.due_date < today && inv.status !== 'paid' && inv.status !== 'void'; }
+
+  const counts=useMemo(()=>{
+    const c={all:invoices.length,draft:0,sent:0,partial:0,paid:0,void:0,overdue:0};
+    invoices.forEach(i=>{ if(c[i.status]!=null)c[i.status]++; if(isOverdue(i))c.overdue++; });
+    return c;
+  },[invoices,today]);
+
+  const outstanding=useMemo(()=>invoices.filter(i=>i.status!=='void'&&i.status!=='paid').reduce((s,i)=>s+Math.max(0,Number(i.total_amount)-Number(i.amount_paid)),0),[invoices]);
+  const collectedMonth=useMemo(()=>{const ym=new Date().toISOString().slice(0,7);return pmts.filter(p=>(p.payment_date||'').startsWith(ym)).reduce((s,p)=>s+Number(p.amount),0);},[pmts]);
+
+  const filtered=invoices.filter(i=>{
+    if(statusFilter==='overdue') return isOverdue(i);
+    if(statusFilter!=='all'&&i.status!==statusFilter)return false;
+    if(searchQ){const q=searchQ.toLowerCase();if(!i.invoice_number.toLowerCase().includes(q)&&!i.account_name.toLowerCase().includes(q))return false;}
+    return true;
+  });
+
+  // Bulk actions
+  function toggleSelect(id){ setSelectedIds(s=>{const n=new Set(s);n.has(id)?n.delete(id):n.add(id);return n;}); }
+  function toggleAll(){ setSelectedIds(selectedIds.size===filtered.length?new Set():new Set(filtered.map(i=>i.id))); }
+  async function bulkMarkSent(){
+    const targets=filtered.filter(i=>selectedIds.has(i.id)&&i.status==='draft');
+    for(const inv of targets) await onUpdateStatus(inv.id,'sent');
+    setSelectedIds(new Set());
+  }
+  function bulkPrint(){
+    const targets=filtered.filter(i=>selectedIds.has(i.id));
+    targets.forEach(inv=>{ const lines=invoiceLines.filter(l=>l.invoice_id===inv.id); printInvoice(inv,lines); });
+  }
+
+  const selCount=selectedIds.size;
+  const selDraft=filtered.filter(i=>selectedIds.has(i.id)&&i.status==='draft').length;
+
+  return <>
+    <div className="card" style={{marginBottom:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap',marginBottom:10}}>
+        <div><div style={{fontSize:18,fontWeight:800}}>🧾 Invoices</div><div className="small subtle">Generated invoices. Click a row to expand — edit lines, record payment, print.</div></div>
+        <div style={{display:'flex',gap:18,alignItems:'flex-end',flexWrap:'wrap'}}>
+          {counts.overdue>0&&<div><div className="small subtle">Overdue</div><div style={{fontSize:20,fontWeight:800,color:'#EF4444'}}>{counts.overdue}</div></div>}
+          <div><div className="small subtle">Outstanding</div><div style={{fontSize:20,fontWeight:800,color:'#F59E0B'}}>RM{outstanding.toFixed(2)}</div></div>
+          <div><div className="small subtle">Collected this month</div><div style={{fontSize:20,fontWeight:800,color:'#10B981'}}>RM{collectedMonth.toFixed(2)}</div></div>
+        </div>
+      </div>
+      <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',marginBottom:selCount>0?8:0}}>
+        <input className="input" style={{flex:1,minWidth:200,maxWidth:300}} placeholder="Search invoice # or account…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
+        <div style={{display:'flex',gap:3,flexWrap:'wrap'}}>
+          {['all','draft','sent','partial','paid','void','overdue'].map(s=><button key={s} className={`tab ${statusFilter===s?'active':''}`} style={{padding:'5px 10px',fontSize:11,borderRadius:7,background:s==='overdue'&&statusFilter!==s?'#2a0a0a':''}} onClick={()=>setStatusFilter(s)}>
+            {s==='all'?`All (${counts.all})`:s==='overdue'?`⚠ Overdue (${counts.overdue})`:invoiceStatusLabel(s)+` (${counts[s]||0})`}
+          </button>)}
+        </div>
+      </div>
+      {selCount>0&&<div className="inv-bulk-bar">
+        <span style={{fontWeight:700}}>{selCount} selected</span>
+        {selDraft>0&&<button className="btn btn-primary small" onClick={bulkMarkSent}>Mark {selDraft} Sent</button>}
+        <button className="btn btn-ghost small" onClick={bulkPrint}>🖨 Print {selCount}</button>
+        <button className="btn btn-ghost small" onClick={()=>setSelectedIds(new Set())}>Clear</button>
+      </div>}
+    </div>
+
+    {filtered.length===0&&<div className="card empty" style={{padding:28}}>No invoices match this filter.</div>}
+
+    {/* Column header */}
+    {filtered.length>0&&<div className="inv-col-head">
+      <div style={{width:36}}><input type="checkbox" checked={selCount===filtered.length&&filtered.length>0} onChange={toggleAll} /></div>
+      <div style={{width:140,fontWeight:700}}>Invoice #</div>
+      <div style={{flex:1,fontWeight:700}}>Account</div>
+      <div style={{width:90,textAlign:'right',fontWeight:700}}>Total</div>
+      <div style={{width:90,textAlign:'right',fontWeight:700}}>Paid</div>
+      <div style={{width:100,textAlign:'right',fontWeight:700}}>Outstanding</div>
+      <div style={{width:120,fontWeight:700}}>Status</div>
+    </div>}
+
+    <div style={{display:'flex',flexDirection:'column',gap:4}}>
+      {filtered.map(inv=>{
+        const invLines=invoiceLines.filter(l=>l.invoice_id===inv.id);
+        const invPmts=pmts.filter(p=>p.invoice_id===inv.id);
+        const invPcs=pendingCredits.filter(pc=>pc.invoice_id===inv.id);
+        const owed=Math.max(0,Number(inv.total_amount)-Number(inv.amount_paid));
+        const overdue=isOverdue(inv);
+        const isExpanded=expandedId===inv.id;
+        const isSelected=selectedIds.has(inv.id);
+        return <div key={inv.id} className={`inv-card${isExpanded?' is-expanded':''}${overdue?' is-overdue':''}`}>
+          <div className="inv-row" onClick={(e)=>{ if(e.target.type==='checkbox')return; setExpandedId(isExpanded?null:inv.id); }}>
+            <div style={{width:36,flexShrink:0}} onClick={e=>e.stopPropagation()}>
+              <input type="checkbox" checked={isSelected} onChange={()=>toggleSelect(inv.id)} />
+            </div>
+            <div style={{width:140,flexShrink:0}}>
+              <div style={{fontWeight:800,fontFamily:'monospace',fontSize:12}}>{inv.invoice_number}</div>
+              <div className="small subtle">{inv.issue_date}</div>
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:700}}>{inv.account_name}</div>
+              {overdue&&<div style={{fontSize:10,color:'#EF4444',fontWeight:800}}>⚠ OVERDUE{inv.due_date?` since ${inv.due_date}`:''}</div>}
+              {!overdue&&inv.due_date&&inv.status!=='paid'&&<div className="small subtle">Due {inv.due_date}</div>}
+            </div>
+            <div style={{width:90,textAlign:'right',flexShrink:0}}>RM{Number(inv.total_amount).toFixed(2)}</div>
+            <div style={{width:90,textAlign:'right',color:'#10B981',fontWeight:700,flexShrink:0}}>RM{Number(inv.amount_paid).toFixed(2)}</div>
+            <div style={{width:100,textAlign:'right',fontWeight:800,color:owed>0?overdue?'#EF4444':'#F59E0B':'#10B981',flexShrink:0}}>{owed>0?`RM${owed.toFixed(2)}`:'✓'}</div>
+            <div style={{width:120,flexShrink:0,display:'flex',alignItems:'center',gap:5}}>
+              <span className="inv-status-chip" style={{background:invoiceStatusColor(inv.status)+'22',color:invoiceStatusColor(inv.status),borderColor:invoiceStatusColor(inv.status)+'55'}}>{invoiceStatusLabel(inv.status)}</span>
+              <span style={{fontSize:10,color:'var(--text-3)'}}>{isExpanded?'▲':'▼'}</span>
+            </div>
+          </div>
+          {isExpanded&&<InvoiceDetailPanel
+            invoice={inv} lines={invLines} pmts={invPmts} pendingCredits={invPcs}
+            isOverdue={overdue}
+            onVoid={()=>onVoid(inv.id)}
+            onUpdateStatus={(s)=>onUpdateStatus(inv.id,s)}
+            onRecordPayment={(data)=>onRecordPayment({invoiceId:inv.id,...data})}
+            onConfirmCredit={onConfirmCredit}
+            onReverseCredit={onReverseCredit}
+            onAddLine={(data)=>onAddLine(inv.id,data)}
+            onUpdateLine={onUpdateLine}
+            onDeleteLine={onDeleteLine}
+          />}
+        </div>;
+      })}
+    </div>
+  </>;
+}
+
+// ============================================================================
+// InvoiceDetailPanel — Phase 2: inline line editing + add custom line
+// ============================================================================
+function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, onVoid, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
+  const [showPayForm,setShowPayForm]=useState(false);
+  const [lastReceipt,setLastReceipt]=useState(null);
+  const [editingLineId,setEditingLineId]=useState(null);
+  const [lineEdits,setLineEdits]=useState({});
+  const [showAddLine,setShowAddLine]=useState(false);
+  const [newLine,setNewLine]=useState({description:'',amount:'',lineType:'other'});
+  const outstanding=Math.max(0,Number(invoice.total_amount)-Number(invoice.amount_paid));
+
+  function startEdit(line){ setEditingLineId(line.id); setLineEdits({description:line.description,amount:String(line.amount)}); }
+  function cancelEdit(){ setEditingLineId(null); }
+  async function saveEdit(line){
+    await onUpdateLine(line.id,{description:lineEdits.description,amount:Number(lineEdits.amount)||0});
+    setEditingLineId(null);
+  }
+  async function handleAddLine(){
+    if(!newLine.description.trim()){ alert('Enter a description.'); return; }
+    if(!Number(newLine.amount)){ alert('Enter a valid amount.'); return; }
+    await onAddLine(newLine);
+    setNewLine({description:'',amount:'',lineType:'other'}); setShowAddLine(false);
+  }
+
+  return <div className="inv-detail">
+    {isOverdue&&<div className="inv-overdue-banner">⚠ This invoice is overdue — due date {invoice.due_date} has passed. Outstanding: RM{outstanding.toFixed(2)}</div>}
+
+    {/* Metadata */}
+    <div className="inv-detail-meta">
+      <div><span className="small subtle">Invoice #</span><div style={{fontWeight:800}}>{invoice.invoice_number}</div></div>
+      <div><span className="small subtle">Account</span><div>{invoice.account_name}</div></div>
+      <div><span className="small subtle">Issued</span><div>{invoice.issue_date}</div></div>
+      {invoice.due_date&&<div><span className="small subtle">Due</span><div style={{color:isOverdue?'#EF4444':'inherit',fontWeight:isOverdue?700:400}}>{invoice.due_date}</div></div>}
+      <div><span className="small subtle">Total</span><div style={{fontWeight:800}}>RM{Number(invoice.total_amount).toFixed(2)}</div></div>
+      <div><span className="small subtle">Paid</span><div style={{color:'#10B981',fontWeight:700}}>RM{Number(invoice.amount_paid).toFixed(2)}</div></div>
+      <div><span className="small subtle">Outstanding</span><div style={{fontWeight:800,color:outstanding>0?isOverdue?'#EF4444':'#F59E0B':'#10B981'}}>{outstanding>0?`RM${outstanding.toFixed(2)}`:'✓ Settled'}</div></div>
+    </div>
+    {invoice.notes&&<div className="small subtle" style={{margin:'0 0 12px',padding:'6px 10px',background:'var(--surface-2)',borderRadius:6}}>{invoice.notes}</div>}
+
+    {/* Line Items — editable */}
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+      <div style={{fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'.5px',color:'var(--text-3)'}}>Line Items ({lines.length})</div>
+      <button className="btn btn-ghost small" style={{fontSize:10}} onClick={()=>setShowAddLine(v=>!v)}>{showAddLine?'Cancel':'+ Add Line'}</button>
+    </div>
+
+    <table className="billing-table" style={{marginBottom:8}}>
+      <thead><tr><th style={{width:'50%'}}>Description</th><th>Type</th><th className="num">Amount</th><th style={{width:64}}></th></tr></thead>
+      <tbody>
+        {lines.map(l=><React.Fragment key={l.id}>
+          <tr style={{opacity:l.is_billable?1:.4}}>
+            {editingLineId===l.id ? <>
+              <td><input className="input" style={{fontSize:12,padding:'4px 7px'}} value={lineEdits.description} onChange={e=>setLineEdits(x=>({...x,description:e.target.value}))} /></td>
+              <td><span className={`billing-type-chip ${l.line_type==='group_bundle'?'group':'individual'}`}>{l.line_type==='group_bundle'?'Group Bundle':l.line_type==='individual'?'Individual':'Other'}</span></td>
+              <td className="num"><input className="input" type="number" style={{width:90,fontSize:12,padding:'4px 7px',textAlign:'right'}} value={lineEdits.amount} onChange={e=>setLineEdits(x=>({...x,amount:e.target.value}))} /></td>
+              <td style={{whiteSpace:'nowrap'}}>
+                <button className="btn btn-primary small" style={{fontSize:10,padding:'3px 7px'}} onClick={()=>saveEdit(l)}>✓</button>
+                <button className="btn btn-ghost small" style={{fontSize:10,padding:'3px 7px',marginLeft:3}} onClick={cancelEdit}>✗</button>
+              </td>
+            </> : <>
+              <td><div>{l.description}</div>{l.student_names&&<div className="small subtle">{l.student_names}</div>}</td>
+              <td><span className={`billing-type-chip ${l.line_type==='group_bundle'?'group':l.line_type==='individual'?'individual':'other'}`}>{l.line_type==='group_bundle'?'Group Bundle':l.line_type==='individual'?'Individual':'Other'}</span></td>
+              <td className="num">RM{Number(l.amount).toFixed(2)}</td>
+              <td style={{whiteSpace:'nowrap'}}>
+                <button className="btn btn-ghost small" style={{fontSize:10,padding:'3px 7px'}} onClick={()=>startEdit(l)} title="Edit line">✏</button>
+                <button className="btn btn-danger small" style={{fontSize:10,padding:'3px 7px',marginLeft:3}} onClick={()=>onDeleteLine(l.id)} title="Remove line">✗</button>
+              </td>
+            </>}
+          </tr>
+        </React.Fragment>)}
+      </tbody>
+    </table>
+
+    {showAddLine&&<div className="add-line-form">
+      <div style={{fontWeight:700,marginBottom:8,fontSize:12}}>Add Custom Line</div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 130px 120px',gap:8,alignItems:'flex-end'}}>
+        <div className="field"><label>Description</label><input className="input" value={newLine.description} onChange={e=>setNewLine(x=>({...x,description:e.target.value}))} placeholder="e.g. Registration fee, late charge…" /></div>
+        <div className="field"><label>Amount (RM)</label><input className="input" type="number" min="0" step="0.01" value={newLine.amount} onChange={e=>setNewLine(x=>({...x,amount:e.target.value}))} /></div>
+        <div style={{display:'flex',gap:5}}>
+          <button className="btn btn-primary small" onClick={handleAddLine}>Add</button>
+          <button className="btn btn-ghost small" onClick={()=>setShowAddLine(false)}>Cancel</button>
+        </div>
+      </div>
+    </div>}
+
+    {/* Pending credits */}
+    {pendingCredits.length>0&&<div style={{marginBottom:12}}>
+      <div style={{fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'.5px',color:'var(--text-3)',marginBottom:5}}>Pending Credits ({pendingCredits.filter(p=>p.status==='pending').length} awaiting)</div>
+      <div style={{display:'flex',flexDirection:'column',gap:4}}>
+        {pendingCredits.map(pc=><div key={pc.id} className={`pc-row status-${pc.status}`}>
+          <div style={{flex:1}}><div style={{fontWeight:700,fontSize:12}}>{pc.description||'Credit'}</div><div className="small subtle">{pc.credits_per_swimmer} credit{pc.credits_per_swimmer===1?'':'s'} · {pc.status}</div></div>
+          {pc.status==='pending'&&<div style={{display:'flex',gap:5}}>
+            <button className="btn btn-primary small" onClick={()=>onConfirmCredit(pc)}>✓ Confirm</button>
+            <button className="btn btn-danger small" onClick={()=>onReverseCredit(pc)}>✗ Reverse</button>
+          </div>}
+          {pc.status==='confirmed'&&<span style={{color:'#10B981',fontSize:11,fontWeight:700}}>✓ Confirmed</span>}
+          {pc.status==='reversed'&&<span style={{color:'#EF4444',fontSize:11,fontWeight:700}}>✗ Reversed</span>}
+        </div>)}
+      </div>
+    </div>}
+
+    {/* Payments */}
+    {pmts.length>0&&<div style={{marginBottom:12}}>
+      <div style={{fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'.5px',color:'var(--text-3)',marginBottom:5}}>Payments Recorded</div>
+      <div style={{display:'flex',flexDirection:'column',gap:4}}>
+        {pmts.map(p=><div key={p.id} className="pmt-row">
+          <div style={{flex:1}}><div style={{fontWeight:700}}>{p.receipt_number}</div><div className="small subtle">{p.payment_date} · {methodLabel(p.payment_method)}{p.reference_number?' · Ref: '+p.reference_number:''}{p.notes?' · '+p.notes:''}</div></div>
+          <div style={{fontWeight:800,fontSize:14,marginRight:8}}>RM{Number(p.amount).toFixed(2)}</div>
+          <button className="btn btn-print small" onClick={()=>printReceipt(p,invoice)}>🖨 Receipt</button>
+        </div>)}
+      </div>
+    </div>}
+
+    {lastReceipt&&<div style={{padding:'8px 12px',background:'#D1FAE5',borderRadius:6,marginBottom:10,fontSize:12,color:'#065F46',fontWeight:700}}>
+      ✓ Payment recorded — Receipt {lastReceipt} · Go to <strong>⏳ Pending Credits</strong> to confirm credit allocation.
+    </div>}
+
+    {showPayForm&&<RecordPaymentForm outstanding={outstanding} onSubmit={async(data)=>{ const r=await onRecordPayment(data); if(r?.receiptNumber){setLastReceipt(r.receiptNumber);setShowPayForm(false);} }} onCancel={()=>setShowPayForm(false)} />}
+
+    {/* Actions */}
+    <div className="inv-actions">
+      {invoice.status==='draft'&&<button className="btn btn-primary small" onClick={()=>onUpdateStatus('sent')}>✉ Mark Sent</button>}
+      {(invoice.status==='sent'||invoice.status==='partial')&&outstanding>0&&!showPayForm&&<button className="btn btn-primary small" onClick={()=>setShowPayForm(true)}>💳 Record Payment</button>}
+      {showPayForm&&<button className="btn btn-ghost small" onClick={()=>setShowPayForm(false)}>Cancel Payment</button>}
+      <button className="btn btn-ghost small" onClick={()=>printInvoice(invoice,lines)}>🖨 Print Invoice</button>
+      {invoice.status!=='void'&&invoice.status!=='paid'&&<button className="btn btn-danger small" onClick={onVoid}>Void</button>}
+    </div>
+  </div>;
+}
+
+// ============================================================================
+// RecordPaymentForm
+// ============================================================================
+function RecordPaymentForm({ outstanding, onSubmit, onCancel }){
+  const [form,setForm]=useState({ amount:outstanding>0?outstanding.toFixed(2):'', paymentDate:new Date().toISOString().slice(0,10), paymentMethod:'cash', referenceNumber:'', notes:'' });
+  const [busy,setBusy]=useState(false);
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  async function handle(){
+    const amt=Number(form.amount);
+    if(!isFinite(amt)||amt<=0){alert('Enter a valid amount.');return;}
+    setBusy(true);
+    try{ const r=await onSubmit(form); }
+    catch(e){alert(e?.message||'Payment failed');}
+    finally{setBusy(false);}
+  }
+  return <div className="pay-form">
+    <div style={{fontWeight:800,marginBottom:8}}>💳 Record Payment</div>
+    <div className="pay-form-grid">
+      <div className="field"><label>Amount (RM)</label><input className="input" type="number" min="0" step="0.01" value={form.amount} onChange={e=>set('amount',e.target.value)} /></div>
+      <div className="field"><label>Date</label><input className="input" type="date" value={form.paymentDate} onChange={e=>set('paymentDate',e.target.value)} /></div>
+      <div className="field"><label>Method</label>
+        <select className="select" value={form.paymentMethod} onChange={e=>set('paymentMethod',e.target.value)}>
+          <option value="cash">Cash</option>
+          <option value="bank_transfer">Bank Transfer</option>
+          <option value="duitnow">DuitNow</option>
+          <option value="card">Card</option>
+          <option value="cheque">Cheque</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div className="field"><label>Reference #</label><input className="input" value={form.referenceNumber} onChange={e=>set('referenceNumber',e.target.value)} placeholder="optional" /></div>
+    </div>
+    <div className="field" style={{marginBottom:10}}><label>Notes</label><input className="input" value={form.notes} onChange={e=>set('notes',e.target.value)} placeholder="optional" /></div>
+    <div style={{display:'flex',gap:6,justifyContent:'flex-end'}}>
+      <button className="btn btn-ghost small" onClick={onCancel} disabled={busy}>Cancel</button>
+      <button className="btn btn-primary small" onClick={handle} disabled={busy}>{busy?'Recording…':'✓ Confirm Payment'}</button>
+    </div>
+  </div>;
+}
+
+// ============================================================================
+// PendingCreditsView
+// ============================================================================
+function PendingCreditsView({ pendingCredits, invoices, studentById, familyGroups, groupById, lessonTypeById, packageById, onConfirm, onReverse }){
+  const [statusFilter,setStatusFilter]=useState('pending');
+  const pendingCount=pendingCredits.filter(p=>p.status==='pending').length;
+  const invById=useMemo(()=>Object.fromEntries((invoices||[]).map(i=>[i.id,i])),[invoices]);
+
+  const filtered=pendingCredits.filter(pc=>statusFilter==='all'||pc.status===statusFilter);
+
+  return <>
+    <div className="card" style={{marginBottom:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap',marginBottom:10}}>
+        <div>
+          <div style={{fontSize:18,fontWeight:800}}>⏳ Pending Credits</div>
+          <div className="small subtle">Credits held in escrow after payment is recorded. Confirm to allocate lesson credits to the account. Reverse to reject (e.g. bounced payment).</div>
+        </div>
+        {pendingCount>0&&<div style={{fontSize:20,fontWeight:800,color:'#F59E0B'}}>{pendingCount} awaiting confirmation</div>}
+      </div>
+      <div style={{display:'flex',gap:3}}>
+        {['pending','confirmed','reversed','all'].map(s=><button key={s} className={`tab ${statusFilter===s?'active':''}`} style={{padding:'5px 10px',fontSize:11,borderRadius:7}} onClick={()=>setStatusFilter(s)}>
+          {s==='all'?`All (${pendingCredits.length})`:s.charAt(0).toUpperCase()+s.slice(1)+` (${pendingCredits.filter(p=>p.status===s).length})`}
+        </button>)}
+      </div>
+    </div>
+
+    {filtered.length===0&&<div className="card empty" style={{padding:28}}>No credits in this status.</div>}
+
+    <div style={{display:'flex',flexDirection:'column',gap:6}}>
+      {filtered.map(pc=>{
+        const inv=invById[pc.invoice_id];
+        const lt=pc.lesson_type_id&&lessonTypeById?lessonTypeById(pc.lesson_type_id):null;
+        const pkg=pc.package_id&&packageById?packageById(pc.package_id):null;
+        const grp=pc.family_group_id&&groupById?groupById(pc.family_group_id):null;
+        const stu=pc.student_id&&studentById?studentById[pc.student_id]:null;
+        return <div key={pc.id} className={`pc-card status-${pc.status}`}>
+          <div className="pc-card-body">
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:700}}>{pc.description||'Credit Allocation'}</div>
+              <div className="small subtle">
+                {grp?`👪 ${grp.name}`:stu?`👤 ${stu.name}`:'Unknown recipient'}
+                {lt?` · ${lt.name}`:''}
+                {pkg?` · ${pkg.name}`:''}
+              </div>
+              <div className="small subtle">{pc.credits_per_swimmer} credit{pc.credits_per_swimmer===1?'':'s'} per swimmer{inv?` · ${inv.invoice_number}`:''}{inv?` · ${inv.account_name}`:''}</div>
+              <div className="small subtle">{new Date(pc.created_at).toLocaleDateString(undefined,{dateStyle:'medium'})}</div>
+            </div>
+            <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:5}}>
+              <span className={`pc-status-chip status-${pc.status}`}>{pc.status==='pending'?'⏳ Pending':pc.status==='confirmed'?'✓ Confirmed':'✗ Reversed'}</span>
+              {pc.status==='pending'&&<div style={{display:'flex',gap:5}}>
+                <button className="btn btn-primary small" onClick={()=>onConfirm(pc)}>✓ Confirm Credits</button>
+                <button className="btn btn-danger small" onClick={()=>onReverse(pc)}>✗ Reverse</button>
+              </div>}
+            </div>
+          </div>
+        </div>;
+      })}
+    </div>
+  </>;
+}
+
+// ============================================================================
+// AgingReportView — per-account outstanding balance aging
+// ============================================================================
+function AgingReportView({ invoices, pmts }){
+  const [sortBy,setSortBy]=useState('outstanding'); // outstanding | account | oldest
+  const today=todayStr();
+  const todayMs=new Date(today).getTime();
+
+  // Group by account_name
+  const accountMap={};
+  invoices.forEach(inv=>{
+    const key=inv.account_name;
+    if(!accountMap[key]) accountMap[key]={ account:key, invoices:[], totalInvoiced:0, totalPaid:0 };
+    accountMap[key].invoices.push(inv);
+    accountMap[key].totalInvoiced+=Number(inv.total_amount||0);
+    accountMap[key].totalPaid+=Number(inv.amount_paid||0);
+  });
+
+  const rows=Object.values(accountMap).map(a=>{
+    const outstanding=Math.max(0,a.totalInvoiced-a.totalPaid);
+    // Age unpaid invoices
+    let current=0,d1_30=0,d31_60=0,d60plus=0;
+    a.invoices.forEach(inv=>{
+      if(inv.status==='paid'||inv.status==='void') return;
+      const owed=Math.max(0,Number(inv.total_amount)-Number(inv.amount_paid));
+      if(!owed) return;
+      if(!inv.due_date){ current+=owed; return; }
+      const age=Math.floor((todayMs-new Date(inv.due_date).getTime())/(86400000));
+      if(age<=0) current+=owed;
+      else if(age<=30) d1_30+=owed;
+      else if(age<=60) d31_60+=owed;
+      else d60plus+=owed;
+    });
+    const openInvs=a.invoices.filter(i=>i.status!=='paid'&&i.status!=='void');
+    const oldestDue=openInvs.map(i=>i.due_date).filter(Boolean).sort()[0]||null;
+    const isOverdue=d1_30>0||d31_60>0||d60plus>0;
+    return { account:a.account, totalInvoiced:a.totalInvoiced, totalPaid:a.totalPaid, outstanding, current, d1_30, d31_60, d60plus, openCount:openInvs.length, oldestDue, isOverdue };
+  }).filter(r=>r.totalInvoiced>0);
+
+  rows.sort((a,b)=>{
+    if(sortBy==='outstanding') return b.outstanding-a.outstanding;
+    if(sortBy==='account') return a.account.localeCompare(b.account);
+    if(sortBy==='oldest') return (a.oldestDue||'9999')>(b.oldestDue||'9999')?1:-1;
+    return 0;
+  });
+
+  const totals=rows.reduce((s,r)=>({ invoiced:s.invoiced+r.totalInvoiced, paid:s.paid+r.totalPaid, outstanding:s.outstanding+r.outstanding, current:s.current+r.current, d1_30:s.d1_30+r.d1_30, d31_60:s.d31_60+r.d31_60, d60plus:s.d60plus+r.d60plus }),{ invoiced:0,paid:0,outstanding:0,current:0,d1_30:0,d31_60:0,d60plus:0 });
+
+  const rm=(v)=>`RM${v.toFixed(2)}`;
+
+  return <>
+    <div className="card" style={{marginBottom:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap',marginBottom:10}}>
+        <div><div style={{fontSize:18,fontWeight:800}}>📈 Aging Report</div><div className="small subtle">Outstanding balances by account with age buckets based on invoice due dates. As of {today}.</div></div>
+        <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
+          <div><div className="small subtle">Total Outstanding</div><div style={{fontSize:20,fontWeight:800,color:'#F59E0B'}}>{rm(totals.outstanding)}</div></div>
+          <div><div className="small subtle" style={{color:'#EF4444'}}>60+ Days</div><div style={{fontSize:20,fontWeight:800,color:'#EF4444'}}>{rm(totals.d60plus)}</div></div>
+        </div>
+      </div>
+      <div style={{display:'flex',gap:6}}>
+        <span className="small subtle" style={{marginRight:4}}>Sort:</span>
+        {[['outstanding','By Outstanding'],['account','By Account'],['oldest','By Oldest Due']].map(([k,l])=><button key={k} className={`tab ${sortBy===k?'active':''}`} style={{padding:'4px 10px',fontSize:11,borderRadius:6}} onClick={()=>setSortBy(k)} data-key={k}>{l}</button>)}
+      </div>
+    </div>
+
+    {rows.length===0&&<div className="card empty" style={{padding:28}}>No invoiced accounts yet.</div>}
+
+    {rows.length>0&&<div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Account</th>
+            <th className="num">Invoiced</th>
+            <th className="num">Paid</th>
+            <th className="num">Outstanding</th>
+            <th className="num" title="Not yet due">Current</th>
+            <th className="num" style={{color:'#F59E0B'}}>1–30d</th>
+            <th className="num" style={{color:'#F97316'}}>31–60d</th>
+            <th className="num" style={{color:'#EF4444'}}>60+d</th>
+            <th className="num">Open Inv.</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r=><tr key={r.account} style={{background:r.d60plus>0?'rgba(239,68,68,.06)':r.d31_60>0?'rgba(249,115,22,.04)':''}}>
+            <td>
+              <div style={{fontWeight:700}}>{r.account}</div>
+              {r.isOverdue&&r.oldestDue&&<div style={{fontSize:10,color:'#EF4444'}}>Overdue since {r.oldestDue}</div>}
+            </td>
+            <td className="num">{rm(r.totalInvoiced)}</td>
+            <td className="num" style={{color:'#10B981'}}>{rm(r.totalPaid)}</td>
+            <td className="num" style={{fontWeight:800,color:r.outstanding>0?'#F59E0B':'#10B981'}}>{r.outstanding>0?rm(r.outstanding):'✓'}</td>
+            <td className="num">{r.current>0?rm(r.current):'-'}</td>
+            <td className="num" style={{color:r.d1_30>0?'#F59E0B':''}}>{r.d1_30>0?rm(r.d1_30):'-'}</td>
+            <td className="num" style={{color:r.d31_60>0?'#F97316':''}}>{r.d31_60>0?rm(r.d31_60):'-'}</td>
+            <td className="num" style={{fontWeight:r.d60plus>0?800:400,color:r.d60plus>0?'#EF4444':''}}>{r.d60plus>0?rm(r.d60plus):'-'}</td>
+            <td className="num">{r.openCount}</td>
+          </tr>)}
+        </tbody>
+        <tfoot>
+          <tr style={{borderTop:'2px solid var(--border)',fontWeight:800}}>
+            <td>Totals ({rows.length} accounts)</td>
+            <td className="num">{rm(totals.invoiced)}</td>
+            <td className="num" style={{color:'#10B981'}}>{rm(totals.paid)}</td>
+            <td className="num" style={{color:'#F59E0B'}}>{rm(totals.outstanding)}</td>
+            <td className="num">{totals.current>0?rm(totals.current):'-'}</td>
+            <td className="num" style={{color:totals.d1_30>0?'#F59E0B':''}}>{totals.d1_30>0?rm(totals.d1_30):'-'}</td>
+            <td className="num" style={{color:totals.d31_60>0?'#F97316':''}}>{totals.d31_60>0?rm(totals.d31_60):'-'}</td>
+            <td className="num" style={{fontWeight:800,color:totals.d60plus>0?'#EF4444':''}}>{totals.d60plus>0?rm(totals.d60plus):'-'}</td>
+            <td className="num"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>}
+
+    <div className="small subtle" style={{marginTop:10}}>
+      Age buckets are calculated from invoice due dates. Invoices without a due date are counted as Current. Paid and voided invoices are excluded.
+    </div>
+  </>;
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(<ErrorBoundary><App /></ErrorBoundary>);
