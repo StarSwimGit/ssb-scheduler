@@ -249,6 +249,7 @@ function PeriodNav({ rangeLabel, onPrev, onNext, onToday, isCurrent, children })
 
 function App(){
   const [view,setView] = useState('week');
+  const [adminSection,setAdminSection] = useState('summary');
   const [loading,setLoading] = useState(true);
   const [status,setStatus] = useState('');
   const [error,setError] = useState('');
@@ -2213,7 +2214,7 @@ function App(){
           <button type="button" className="tab tab-link" onClick={() => window.open('./intake.html', '_blank', 'noopener,noreferrer')} title="Open the digital parent intake form in a new tab">📝 Intake <span aria-hidden="true" style={{marginLeft:3,opacity:.6,fontSize:11}}>↗</span></button>
         </div>
         <div className="tabs tabs-right">
-          {['summary','receipts','settings'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='summary'?'📊 Summary':v==='receipts'?'💰 Receipts':'⚙️ Settings'}</button>)}
+          <button className={`tab ${view==='settings'?'active':''}`} onClick={() => setView('settings')}>🔧 Admin</button>
         </div>
       </div>
     </div></div>
@@ -2382,38 +2383,57 @@ function App(){
         onEnroll={openEnroll}
         onCreate={openCreateFor}
       />}
-      {!loading && view==='summary' && <SummaryView summary={summary} pools={activePools()} />}
-      {!loading && view==='receipts' && <ReceiptsView
-        subscriptions={subscriptions}
-        students={students}
-        studentById={studentById}
-        familyGroups={familyGroups}
-        groupById={groupById}
-        lessonTypeById={lessonTypeById}
-        cancelSubscription={cancelSubscription}
-      />}
+      {/* ── Admin Hub — left sidebar + content panel ───────────────── */}
+      {!loading && view==='settings' && <div className="admin-hub">
+        <div className="admin-hub-sidebar">
+          <div className="admin-hub-title">🔧 Admin</div>
+          {[
+            { key:'summary',     icon:'📊', label:'Summary' },
+            { key:'pools',       icon:'🏊', label:'Pools & Operating Hours' },
+            { key:'instructors', icon:'👨‍🏫', label:'Instructors' },
+            { key:'lessonTypes', icon:'📋', label:'Lesson Types' },
+            { key:'codes',       icon:'🎟', label:'Referral & Discount Codes' },
+            { key:'receipts',    icon:'💰', label:'Receipts' },
+          ].map(item => <button key={item.key} className={`admin-hub-item ${adminSection===item.key?'is-on':''}`} onClick={()=>setAdminSection(item.key)}>
+            <span className="admin-hub-icon">{item.icon}</span>
+            <span>{item.label}</span>
+          </button>)}
+        </div>
+        <div className="admin-hub-content">
+          {adminSection === 'summary' && <SummaryView summary={summary} pools={activePools()} />}
+          {adminSection === 'receipts' && <ReceiptsView
+            subscriptions={subscriptions}
+            students={students}
+            studentById={studentById}
+            familyGroups={familyGroups}
+            groupById={groupById}
+            lessonTypeById={lessonTypeById}
+            cancelSubscription={cancelSubscription}
+          />}
+          {(adminSection === 'pools' || adminSection === 'instructors' || adminSection === 'lessonTypes' || adminSection === 'codes') && <SettingsView
+            section={adminSection}
+            options={options}
+            status={status}
+            addOption={addOption}
+            toggleOption={toggleOption}
+            deleteOption={deleteOption}
+            deleteInstructor={deleteInstructor}
+            patchOption={patchOption}
+            reorderOption={reorderOption}
+            moveOption={moveOption}
+            saveLessonType={saveLessonType}
+            deleteLessonType={deleteLessonType}
+            lessonTypeCounts={lessonTypeCounts}
+            codes={codes}
+            students={students}
+            packages={options.packages}
+            addCode={addCode}
+            updateCode={updateCode}
+            deleteCode={deleteCode}
+          />}
+        </div>
+      </div>}
       {/* T&C view removed from the menu — parents now sign T&C inside intake.html. */}
-
-      {!loading && view==='settings' && <SettingsView
-        options={options}
-        status={status}
-        addOption={addOption}
-        toggleOption={toggleOption}
-        deleteOption={deleteOption}
-        deleteInstructor={deleteInstructor}
-        patchOption={patchOption}
-        reorderOption={reorderOption}
-        moveOption={moveOption}
-        saveLessonType={saveLessonType}
-        deleteLessonType={deleteLessonType}
-        lessonTypeCounts={lessonTypeCounts}
-        codes={codes}
-        students={students}
-        packages={options.packages}
-        addCode={addCode}
-        updateCode={updateCode}
-        deleteCode={deleteCode}
-      />}
     </div>
 
     {modal ? <SessionModal
@@ -3016,7 +3036,7 @@ function PackageEditor({ row, onSave, onCancel }){
   </div>;
 }
 
-function SettingsView({ options, status, addOption, toggleOption, deleteOption, deleteInstructor, patchOption, reorderOption, moveOption, saveLessonType, deleteLessonType, lessonTypeCounts, codes, students, packages, addCode, updateCode, deleteCode }){
+function SettingsView({ section, options, status, addOption, toggleOption, deleteOption, deleteInstructor, patchOption, reorderOption, moveOption, saveLessonType, deleteLessonType, lessonTypeCounts, codes, students, packages, addCode, updateCode, deleteCode }){
   const dragRef = React.useRef({ canDrag:false });
   const [drag, setDrag] = useState({ key:null, idx:null });
   const [over, setOver] = useState(null);
@@ -3062,21 +3082,8 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
   const counts = lessonTypeCounts || {};
 
   return <>
-    {/* Single status + settings band */}
-    <div className="card" style={{marginBottom:16,display:'flex',alignItems:'center',gap:20,flexWrap:'wrap'}}>
-      <div style={{display:'flex',alignItems:'center',gap:11}}>
-        <span style={{width:9,height:9,borderRadius:999,background:'var(--teal)',boxShadow:'0 0 0 4px rgba(31,169,143,0.16)',flexShrink:0}}></span>
-        <div><div style={{fontSize:10,textTransform:'uppercase',letterSpacing:'.7px',color:'var(--text-2)',fontWeight:700}}>Status</div><div style={{fontSize:15,fontWeight:800}}>{status || 'Connected'}</div></div>
-      </div>
-      <div style={{width:1,alignSelf:'stretch',background:'var(--border)'}}></div>
-      <div style={{flex:'1 1 240px',minWidth:0}}>
-        <div style={{fontSize:15,fontWeight:800}}>Settings</div>
-        <div className="small subtle" style={{marginTop:2}}>Edit pools, operating hours, instructors, and lesson types. These changes do not reset your schedule data.</div>
-      </div>
-    </div>
-
-    {/* Pools / Operating Hours / Instructors — three across */}
-    <div className="settings-cols">
+    {/* Pools & Operating Hours */}
+    {section === 'pools' && <div className="settings-cols" style={{gridTemplateColumns:'1fr 1fr'}}>
       <div className="card">
         <div style={{fontSize:16,fontWeight:800}}>Pools</div>
         <div className="small subtle" style={{marginTop:4}}>Capacity includes every body in the water, instructors included.</div>
@@ -3124,8 +3131,10 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
           })}
         </div>
       </div>
+    </div>}
 
-      <div className="card">
+    {/* ── Instructors ──────────────────────────────────────────────── */}
+    {section === 'instructors' && <div className="card">
         <div style={{fontSize:16,fontWeight:800}}>Instructors</div>
         <div className="small subtle" style={{marginTop:4}}>Names available in the session instructor dropdown. Edit to rename or set a gender.</div>
         <div className="inst-add">
@@ -3156,11 +3165,10 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
                 </div>
               </div>;
         }) : <div className="empty">No instructors</div>}</div>
-      </div>
-    </div>
+    </div>}
 
-    {/* Lesson types — full width (packages now nested under each lesson type) */}
-    <div className="card" style={{marginTop:16}}>
+    {/* ── Lesson Types ─────────────────────────────────────────────── */}
+    {section === 'lessonTypes' && <><div className="card">
       <div style={{fontSize:18,fontWeight:800}}>Lesson Types</div>
       <div className="small subtle" style={{marginTop:4}}>Create a type and pick its colors. Click Edit on a row to rename it, set age range, ratio, billing, and default pool. Renaming or recoloring updates every class on the schedule.</div>
 
@@ -3253,9 +3261,10 @@ function SettingsView({ options, status, addOption, toggleOption, deleteOption, 
         </div>)}</div>
       </div>;
     })()}
+    </>}
 
-    {/* Referral & Discount Codes — managed at the bottom of Settings. */}
-    {addCode && <CodesPanel codes={codes||[]} students={students||[]} packages={packages||[]} addCode={addCode} updateCode={updateCode} deleteCode={deleteCode} />}
+    {/* ── Referral & Discount Codes ─────────────────────────────────── */}
+    {section === 'codes' && addCode && <CodesPanel codes={codes||[]} students={students||[]} packages={packages||[]} addCode={addCode} updateCode={updateCode} deleteCode={deleteCode} />}
   </>;
 }
 
@@ -4594,10 +4603,19 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
       const parentGroupsInPlay = [...new Set(pg.swimmers.flatMap(s => s.familyGroupIds || []))]
         .map(gid => groupById?.[gid]).filter(Boolean);
 
+      // Session indicator: true when at least one swimmer from this account
+      // appears in any session scheduled for the currently-viewed week.
+      const swimmerIdSet = new Set(pg.swimmers.map(s => s.id));
+      const hasActiveSessions = (sessions || []).some(s =>
+        s.weekStartDate === selectedWeekStart &&
+        (s.students || []).some(st => st.studentId && swimmerIdSet.has(st.studentId))
+      );
+
       return <div key={pg.key} className={`parent-card ${!pg.isActive?'is-archived':''}`}>
         <div className="parent-head" onClick={(e)=>{ if(e.target.closest('button,input,select')) return; setExpandedKey(isExpanded?null:pg.key); }}>
           <div className="parent-head-main">
             <div className="parent-name">
+              {hasActiveSessions && <span className="acct-session-dot" title={`One or more swimmers in this account have sessions scheduled in the week of ${selectedWeekStart}`} />}
               {pg.name}
               {!pg.isActive && <span className="parent-archived-badge" title="All swimmers under this parent are archived">📦 Archived</span>}
             </div>
