@@ -5120,58 +5120,60 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
 
               {(sw.lessonTypeIds || []).length === 0
                 ? <div className="parent-swimmer-empty subtle small">No lesson type enrolments yet — click ✎ Edit to add one.</div>
-                : <div className="parent-lt-list">
-                    {(sw.lessonTypeIds || []).map(ltId => {
-                      const lt = lessonTypeById ? lessonTypeById(ltId) : null;
-                      if(!lt) return null;
-                      const bal = creditByKey[`${sw.id}:${ltId}`];
-                      const remaining = bal ? Number(bal.remaining_balance) || 0 : 0;
-                      const initial = bal ? Number(bal.initial_balance) || 0 : 0;
-                      const enrol = (sw.enrollments || []).find(e => e.lessonTypeId === ltId);
-                      const pkg = enrol?.packageId ? packageById(enrol.packageId) : null;
-                      // Scheduled sessions: from the current week's sessions where this swimmer appears
-                      // and the session lesson type matches this enrolment
-                      const ltSessions = (sessions || []).filter(s =>
-                        s.weekStartDate === selectedWeekStart &&
-                        s.type === lt.name &&
-                        (s.students || []).some(st => st.studentId === sw.id)
-                      ).sort((a,b) => a.day - b.day || a.startMinute - b.startMinute);
-                      const schedLabel = ltSessions.length
-                        ? ltSessions.map(s => `${DAYS_F[s.day].slice(0,3)} ${shortTime(s.startMinute)}`).join(', ')
-                        : null;
-                      const quickAddSub = (n) => addSubscription({
-                        subjectType: (grp && grp.groupType !== 'bound') ? 'family_group' : 'student',
-                        subjectId: (grp && grp.groupType !== 'bound') ? grp.id : sw.id,
-                        lessonTypeId: ltId, creditsPerSwimmer: n, quantity: 1,
-                        source: 'subscription', notes: `Quick +${n} (accounts panel)`
-                      });
-                      return <div key={ltId} className="parent-lt-row">
-                        <div className="parent-lt-top">
-                          <div className="parent-lt-info">
-                            <span className="parent-lt-name" style={{background:lt.bg_color,color:lt.text_color,borderColor:lt.border_color}}>{lt.name}</span>
-                            {pkg ? <span className="stu-pkg-label">{pkg.name}</span> : null}
-                            {schedLabel
-                              ? <span className="parent-lt-schedule" title="Scheduled this week">📅 {schedLabel}</span>
-                              : <span className="parent-lt-schedule parent-lt-no-schedule" title="No session scheduled this week">📅 Not scheduled</span>}
-                          </div>
-                          <div className="parent-lt-balance">
+                : <table className="lt-mini-table">
+                    <thead>
+                      <tr>
+                        <th>Lesson Type</th>
+                        <th>Package</th>
+                        <th>Scheduled Session</th>
+                        <th>Credits</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(sw.lessonTypeIds || []).map(ltId => {
+                        const lt = lessonTypeById ? lessonTypeById(ltId) : null;
+                        if(!lt) return null;
+                        const bal = creditByKey[`${sw.id}:${ltId}`];
+                        const remaining = bal ? Number(bal.remaining_balance) || 0 : 0;
+                        const initial = bal ? Number(bal.initial_balance) || 0 : 0;
+                        const enrol = (sw.enrollments || []).find(e => e.lessonTypeId === ltId);
+                        const pkg = enrol?.packageId ? packageById(enrol.packageId) : null;
+                        const ltSessions = (sessions || []).filter(s =>
+                          s.weekStartDate === selectedWeekStart &&
+                          s.type === lt.name &&
+                          (s.students || []).some(st => st.studentId === sw.id)
+                        ).sort((a,b) => a.day - b.day || a.startMinute - b.startMinute);
+                        const schedLabel = ltSessions.length
+                          ? ltSessions.map(s => `${DAYS_F[s.day].slice(0,3)} ${shortTime(s.startMinute)}`).join(', ')
+                          : null;
+                        const quickAddSub = (n) => addSubscription({
+                          subjectType: (grp && grp.groupType !== 'bound') ? 'family_group' : 'student',
+                          subjectId: (grp && grp.groupType !== 'bound') ? grp.id : sw.id,
+                          lessonTypeId: ltId, creditsPerSwimmer: n, quantity: 1,
+                          source: 'subscription', notes: `Quick +${n} (accounts panel)`
+                        });
+                        return <tr key={ltId}>
+                          <td><span className="lt-chip" style={{background:lt.bg_color,color:lt.text_color,borderColor:lt.border_color}}>{lt.name}</span></td>
+                          <td className="col-pkg">{pkg ? pkg.name : <em className="subtle">—</em>}</td>
+                          <td className={`col-session${schedLabel?'':' no-sched'}`}>{schedLabel || 'Not scheduled'}</td>
+                          <td className="col-credits">
                             {bal
                               ? <><strong className={remaining<=2?'credit-low':''}>{remaining}</strong><span className="subtle"> / {initial} cr</span></>
-                              : <em className="subtle">no balance</em>}
-                          </div>
-                        </div>
-                        {!isBound && addSubscription && <div className="parent-lt-actions">
-                          <button className="btn btn-ghost small" title="Quick add 4 credits" onClick={()=>quickAddSub(4)}>+4</button>
-                          <button className="btn btn-ghost small" title="Quick add 6 credits" onClick={()=>quickAddSub(6)}>+6</button>
-                          <button className="btn btn-ghost small" title="Quick add 8 credits" onClick={()=>quickAddSub(8)}>+8</button>
-                          {adjustBalanceTo && <BalanceAdjuster
-                            currentBalance={remaining}
-                            onApply={(target, notes) => adjustBalanceTo(sw.id, ltId, target, notes)} />}
-                        </div>}
-                        {isBound && <div className="parent-lt-actions"><span className="subtle small">🔗 bound — manage at group level</span></div>}
-                      </div>;
-                    })}
-                  </div>
+                              : <em className="subtle">—</em>}
+                          </td>
+                          <td className="col-actions">
+                            {!isBound && addSubscription ? <>
+                              <button className="btn btn-ghost small" title="Quick add 4 credits" onClick={()=>quickAddSub(4)}>+4</button>
+                              <button className="btn btn-ghost small" title="Quick add 6 credits" onClick={()=>quickAddSub(6)}>+6</button>
+                              <button className="btn btn-ghost small" title="Quick add 8 credits" onClick={()=>quickAddSub(8)}>+8</button>
+                              {adjustBalanceTo && <BalanceAdjuster currentBalance={remaining} onApply={(target, notes) => adjustBalanceTo(sw.id, ltId, target, notes)} />}
+                            </> : isBound ? <span className="subtle small">🔗 group</span> : null}
+                          </td>
+                        </tr>;
+                      })}
+                    </tbody>
+                  </table>
               }
             </div>;
           })}
