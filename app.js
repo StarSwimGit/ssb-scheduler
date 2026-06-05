@@ -86,6 +86,10 @@ function shortRange(startMin,durMin){ return `${shortTime(startMin)}–${shortTi
 function hourLabel(mins){ const h24 = Math.floor(mins / 60), m = mins % 60, ampm = h24 < 12 ? 'AM' : 'PM'; const h = h24 % 12 || 12; return m === 0 ? `${h} ${ampm}` : `${h}:${String(m).padStart(2,'0')} ${ampm}`; }
 // Display-only: shorten a full name to its first two words ("Ashton Ang Zi Yang" → "Ashton Ang"). Full name is untouched in the database.
 function shortName(name){ const parts = String(name || '').trim().split(/\s+/).filter(Boolean); return parts.slice(0, 3).join(' '); }
+// clip22: truncate name to 22 chars max (with ellipsis) for tight display areas
+function clip22(name){ const n = shortName(name); return n.length > 22 ? n.slice(0, 21) + '…' : n; }
+// toTitleCase: capitalize first letter of every word; used to auto-correct name inputs
+function toTitleCase(s){ return (s||'').replace(/\b\w/g, c => c.toUpperCase()); }
 // Age shown in years, e.g. " (5)". Blank when unknown.
 function ageSuffix(s){ return (s && s.age !== null && s.age !== undefined && s.age !== '') ? ` (${s.age})` : ''; }
 // Compute total months between a DOB and today. Birthday-aware (subtracts a
@@ -2967,7 +2971,13 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
           const isTrial = !!(s.studentId && trialSet && trialSet.has(s.studentId));
           const isRepl = s.isReplacement;
           const bal = s.studentId && creditByKey ? creditByKey[`${s.studentId}:${block.lessonTypeId}`] : null;
-          return <span key={s.id || i} className={`wa-stu ${isRepl?'wa-stu-repl':''}`} title={studentLabel(s) + (isTrial?' (trial)':'') + (isRepl?` replacing from ${s.replacementFrom||'?'}`:'')}>{isRepl?<span className="repl-mark">R</span>:null}{shortName(s.name) + ageSuffix(s)}{isTrial ? <span className="trial-mark"> (trial)</span> : null}{bal ? <span className={`credit-mark ${bal.remaining_balance<=2?'credit-low':''}`}> · {bal.remaining_balance}cr</span> : null}{s.remark ? ` — ${s.remark}` : ''}</span>;
+          return <span key={s.id || i} className={`wa-stu ${isRepl?'wa-stu-repl':''}`} title={studentLabel(s) + (isTrial?' (trial)':'') + (isRepl?` replacing from ${s.replacementFrom||'?'}`:'')}>
+            {isRepl?<span className="repl-mark">R</span>:null}
+            {clip22(s.name) + ageSuffix(s)}
+            {isTrial ? <span className="trial-mark"> (trial)</span> : null}
+            {bal ? <span className={`credit-mark ${bal.remaining_balance<=2?'credit-low':''}`}> · {bal.remaining_balance}cr</span> : null}
+            {s.remark ? ` — ${s.remark}` : ''}
+          </span>;
         })}</div>
       : <div className="wa-card-line wa-card-students-empty">—</div>}
   </div>;
@@ -4373,7 +4383,7 @@ function StudentEditor({ row, lessonTypes, packages, onSave, hideAccountSections
       <div className="account-section">
         <div className="account-section-title">Parent / Guardian (Account Holder)</div>
         <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
-          <div className="field"><label>Parent Name</label><input className="input" value={guardianName} onChange={e=>{ setGuardianName(e.target.value); if(adultSelf) setName(e.target.value); if(sameAsGuardian) setEmergencyName(e.target.value); }} placeholder="Full name" /></div>
+          <div className="field"><label>Parent Name</label><input className="input" value={guardianName} onChange={e=>{ setGuardianName(e.target.value); if(adultSelf) setName(e.target.value); if(sameAsGuardian) setEmergencyName(e.target.value); }} onBlur={e=>{ const v=toTitleCase(e.target.value); setGuardianName(v); if(adultSelf) setName(v); if(sameAsGuardian) setEmergencyName(v); }} placeholder="Full name" /></div>
           <div className="field"><label>Email</label><input className="input" type="email" value={guardianEmail} onChange={e=>setGuardianEmail(e.target.value)} placeholder="email@example.com" /></div>
           <div className="field"><label>Phone</label><input className="input" type="tel" value={guardianPhone} onChange={e=>{ setGuardianPhone(e.target.value); if(sameAsGuardian) setEmergencyPhone(e.target.value); }} placeholder="+60 1X-XXXXXXX" /></div>
         </div>
@@ -4382,7 +4392,7 @@ function StudentEditor({ row, lessonTypes, packages, onSave, hideAccountSections
         <div className="account-section-title">Emergency Contact</div>
         <label className="gb-check" style={{marginBottom:7,display:'inline-flex',gap:6,alignItems:'center'}}><input type="checkbox" checked={sameAsGuardian} onChange={e=>handleSameAsGuardian(e.target.checked)} /> Same as account holder above</label>
         <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
-          <div className="field"><label>Emergency Contact Name</label><input className="input" value={sameAsGuardian?guardianName:emergencyName} onChange={e=>setEmergencyName(e.target.value)} disabled={sameAsGuardian} placeholder="Full name" /></div>
+          <div className="field"><label>Emergency Contact Name</label><input className="input" value={sameAsGuardian?guardianName:emergencyName} onChange={e=>setEmergencyName(e.target.value)} onBlur={e=>setEmergencyName(toTitleCase(e.target.value))} disabled={sameAsGuardian} placeholder="Full name" /></div>
           <div className="field"><label>Phone</label><input className="input" type="tel" value={sameAsGuardian?guardianPhone:emergencyPhone} onChange={e=>setEmergencyPhone(e.target.value)} disabled={sameAsGuardian} placeholder="+60 1X-XXXXXXX" /></div>
           <div className="field"><label>Relationship</label><input className="input" value={sameAsGuardian?'Account Holder':emergencyRel} onChange={e=>setEmergencyRel(e.target.value)} disabled={sameAsGuardian} placeholder="e.g. Mother, Father, Spouse, Sibling" /></div>
         </div>
@@ -4393,7 +4403,7 @@ function StudentEditor({ row, lessonTypes, packages, onSave, hideAccountSections
     <div className="student-form-section">
       <div className="student-form-section-title">Swimmer Details</div>
       <div className="form-grid" style={{gridTemplateColumns:'1.3fr 130px 60px auto'}}>
-        <div className="field"><label>Name</label><input className="input" value={name} onChange={e=>{ setName(e.target.value); if(adultSelf) setGuardianName(e.target.value); }} disabled={adultSelf && !!guardianName} /></div>
+        <div className="field"><label>Name</label><input className="input" value={name} onChange={e=>{ setName(e.target.value); if(adultSelf) setGuardianName(e.target.value); }} onBlur={e=>{ const v=toTitleCase(e.target.value); setName(v); if(adultSelf) setGuardianName(v); }} disabled={adultSelf && !!guardianName} /></div>
         <div className="field"><label>Date of Birth</label><input className="input" type="date" value={dob} max={todayStr()} onChange={e=>setDob(e.target.value)} /></div>
         <div className="field"><label>Age</label><div className={`age-display ${computedAge==null?'is-empty':''}`} aria-label="Auto-calculated age">{ageDisplay(computedAge)}</div></div>
         <div className="field"><label>Gender</label>
@@ -5119,27 +5129,41 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
                       const initial = bal ? Number(bal.initial_balance) || 0 : 0;
                       const enrol = (sw.enrollments || []).find(e => e.lessonTypeId === ltId);
                       const pkg = enrol?.packageId ? packageById(enrol.packageId) : null;
+                      // Scheduled sessions: from the current week's sessions where this swimmer appears
+                      // and the session lesson type matches this enrolment
+                      const ltSessions = (sessions || []).filter(s =>
+                        s.weekStartDate === selectedWeekStart &&
+                        s.type === lt.name &&
+                        (s.students || []).some(st => st.studentId === sw.id)
+                      ).sort((a,b) => a.day - b.day || a.startMinute - b.startMinute);
+                      const schedLabel = ltSessions.length
+                        ? ltSessions.map(s => `${DAYS_F[s.day].slice(0,3)} ${shortTime(s.startMinute)}`).join(', ')
+                        : null;
+                      const quickAddSub = (n) => addSubscription({
+                        subjectType: (grp && grp.groupType !== 'bound') ? 'family_group' : 'student',
+                        subjectId: (grp && grp.groupType !== 'bound') ? grp.id : sw.id,
+                        lessonTypeId: ltId, creditsPerSwimmer: n, quantity: 1,
+                        source: 'subscription', notes: `Quick +${n} (accounts panel)`
+                      });
                       return <div key={ltId} className="parent-lt-row">
-                        <span className="parent-lt-name" style={{background:lt.bg_color,color:lt.text_color,borderColor:lt.border_color}}>{lt.name}</span>
-                        {pkg ? <span className="stu-pkg-label" title="Enrolled package">{pkg.name}</span> : null}
-                        <span className="parent-lt-balance">
-                          {bal
-                            ? <><strong className={remaining<=2?'credit-low':''}>{remaining}</strong> / {initial} credits</>
-                            : <em className="subtle">no balance yet</em>}
-                        </span>
+                        <div className="parent-lt-top">
+                          <div className="parent-lt-info">
+                            <span className="parent-lt-name" style={{background:lt.bg_color,color:lt.text_color,borderColor:lt.border_color}}>{lt.name}</span>
+                            {pkg ? <span className="stu-pkg-label">{pkg.name}</span> : null}
+                            {schedLabel
+                              ? <span className="parent-lt-schedule" title="Scheduled this week">📅 {schedLabel}</span>
+                              : <span className="parent-lt-schedule parent-lt-no-schedule" title="No session scheduled this week">📅 Not scheduled</span>}
+                          </div>
+                          <div className="parent-lt-balance">
+                            {bal
+                              ? <><strong className={remaining<=2?'credit-low':''}>{remaining}</strong><span className="subtle"> / {initial} cr</span></>
+                              : <em className="subtle">no balance</em>}
+                          </div>
+                        </div>
                         {!isBound && addSubscription && <div className="parent-lt-actions">
-                          <button className="btn btn-ghost small" title="Add 1× 4-credit subscription" onClick={()=>addSubscription({
-                            subjectType: (grp && grp.groupType !== 'bound') ? 'family_group' : 'student',
-                            subjectId: (grp && grp.groupType !== 'bound') ? grp.id : sw.id,
-                            lessonTypeId: ltId, creditsPerSwimmer: 4, quantity: 1,
-                            source: 'subscription', notes: 'Quick subscription (parent view)'
-                          })}>+4</button>
-                          <button className="btn btn-ghost small" title="Add 2× 4-credit subscription" onClick={()=>addSubscription({
-                            subjectType: (grp && grp.groupType !== 'bound') ? 'family_group' : 'student',
-                            subjectId: (grp && grp.groupType !== 'bound') ? grp.id : sw.id,
-                            lessonTypeId: ltId, creditsPerSwimmer: 4, quantity: 2,
-                            source: 'subscription', notes: 'Quick subscription (parent view, 2×)'
-                          })}>+8</button>
+                          <button className="btn btn-ghost small" title="Quick add 4 credits" onClick={()=>quickAddSub(4)}>+4</button>
+                          <button className="btn btn-ghost small" title="Quick add 6 credits" onClick={()=>quickAddSub(6)}>+6</button>
+                          <button className="btn btn-ghost small" title="Quick add 8 credits" onClick={()=>quickAddSub(8)}>+8</button>
                           {adjustBalanceTo && <BalanceAdjuster
                             currentBalance={remaining}
                             onApply={(target, notes) => adjustBalanceTo(sw.id, ltId, target, notes)} />}
@@ -5329,7 +5353,7 @@ function ParentContactEditor({ pg, onSave, onCancel }){
     <div className="account-section">
       <div className="account-section-title">Parent / Guardian (Account Holder)</div>
       <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
-        <div className="field"><label>Parent Name</label><input className="input" value={name} onChange={e=>setName(e.target.value)} placeholder="Full name" /></div>
+        <div className="field"><label>Parent Name</label><input className="input" value={name} onChange={e=>setName(e.target.value)} onBlur={e=>setName(toTitleCase(e.target.value))} placeholder="Full name" /></div>
         <div className="field"><label>Email</label><input className="input" type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="email@example.com" /></div>
         <div className="field"><label>Phone</label><input className="input" type="tel" value={phone} onChange={e=>setPhone(e.target.value)} placeholder="+60 1X-XXXXXXX" /></div>
       </div>
@@ -6303,6 +6327,25 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
   const [reschedDay, setReschedDay] = useState(0);
   const [reschedMinute, setReschedMinute] = useState(480);
   const [initCreditInput, setInitCreditInput] = useState({});
+  const [escWarn, setEscWarn] = useState(false);
+
+  // Dirty-check: compare current form to snapshot taken when modal first opened
+  const initialFormRef = React.useRef(null);
+  React.useEffect(() => { initialFormRef.current = JSON.stringify(modal.form); }, []); // eslint-disable-line
+  const isDirty = initialFormRef.current !== null && JSON.stringify(modal.form) !== initialFormRef.current;
+
+  // ESC key: close immediately if clean, warn if dirty
+  React.useEffect(() => {
+    function onKey(e){
+      if(e.key !== 'Escape') return;
+      e.stopPropagation();
+      if(escWarn){ setEscWarn(false); return; }  // ESC again dismisses warning
+      if(isDirty) setEscWarn(true);
+      else setModal(null);
+    }
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [isDirty, escWarn]);
 
   const currentLt = lessonTypes.find(t => t.name === modal.form.type);
   const isPersonal = currentLt?.class_type === 'personal';
@@ -6508,8 +6551,16 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
         <div style={{fontSize:13,fontWeight:800,lineHeight:1.1}}>{modal.id ? 'Edit' : 'Add'} Session</div>
         <div className="small subtle" style={{fontSize:10.5,marginTop:1}}>{DAYS_S[modal.day]} {minuteToTime(modal.startMinute)}{previewPool ? ` · ${previewPool.name}` : ''}</div>
       </div>
-      <button className="btn btn-ghost small" onClick={() => setModal(null)} aria-label="Close" title="Close (Esc)">✕</button>
+      <button className="btn btn-ghost small" onClick={() => { if(isDirty) setEscWarn(true); else setModal(null); }} aria-label="Close" title="Close (Esc)">✕</button>
     </div>
+    {escWarn && <div className="esc-warn-bar">
+      <span>⚠ You have unsaved changes.</span>
+      <div style={{display:'flex',gap:6,flexShrink:0}}>
+        <button className="btn btn-primary small" onClick={()=>{ setEscWarn(false); saveSession(); }}>Save & Close</button>
+        <button className="btn btn-danger small" onClick={()=>{ setEscWarn(false); setModal(null); }}>Discard Changes</button>
+        <button className="btn btn-ghost small" onClick={()=>setEscWarn(false)}>Keep Editing</button>
+      </div>
+    </div>}
     <div className="modal-body">
       <div className="form-grid">
         <div className="field"><label>Lesson Type</label><select className="select" value={modal.form.type} onChange={(e)=>onTypeChange(e.target.value)}>{lessonTypes.map(x => <option key={x.id} value={x.name}>{x.name}</option>)}</select></div>
