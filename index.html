@@ -856,13 +856,7 @@
     /* First-level archive/restore button — sits in the card header, no expand needed */
     .parent-archive-btn{font-size:11px !important;padding:3px 8px !important;opacity:.6;transition:opacity .15s ease}
     .parent-archive-btn:hover{opacity:1}
-    /* ESC unsaved-changes warning bar — appears inside session modal header */
-    .esc-warn-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 14px;background:#1a0d00;border-bottom:1px solid #F59E0B;font-size:12px;color:#FCD34D;flex-wrap:wrap}
-    /* Swimmer block — schedule label */
-    .parent-lt-top{display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:2px}
-    .parent-lt-info{display:flex;align-items:center;gap:5px;flex-wrap:wrap;flex:1;min-width:0}
-    .parent-lt-schedule{font-size:10.5px;color:#94A3B8}
-    .parent-lt-no-schedule{color:#475569;font-style:italic}
+    /* ESC unsaved-changes warning bar — appears inside session modal header */    .esc-warn-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 14px;background:#1a0d00;border-bottom:1px solid #F59E0B;font-size:12px;color:#FCD34D;flex-wrap:wrap}
     .acct-session-dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#22C55E;box-shadow:0 0 0 3px rgba(34,197,94,.18);margin-right:7px;vertical-align:middle;flex-shrink:0}
     @keyframes dot-pulse{0%,100%{box-shadow:0 0 0 2px rgba(34,197,94,.2)}50%{box-shadow:0 0 0 5px rgba(34,197,94,.05)}}
     .acct-session-dot{animation:dot-pulse 2.4s ease-in-out infinite}
@@ -901,8 +895,8 @@
        a single shared light-blue style so they read as siblings, not
        a stack of unrelated mini-cards. */
 
-    .parent-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:12px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,.04)}
-    .parent-card:hover{box-shadow:0 2px 8px rgba(15,23,42,.06)}
+    .parent-card{background:var(--surface);border:2px solid var(--border-2);border-radius:12px;margin-bottom:12px;overflow:hidden;box-shadow:0 2px 8px rgba(28,28,43,.07)}
+    .parent-card:hover{box-shadow:0 3px 12px rgba(28,28,43,.1);border-color:#D4D4E6}
     .parent-head{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:12px 16px;cursor:pointer;transition:.12s ease}
     .parent-head:hover{background:#F8FAFC}
     .parent-head-main{flex:1;min-width:0}
@@ -934,24 +928,28 @@
        cycles through SWIMMER_ACCENTS so each swimmer has a stable
        identity color. No box, no border, no fill — just the bar + the
        coloured name. Dashed separator between consecutive swimmers. */
-    .parent-swimmer-section{position:relative;padding:6px 8px 5px 12px;border-left:3px solid var(--border-2);margin:0;background:#050D1A;border-radius:0 6px 6px 0;border:1px solid #122035;border-left:3px solid var(--border-2)}
-    .parent-swimmer-section + .parent-swimmer-section{margin-top:4px;border-top:none;padding-top:6px}
-    .parent-swimmer-head{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:3px;flex-wrap:wrap}
+    .parent-swimmer-section{position:relative;padding:6px 10px 6px 12px;border-left:3px solid var(--border-2);margin:0;background:var(--surface-2);border-radius:0 6px 6px 0;border:1px solid var(--border);border-left:3px solid var(--border-2)}
+    .parent-swimmer-section + .parent-swimmer-section{margin-top:4px}
+    .parent-swimmer-head{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap}
     .parent-swimmer-name{font-size:12.5px}
     .parent-swimmer-name strong{font-weight:800}
     .parent-swimmer-actions{display:flex;gap:3px;flex-shrink:0}
-    .parent-swimmer-empty{padding:2px 0;font-size:11px}
+    .parent-swimmer-empty{padding:2px 0;font-size:11px;color:var(--text-2)}
 
-    /* LT row — compact flat rows inside the intensified section. */
-    .parent-lt-list{display:flex;flex-direction:column;margin-top:2px;gap:0}
-    .parent-lt-row{display:flex;flex-direction:column;gap:2px;padding:4px 2px 4px 2px;background:transparent;border:none;border-radius:0;border-bottom:1px solid #122035;font-size:11.5px}
-    .parent-lt-list .parent-lt-row:last-child{border-bottom:none}
-    .parent-lt-name{display:inline-block;padding:1px 7px;border:1px solid;border-radius:4px;font-size:10px;font-weight:800}
-    .parent-lt-balance{color:var(--text-2);font-size:11.5px;white-space:nowrap}
-    .parent-lt-balance strong{color:var(--text);font-weight:800}
-    .parent-lt-balance .credit-low{color:var(--red-tx)}
-    .parent-lt-actions{display:flex;align-items:center;gap:3px;flex-wrap:wrap;margin-top:1px}
-    .parent-lt-actions .btn{padding:2px 6px !important;font-size:10px !important}
+    /* ── Mini enrolment table ──────────────────────────────────────── */
+    .lt-mini-table{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:2px}
+    .lt-mini-table th{text-align:left;font-size:8.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--text-3);padding:3px 10px 4px 0;border-bottom:1.5px solid var(--border-2);white-space:nowrap}
+    .lt-mini-table th:last-child{padding-right:0}
+    .lt-mini-table td{padding:5px 10px 5px 0;vertical-align:middle;border-bottom:1px solid var(--border);white-space:nowrap}
+    .lt-mini-table tbody tr:last-child td{border-bottom:none}
+    .lt-mini-table .col-session{color:var(--text);font-weight:600;font-size:12px}
+    .lt-mini-table .col-session.no-sched{color:var(--text-3);font-weight:400;font-style:italic}
+    .lt-mini-table .col-credits strong{font-weight:800;color:var(--text)}
+    .lt-mini-table .col-credits .credit-low{color:#C0392B}
+    .lt-mini-table .col-actions{text-align:right;white-space:nowrap}
+    .lt-mini-table .col-actions .btn{padding:2px 7px !important;font-size:10.5px !important}
+    .lt-chip{display:inline-block;padding:2px 8px;border:1px solid;border-radius:4px;font-size:10.5px;font-weight:800;white-space:nowrap}
+    .col-pkg{color:var(--text-2);font-size:11.5px}
 
     /* T&C strip — single horizontal line, no contained box look. */
     .account-tc-summary{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 10px;background:transparent;border:none;border-bottom:1px dashed var(--border-2);margin:-4px -2px 9px;font-size:11px}
