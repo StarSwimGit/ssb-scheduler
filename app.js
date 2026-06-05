@@ -321,10 +321,12 @@ function App(){
   function formatInvoiceNumber(sett, seq){
     const now = new Date();
     const y = now.getFullYear(), m = String(now.getMonth()+1).padStart(2,'0');
+    const yy = String(y).slice(-2);
     const datePart = sett.include_date !== false ? {
       YYYYMM: `-${y}${m}`,
       YYYY:   `-${y}`,
       MM:     `-${m}`,
+      MMYY:   `-${m}${yy}`,
       none:   '',
     }[sett.date_format||'YYYYMM'] ?? `-${y}${m}` : '';
     const pad = Math.max(1, Number(sett.leading_zeros)||3);
@@ -334,10 +336,12 @@ function App(){
   function formatReceiptNumber(sett, seq){
     const now = new Date();
     const y = now.getFullYear(), m = String(now.getMonth()+1).padStart(2,'0');
+    const yy = String(y).slice(-2);
     const datePart = sett.include_date !== false ? {
       YYYYMM: `-${y}${m}`,
       YYYY:   `-${y}`,
       MM:     `-${m}`,
+      MMYY:   `-${m}${yy}`,
       none:   '',
     }[sett.date_format||'YYYYMM'] ?? `-${y}${m}` : '';
     const pad = Math.max(1, Number(sett.leading_zeros)||3);
@@ -4941,6 +4945,12 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
             <span className="parent-stat"><strong>{swimmerCount}</strong> swimmer{swimmerCount===1?'':'s'}</span>
             <span className="parent-stat"><strong className={parentActiveCredits<=2?'credit-low':''}>{parentActiveCredits}</strong> credits total</span>
             {parentSubs.length > 0 && <span className="parent-stat subtle">{parentSubs.length} sub{parentSubs.length===1?'':'s'}</span>}
+            {pg.key !== '__unassigned__' && <button
+              className={`btn small parent-archive-btn ${pg.isActive ? 'btn-ghost' : 'btn-primary'}`}
+              title={pg.isActive ? 'Archive this account and all its swimmers' : 'Restore this account'}
+              onClick={(e)=>{ e.stopPropagation(); setParentArchived(pg, pg.isActive); }}>
+              {pg.isActive ? '📦' : '↩ Restore'}
+            </button>}
             <span className="parent-chev">{isExpanded ? '▴' : '▾'}</span>
           </div>
         </div>
@@ -7475,6 +7485,10 @@ function PendingCreditsView({ pendingCredits, invoices, studentById, familyGroup
 // ============================================================================
 // InvoiceSettingsPanel — number format + sequence control
 // ============================================================================
+
+// ============================================================================
+// InvoiceSettingsPanel — number format + sequence control
+// ============================================================================
 function InvoiceSettingsPanel({ settings, onSave, formatInvoiceNumber, formatReceiptNumber }){
   const [form,setForm]=useState({
     invoice_prefix: settings.invoice_prefix||'INV',
@@ -7487,8 +7501,8 @@ function InvoiceSettingsPanel({ settings, onSave, formatInvoiceNumber, formatRec
   });
   const [saving,setSaving]=useState(false);
   const [saved,setSaved]=useState(false);
+  const [showResetWarning,setShowResetWarning]=useState(false);
 
-  // Sync when settings prop updates
   React.useEffect(()=>{
     setForm({
       invoice_prefix: settings.invoice_prefix||'INV',
@@ -7503,8 +7517,6 @@ function InvoiceSettingsPanel({ settings, onSave, formatInvoiceNumber, formatRec
 
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
   const draftSettings={...form,leading_zeros:Number(form.leading_zeros)||3,include_date:!!form.include_date};
-
-  // Live preview
   const invPreview = formatInvoiceNumber ? formatInvoiceNumber(draftSettings, Number(form.next_invoice_seq)||1) : '—';
   const rctPreview = formatReceiptNumber ? formatReceiptNumber(draftSettings, Number(form.next_receipt_seq)||1) : '—';
 
@@ -7523,84 +7535,97 @@ function InvoiceSettingsPanel({ settings, onSave, formatInvoiceNumber, formatRec
     setTimeout(()=>setSaved(false),2000);
   }
 
-  function handleReset(){
-    if(!confirm('Reset both counters to 1?\n\nExisting invoice and receipt numbers are unchanged — only the NEXT number generated will restart from 1.\n\nUse this for testing only.')) return;
+  function doReset(){
     set('next_invoice_seq','1');
     set('next_receipt_seq','1');
+    setShowResetWarning(false);
   }
 
   return <div className="inv-settings-panel">
-    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14,flexWrap:'wrap',gap:8}}>
-      <div style={{fontWeight:800,fontSize:14}}>⚙ Invoice Numbering Settings</div>
+
+    {/* Reset confirmation overlay */}
+    {showResetWarning && <div className="reset-warn-backdrop">
+      <div className="reset-warn-box">
+        <div className="reset-warn-icon">⚠</div>
+        <div className="reset-warn-title">Reset Invoice Counter?</div>
+        <div className="reset-warn-body">
+          Invoice numbers must <strong>not</strong> be reset in production — duplicate numbers cannot be issued to clients.<br /><br />
+          This should only be done during <strong>testing</strong>. Existing invoice and receipt numbers are not affected; only the next number generated will restart from 001.
+        </div>
+        <div className="reset-warn-actions">
+          <button className="btn btn-ghost" onClick={()=>setShowResetWarning(false)}>Cancel — Keep Current Numbers</button>
+          <button className="btn btn-danger" onClick={doReset}>Continue Reset</button>
+        </div>
+      </div>
+    </div>}
+
+    <div className="inv-settings-header">
+      <div className="inv-settings-title">⚙ Invoice Numbering</div>
       <div style={{display:'flex',gap:8,alignItems:'center'}}>
-        <button className="btn btn-danger small" onClick={handleReset} title="Reset both counters to 1">↺ Reset to 1</button>
-        <button className="btn btn-primary small" onClick={handleSave} disabled={saving}>{saving?'Saving…':saved?'✓ Saved':'Save Settings'}</button>
+        <button className="btn btn-danger small" onClick={()=>setShowResetWarning(true)}>↺ Reset Counters</button>
+        <button className="btn btn-primary small" onClick={handleSave} disabled={saving}>
+          {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save Settings'}
+        </button>
       </div>
     </div>
 
     <div className="inv-settings-grid">
-      {/* Prefixes */}
       <div className="field">
         <label>Invoice Prefix</label>
         <input className="input" value={form.invoice_prefix} onChange={e=>set('invoice_prefix',e.target.value.replace(/\s/g,''))} placeholder="INV" maxLength={12} />
-        <div className="hint">No spaces. e.g. INV, SSB, SWIM</div>
+        <div className="hint">No spaces — e.g. INV, SSB-INV, SWIM</div>
       </div>
       <div className="field">
         <label>Receipt Prefix</label>
         <input className="input" value={form.receipt_prefix} onChange={e=>set('receipt_prefix',e.target.value.replace(/\s/g,''))} placeholder="RCT" maxLength={12} />
-        <div className="hint">No spaces. e.g. RCT, RCPT, PAY</div>
+        <div className="hint">No spaces — e.g. RCT, RCPT, PAY</div>
       </div>
-
-      {/* Date segment */}
       <div className="field">
-        <label>Date in Number</label>
-        <select className="select" value={form.include_date?form.date_format:'none'} onChange={e=>{
+        <label>Date Segment</label>
+        <select className="select" value={form.include_date ? form.date_format : 'none'} onChange={e=>{
           if(e.target.value==='none'){set('include_date',false);}
           else{set('include_date',true);set('date_format',e.target.value);}
         }}>
-          <option value="YYYYMM">Year + Month (202606)</option>
-          <option value="YYYY">Year only (2026)</option>
-          <option value="MM">Month only (06)</option>
+          <option value="YYYYMM">Year + Month  (202606)</option>
+          <option value="MMYY">Month + Year short  (0626)</option>
+          <option value="YYYY">Year only  (2026)</option>
+          <option value="MM">Month only  (06)</option>
           <option value="none">None — sequence only</option>
         </select>
       </div>
-
-      {/* Leading zeros */}
       <div className="field">
         <label>Leading Zeros</label>
         <select className="select" value={form.leading_zeros} onChange={e=>set('leading_zeros',e.target.value)}>
-          {[1,2,3,4,5].map(n=><option key={n} value={n}>{n} → {String(1).padStart(n,'0')}</option>)}
+          {[1,2,3,4,5].map(n=><option key={n} value={n}>{n} digit{n===1?'':'s'} — {String(1).padStart(n,'0')}, {String(42).padStart(n,'0')}, {String(999).padStart(n,'0')}</option>)}
         </select>
-        <div className="hint">Pad width for the sequence number</div>
       </div>
-
-      {/* Sequence counters */}
       <div className="field">
-        <label>Next Invoice #</label>
+        <label>Next Invoice Sequence</label>
         <input className="input" type="number" min="1" value={form.next_invoice_seq} onChange={e=>set('next_invoice_seq',e.target.value)} />
-        <div className="hint">The sequence integer used for the next invoice generated</div>
+        <div className="hint">Integer for the next invoice generated</div>
       </div>
       <div className="field">
-        <label>Next Receipt #</label>
+        <label>Next Receipt Sequence</label>
         <input className="input" type="number" min="1" value={form.next_receipt_seq} onChange={e=>set('next_receipt_seq',e.target.value)} />
-        <div className="hint">The sequence integer used for the next receipt generated</div>
+        <div className="hint">Integer for the next receipt generated</div>
       </div>
     </div>
 
-    {/* Live preview */}
     <div className="inv-settings-preview">
-      <div className="inv-settings-preview-label">Live Preview</div>
-      <div style={{display:'flex',gap:24,flexWrap:'wrap'}}>
+      <div className="inv-settings-preview-label">Live Preview — next numbers generated</div>
+      <div style={{display:'flex',gap:36,flexWrap:'wrap',marginBottom:10}}>
         <div>
-          <div className="small subtle">Next Invoice</div>
+          <div style={{fontSize:10,textTransform:'uppercase',letterSpacing:'.6px',color:'#64748B',marginBottom:4,fontWeight:700}}>Invoice</div>
           <div className="inv-settings-preview-num">{invPreview}</div>
         </div>
         <div>
-          <div className="small subtle">Next Receipt</div>
+          <div style={{fontSize:10,textTransform:'uppercase',letterSpacing:'.6px',color:'#64748B',marginBottom:4,fontWeight:700}}>Receipt</div>
           <div className="inv-settings-preview-num">{rctPreview}</div>
         </div>
       </div>
-      <div className="hint" style={{marginTop:8}}>Changes are applied when you click <strong>Save Settings</strong>. Existing invoice and receipt numbers are never modified.</div>
+      <div className="hint" style={{lineHeight:1.6}}>
+        Click <strong style={{color:'#CBD5E1'}}>Save Settings</strong> to apply. Existing numbers are never modified.
+      </div>
     </div>
   </div>;
 }
