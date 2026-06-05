@@ -79,6 +79,9 @@ function toDateStr(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padSt
 function fromDateStr(s){ const [y,m,d] = s.split('-').map(Number); return new Date(y,m-1,d); }
 function todayStr(){ return toDateStr(new Date()); }
 function minuteToTime(mins){ const h24 = Math.floor(mins / 60), m = mins % 60, ampm = h24 < 12 ? 'AM' : 'PM'; const h = h24 % 12 || 12; return `${h}:${String(m).padStart(2,'0')} ${ampm}`; }
+// Short time: drops :00 on the hour — "8 AM", "5 PM", "10:30 AM"
+function shortTime(mins){ const h24=Math.floor(mins/60), m=mins%60, ampm=h24<12?'AM':'PM', h=h24%12||12; return m===0?`${h} ${ampm}`:`${h}:${String(m).padStart(2,'0')} ${ampm}`; }
+function shortRange(startMin,durMin){ return `${shortTime(startMin)}–${shortTime(startMin+durMin)}`; }
 // Compact label for whole-hour agenda rows: "10 AM", "12 PM", "1:30 PM".
 function hourLabel(mins){ const h24 = Math.floor(mins / 60), m = mins % 60, ampm = h24 < 12 ? 'AM' : 'PM'; const h = h24 % 12 || 12; return m === 0 ? `${h} ${ampm}` : `${h}:${String(m).padStart(2,'0')} ${ampm}`; }
 // Display-only: shorten a full name to its first two words ("Ashton Ang Zi Yang" → "Ashton Ang"). Full name is untouched in the database.
@@ -3092,18 +3095,24 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
           {hourStarts.map(start => {
             const rowItems = items.filter(it => it.startMinute >= start && it.startMinute < start + 60);
             return <tr key={`p-${start}`}>
-              <td className="print-time-cell">{minuteToTime(start)}</td>
+              <td className="print-time-cell">{shortTime(start)}</td>
               <td className="print-detail-cell">
                 {rowItems.length
                   ? <div className="print-day-cols">
-                      {rowItems.map(it => {
+                      {[0,1,2].map(col => {
+                        const it = rowItems[col];
+                        if(!it) return <div key={col} className="print-day-col print-day-col-empty" />;
                         const pool = poolById(it.poolId);
                         const inst = it.instructors.map(i=>i.name).join(', ') || it.legacyInstructor || '';
                         const meta = [pool ? pool.name : '', inst].filter(Boolean).join(' · ');
                         return <div key={it.id} className="print-day-col">
-                          <div className="print-session-head">{formatRange(it.startMinute, it.durationMinutes)} · {it.type}</div>
+                          <div className="print-session-head">{shortRange(it.startMinute, it.durationMinutes)} · {it.type}</div>
                           {meta && <div className="print-session-meta">{meta}</div>}
-                          <div className="print-session-students">{it.students.length ? it.students.map(studentLabel).join(', ') : 'No students listed'}</div>
+                          <div className="print-session-students">
+                            {it.students.length
+                              ? it.students.map((s,i) => <div key={i} className="print-student-name">{studentLabel(s)}</div>)
+                              : <div className="print-student-name print-student-empty">No students</div>}
+                          </div>
                         </div>;
                       })}
                     </div>
