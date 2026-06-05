@@ -2980,7 +2980,7 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
   const items = sessionsForDate(selectedDate);
   const hourStarts = Array.from({length:13}, (_,i) => 480 + i*60);
   return <div className="grid">
-    <div className="card">
+    <div className="card no-print">
       <div className="view-head">
         <div>
           <div className="view-title">Daily View</div>
@@ -3082,25 +3082,33 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
       <div className="print-daily-heading">Daily Schedule</div>
       <div className="print-daily-date">{longDate(selectedDate)}</div>
       <table className="print-daily-table">
+        <thead>
+          <tr>
+            <th className="print-th-time">Time</th>
+            <th className="print-th-detail">Session Details</th>
+          </tr>
+        </thead>
         <tbody>
           {hourStarts.map(start => {
             const rowItems = items.filter(it => it.startMinute >= start && it.startMinute < start + 60);
-            if(!rowItems.length) return null;
             return <tr key={`p-${start}`}>
               <td className="print-time-cell">{minuteToTime(start)}</td>
-              <td>
-                <div className="print-day-cols">
-                  {rowItems.map(it => {
-                    const pool = poolById(it.poolId);
-                    const inst = it.instructors.map(i=>i.name).join(', ') || it.legacyInstructor || '';
-                    const meta = [formatRange(it.startMinute, it.durationMinutes), pool ? pool.name : '', inst].filter(Boolean).join(' · ');
-                    return <div key={it.id} className="print-day-col">
-                      <div className="print-session-head">{it.type}</div>
-                      <div className="print-session-meta">{meta}</div>
-                      <div className="print-session-students">{it.students.length ? it.students.map(studentLabel).join(', ') : 'No students listed'}</div>
-                    </div>;
-                  })}
-                </div>
+              <td className="print-detail-cell">
+                {rowItems.length
+                  ? <div className="print-day-cols">
+                      {rowItems.map(it => {
+                        const pool = poolById(it.poolId);
+                        const inst = it.instructors.map(i=>i.name).join(', ') || it.legacyInstructor || '';
+                        const meta = [pool ? pool.name : '', inst].filter(Boolean).join(' · ');
+                        return <div key={it.id} className="print-day-col">
+                          <div className="print-session-head">{formatRange(it.startMinute, it.durationMinutes)} · {it.type}</div>
+                          {meta && <div className="print-session-meta">{meta}</div>}
+                          <div className="print-session-students">{it.students.length ? it.students.map(studentLabel).join(', ') : 'No students listed'}</div>
+                        </div>;
+                      })}
+                    </div>
+                  : <span className="print-no-session">—</span>
+                }
               </td>
             </tr>;
           })}
