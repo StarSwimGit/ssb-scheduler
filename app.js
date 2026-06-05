@@ -3079,33 +3079,31 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
       </div>
     </div>
     <div className="print-daily">
-      <div className="print-title">Daily Schedule</div>
-      <div className="print-meta">{longDate(selectedDate)}</div>
+      <div className="print-daily-heading">Daily Schedule</div>
+      <div className="print-daily-date">{longDate(selectedDate)}</div>
       <table className="print-daily-table">
-        <thead>
-          <tr><th style={{width:'16%'}}>Time</th><th>Session Details</th></tr>
-        </thead>
         <tbody>
           {hourStarts.map(start => {
             const rowItems = items.filter(it => it.startMinute >= start && it.startMinute < start + 60);
+            if(!rowItems.length) return null;
             return <tr key={`p-${start}`}>
               <td className="print-time-cell">{minuteToTime(start)}</td>
               <td>
-                {rowItems.length ? <div className="print-day-cols">
+                <div className="print-day-cols">
                   {rowItems.map(it => {
                     const pool = poolById(it.poolId);
-                    const inst = it.instructors.map(i=>i.name).join(', ') || it.legacyInstructor || 'No Instructor';
+                    const inst = it.instructors.map(i=>i.name).join(', ') || it.legacyInstructor || '';
+                    const meta = [formatRange(it.startMinute, it.durationMinutes), pool ? pool.name : '', inst].filter(Boolean).join(' · ');
                     return <div key={it.id} className="print-day-col">
-                      <div className="print-session-head">{formatRange(it.startMinute, it.durationMinutes)} · {it.type}</div>
-                      <div className="print-session-head" style={{fontWeight:400}}>{pool ? `${pool.name} · ` : ''}{inst} · {it.students.length} student{it.students.length===1?'':'s'}</div>
+                      <div className="print-session-head">{it.type}</div>
+                      <div className="print-session-meta">{meta}</div>
                       <div className="print-session-students">{it.students.length ? it.students.map(studentLabel).join(', ') : 'No students listed'}</div>
                     </div>;
                   })}
-                </div> : <div>No sessions</div>}
+                </div>
               </td>
             </tr>;
           })}
-          <tr><td>{minuteToTime(1260)}</td><td>Day end</td></tr>
         </tbody>
       </table>
     </div>
