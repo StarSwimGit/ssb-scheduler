@@ -2771,6 +2771,57 @@ function WeekView(props){
           trialStudentIds, trialByLessonType, creditByKey } = props;
 
   const [printMenu, setPrintMenu] = useState(false);
+  // ── Slot drag-to-reorder ──────────────────────────────────────────
+  // Tracks a custom display order per cell (keyed weekStart:day:hourBucket).
+  // Order is in-memory only; survives navigation within the session but
+  // resets on page reload. The DB sort is unchanged.
+  const [dragId,     setDragId]     = useState(null);
+  const [dragOverId, setDragOverId] = useState(null);
+  const [slotOrders, setSlotOrders] = useState({});
+
+  function cellKey(di, h){ return `${selectedWeekStart}:${di}:${h}`; }
+
+  function applySlotOrder(rawCell, di, h){
+    if(rawCell.length <= 1) return rawCell;
+    const custom = slotOrders[cellKey(di, h)];
+    if(!custom || !custom.length) return rawCell;
+    const rank = new Map(custom.map((id, i) => [String(id), i]));
+    return [...rawCell].sort((a, b) =>
+      (rank.has(String(a.id)) ? rank.get(String(a.id)) : 9999) -
+      (rank.has(String(b.id)) ? rank.get(String(b.id)) : 9999));
+  }
+
+  function onCardDragStart(e, block, rawCell, di, h){
+    e.stopPropagation();
+    setDragId(block.id);
+    // Snapshot current visual order on first drag in this slot
+    const k = cellKey(di, h);
+    if(!slotOrders[k])
+      setSlotOrders(prev => ({ ...prev, [k]: rawCell.map(b => String(b.id)) }));
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
+  function onCardDragOver(e, block){
+    e.preventDefault(); e.stopPropagation();
+    if(String(dragOverId) !== String(block.id)) setDragOverId(block.id);
+  }
+
+  function onCardDrop(e, targetBlock, rawCell, di, h){
+    e.preventDefault(); e.stopPropagation();
+    if(!dragId || String(dragId) === String(targetBlock.id)){
+      setDragId(null); setDragOverId(null); return;
+    }
+    const k = cellKey(di, h);
+    const base = (slotOrders[k] || rawCell.map(b => String(b.id)));
+    const without = base.filter(id => id !== String(dragId));
+    const ti = without.indexOf(String(targetBlock.id));
+    if(ti === -1){ setDragId(null); setDragOverId(null); return; }
+    const next = [...without]; next.splice(ti, 0, String(dragId));
+    setSlotOrders(prev => ({ ...prev, [k]: next }));
+    setDragId(null); setDragOverId(null);
+  }
+
+  function onCardDragEnd(){ setDragId(null); setDragOverId(null); }
 
   const wb = weekBounds(selectedDate);
   const printDays = Array.from({length:7}, (_,i) => { const d = new Date(wb.start); d.setDate(wb.start.getDate()+i); const ds = toDateStr(d); return { date:d, ds, items:sessionsForDate(ds) }; });
@@ -2806,7 +2857,8 @@ function WeekView(props){
       {hours.map(h => <React.Fragment key={h}>
         <div className="wa-time">{hourLabel(h)}</div>
         {DAYS_S.map((_,di) => {
-          const cell = weekBlocks[di].packed.filter(b => b.startMinute >= h && b.startMinute < h + 60);
+          const rawCell = weekBlocks[di].packed.filter(b => b.startMinute >= h && b.startMinute < h + 60);
+          const orderedCell = applySlotOrder(rawCell, di, h);
           return <div key={di+'-'+h} className={`wa-cell ${pendingMove?'wa-cell-targetable':''}`} onClick={() => {
             if(pendingMove){
               onPlacePendingMove && onPlacePendingMove(di, slotToMinute(minuteToSlot(h)));
@@ -2814,8 +2866,16 @@ function WeekView(props){
               onAdd(di, minuteToSlot(h), selectedPoolId || undefined);
             }
           }}>
-            {cell.map(block => <AgendaCard key={block.id} block={block} colorsFor={colorsFor} lessonTypeByName={lessonTypeByName} poolById={poolById} showPoolBadge={showPoolBadge} onEdit={onEdit} trialStudentIds={trialStudentIds}
-        trialByLessonType={trialByLessonType} creditByKey={creditByKey} />)}
+            {orderedCell.map(block => <AgendaCard key={block.id} block={block} colorsFor={colorsFor} lessonTypeByName={lessonTypeByName} poolById={poolById} showPoolBadge={showPoolBadge} onEdit={onEdit} trialStudentIds={trialStudentIds}
+        trialByLessonType={trialByLessonType} creditByKey={creditByKey}
+        isDraggable={rawCell.length > 1}
+        isDragging={String(dragId) === String(block.id)}
+        isDragOver={String(dragOverId) === String(block.id)}
+        onDragStartCard={e => onCardDragStart(e, block, rawCell, di, h)}
+        onDragOverCard={e => onCardDragOver(e, block)}
+        onDropCard={e => onCardDrop(e, block, rawCell, di, h)}
+        onDragEndCard={onCardDragEnd}
+        />)}
           </div>;
         })}
       </React.Fragment>)}
@@ -2923,7 +2983,8 @@ function WeekView(props){
 
 // M2.2: agenda card — a static, full-width card inside a day-hour cell. Details
 // stack on separate lines; the student list wraps to use vertical space.
-function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadge, onEdit, trialStudentIds, trialByLessonType, creditByKey }){
+function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadge, onEdit, trialStudentIds, trialByLessonType, creditByKey,
+  isDraggable, isDragging, isDragOver, onDragStartCard, onDragOverCard, onDropCard, onDragEndCard }){
   const c = colorsFor(block.type);
   const lt = lessonTypeByName(block.type);
   const cap = sessionCapacity(block, lt);
@@ -2956,7 +3017,12 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
       <div className="wa-card-restore-hint">Click to restore</div>
     </div>;
   }
-  return <div className={`wa-card ${isOver?'event-over':''} ${missingInst?'wa-card-warn':''}`}
+  return <div className={`wa-card ${isOver?'event-over':''} ${missingInst?'wa-card-warn':''} ${isDragging?'wa-card-dragging':''} ${isDragOver?'wa-card-dragover':''}`}
+    draggable={isDraggable || false}
+    onDragStart={onDragStartCard}
+    onDragOver={onDragOverCard}
+    onDrop={onDropCard}
+    onDragEnd={onDragEndCard}
     onClick={(e)=>{e.stopPropagation(); onEdit(block);}}
     style={{ background:c.bg, borderLeft:`3px solid ${c.bd}`, color:c.tx }}>
     {missingInst ? <span className="card-warn-corner" title="No instructor assigned — needs reassignment">⚠</span> : null}
