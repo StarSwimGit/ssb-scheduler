@@ -86,8 +86,8 @@ function shortRange(startMin,durMin){ return `${shortTime(startMin)}–${shortTi
 function hourLabel(mins){ const h24 = Math.floor(mins / 60), m = mins % 60, ampm = h24 < 12 ? 'AM' : 'PM'; const h = h24 % 12 || 12; return m === 0 ? `${h} ${ampm}` : `${h}:${String(m).padStart(2,'0')} ${ampm}`; }
 // Display-only: shorten a full name to its first two words ("Ashton Ang Zi Yang" → "Ashton Ang"). Full name is untouched in the database.
 function shortName(name){ const parts = String(name || '').trim().split(/\s+/).filter(Boolean); return parts.slice(0, 3).join(' '); }
-// clip22: truncate name to 22 chars max (with ellipsis) for tight display areas
-function clip22(name){ const n = shortName(name); return n.length > 22 ? n.slice(0, 21) + '…' : n; }
+// clip20: truncate name to 20 chars max (with ellipsis) for tight weekly grid cells
+function clip22(name){ const n = shortName(name); return n.length > 20 ? n.slice(0, 19) + '…' : n; }
 // toTitleCase: capitalize first letter of every word; used to auto-correct name inputs
 function toTitleCase(s){ return (s||'').replace(/\b\w/g, c => c.toUpperCase()); }
 // Age shown in years, e.g. " (5)". Blank when unknown.
