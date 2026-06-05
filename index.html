@@ -120,6 +120,11 @@
     .wa-cell{border-bottom:1px solid var(--border);border-left:1px solid var(--border);padding:6px;display:flex;flex-direction:column;gap:5px;min-height:48px;cursor:pointer}
     .wa-cell:hover{background:var(--primary-soft)}
     .wa-card{border-radius:11px;padding:7px 9px;cursor:pointer;box-shadow:0 1px 3px rgba(30,27,75,0.07)}
+    /* Drag-to-reorder — card is draggable when multiple sessions share the slot */
+    .wa-card[draggable="true"]{cursor:grab;user-select:none}
+    .wa-card[draggable="true"]:active{cursor:grabbing}
+    .wa-card.wa-card-dragging{opacity:0.35;box-shadow:none;transform:scale(.97)}
+    .wa-card.wa-card-dragover{outline:2px solid var(--primary);outline-offset:-2px;box-shadow:0 0 0 4px rgba(109,91,208,.15)}
     .wa-card.event-over{box-shadow:0 0 0 1.5px rgba(214,59,59,0.5) inset}
     /* Ghost — a cancelled (forwarded/rescheduled) session that stays in
        the original spot, dimmed, click to restore. No coloured stripe,
