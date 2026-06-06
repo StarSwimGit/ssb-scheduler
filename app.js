@@ -1596,6 +1596,11 @@ function App(){
     setView('week');
     setTimeout(() => {
       setHighlightedSessionId(session.id);
+      // After React renders the highlighted card, scroll it to centre of viewport
+      setTimeout(() => {
+        const el = document.querySelector('.wa-card-highlight');
+        if(el) el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+      }, 120);
       setTimeout(() => setHighlightedSessionId(null), 10000);
     }, 80);
   }
