@@ -1585,10 +1585,6 @@ function App(){
   }
 
   // M4: open a fresh session prefilled with the matcher's type/day/time and the
-  // swimmer already in slot 1. weekStartDate is explicit so it lands in the week
-  // the matcher was searching, regardless of the app's current selected week.
-  function openCreateFor(weekStart, day, startMinute, lessonType, swimmers){
-
   // ── jumpToSession: navigate to Weekly View + open the session modal ──
   // Called when a swimmer's scheduled session badge is clicked in the
   // Accounts panel. Sets the week, switches to the Weekly tab, and opens
@@ -1599,6 +1595,10 @@ function App(){
     // Brief tick so the view + date update flush before the modal opens
     setTimeout(() => openEdit(session), 50);
   }
+
+  // swimmer already in slot 1. weekStartDate is explicit so it lands in the week
+  // the matcher was searching, regardless of the app's current selected week.
+  function openCreateFor(weekStart, day, startMinute, lessonType, swimmers){
     const list = Array.isArray(swimmers) ? swimmers.filter(Boolean) : (swimmers ? [swimmers] : []);
     const firstInst = activeInstructors()[0] || null;
     const existing = list.map(s => ({ studentId:s.id, name:s.name, age:s.age }));
