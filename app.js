@@ -3180,13 +3180,18 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
                   const isDropTarget  = String(dailyDragOverId) === String(it.id);
                   return <div key={it.id}
                     className={`daily-event ${missingInst?'daily-event-warn':''} ${isBeingDragged?'daily-event-dragging':''} ${isDropTarget?'daily-event-dragover':''}`}
-                    draggable={rawItems.length > 1}
-                    onDragStart={e => onDailyDragStart(e, it, rawItems, start)}
                     onDragOver={e => onDailyDragOver(e, it)}
                     onDrop={e => onDailyDrop(e, it, rawItems, start)}
                     onDragEnd={onDailyDragEnd}
                     onClick={() => onEdit(it)}
                     style={{background:c.bg, borderLeftColor:c.bd, color:c.tx}}>
+                    {rawItems.length > 1 && <div
+                      className="daily-drag-handle"
+                      draggable={true}
+                      onDragStart={e => onDailyDragStart(e, it, rawItems, start)}
+                      onClick={e => e.stopPropagation()}
+                      title="Drag to reorder"
+                    >⠿</div>}
                     {missingInst ? <span className="card-warn-corner" title="No instructor assigned — needs reassignment">⚠</span> : null}
                     <div className="daily-event-top">
                       <div style={{minWidth:0,flex:1}}>
