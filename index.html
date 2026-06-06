@@ -125,6 +125,12 @@
     .wa-card[draggable="true"]:active{cursor:grabbing}
     .wa-card.wa-card-dragging{opacity:0.35;box-shadow:none;transform:scale(.97)}
     .wa-card.wa-card-dragover{outline:2px solid var(--primary);outline-offset:-2px;box-shadow:0 0 0 4px rgba(109,91,208,.15)}
+    /* Highlight pulse — shown when a session is jumped to from the Accounts panel */
+    @keyframes session-pulse{
+      0%,100%{box-shadow:0 0 0 0 rgba(109,91,208,0),0 1px 3px rgba(30,27,75,.07)}
+      40%{box-shadow:0 0 0 7px rgba(109,91,208,.28),0 1px 3px rgba(30,27,75,.07)}
+    }
+    .wa-card.wa-card-highlight{animation:session-pulse 1.1s ease-in-out infinite;outline:2px solid var(--primary);outline-offset:1px;z-index:5;position:relative}
     .wa-card.event-over{box-shadow:0 0 0 1.5px rgba(214,59,59,0.5) inset}
     /* Ghost — a cancelled (forwarded/rescheduled) session that stays in
        the original spot, dimmed, click to restore. No coloured stripe,
