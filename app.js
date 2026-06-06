@@ -1588,6 +1588,17 @@ function App(){
   // swimmer already in slot 1. weekStartDate is explicit so it lands in the week
   // the matcher was searching, regardless of the app's current selected week.
   function openCreateFor(weekStart, day, startMinute, lessonType, swimmers){
+
+  // ── jumpToSession: navigate to Weekly View + open the session modal ──
+  // Called when a swimmer's scheduled session badge is clicked in the
+  // Accounts panel. Sets the week, switches to the Weekly tab, and opens
+  // the edit modal for that specific session so staff can review/edit.
+  function jumpToSession(session){
+    setSelectedDate(addDays(session.weekStartDate, session.day));
+    setView('week');
+    // Brief tick so the view + date update flush before the modal opens
+    setTimeout(() => openEdit(session), 50);
+  }
     const list = Array.isArray(swimmers) ? swimmers.filter(Boolean) : (swimmers ? [swimmers] : []);
     const firstInst = activeInstructors()[0] || null;
     const existing = list.map(s => ({ studentId:s.id, name:s.name, age:s.age }));
@@ -2581,6 +2592,7 @@ function App(){
         selectedWeekStart={selectedWeekStart}
         createInvoice={createInvoice}
         setAdminSection={setAdminSection}
+        onJumpToSession={jumpToSession}
         setView={setView}
       />}
 
@@ -3058,6 +3070,54 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
   const weekDays = Array.from({length:7}, (_,i) => { const d = new Date(wb.start); d.setDate(wb.start.getDate()+i); return { date:d, ds:toDateStr(d), idx:i }; });
   const items = sessionsForDate(selectedDate);
   const hourStarts = Array.from({length:13}, (_,i) => 480 + i*60);
+
+  // ── Slot drag-to-reorder (same pattern as WeekView) ────────────────
+  const [dailyDragId,     setDailyDragId]     = useState(null);
+  const [dailyDragOverId, setDailyDragOverId] = useState(null);
+  const [dailySlotOrders, setDailySlotOrders] = useState({});
+
+  function dailySlotKey(start){ return `${selectedDate}:${start}`; }
+
+  function applyDailyOrder(rawItems, start){
+    if(rawItems.length <= 1) return rawItems;
+    const custom = dailySlotOrders[dailySlotKey(start)];
+    if(!custom || !custom.length) return rawItems;
+    const rank = new Map(custom.map((id, i) => [String(id), i]));
+    return [...rawItems].sort((a, b) =>
+      (rank.has(String(a.id)) ? rank.get(String(a.id)) : 9999) -
+      (rank.has(String(b.id)) ? rank.get(String(b.id)) : 9999));
+  }
+
+  function onDailyDragStart(e, it, rawItems, start){
+    e.stopPropagation();
+    setDailyDragId(it.id);
+    const k = dailySlotKey(start);
+    if(!dailySlotOrders[k])
+      setDailySlotOrders(prev => ({ ...prev, [k]: rawItems.map(s => String(s.id)) }));
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
+  function onDailyDragOver(e, it){
+    e.preventDefault(); e.stopPropagation();
+    if(String(dailyDragOverId) !== String(it.id)) setDailyDragOverId(it.id);
+  }
+
+  function onDailyDrop(e, targetIt, rawItems, start){
+    e.preventDefault(); e.stopPropagation();
+    if(!dailyDragId || String(dailyDragId) === String(targetIt.id)){
+      setDailyDragId(null); setDailyDragOverId(null); return;
+    }
+    const k = dailySlotKey(start);
+    const base = dailySlotOrders[k] || rawItems.map(s => String(s.id));
+    const without = base.filter(id => id !== String(dailyDragId));
+    const ti = without.indexOf(String(targetIt.id));
+    if(ti === -1){ setDailyDragId(null); setDailyDragOverId(null); return; }
+    const next = [...without]; next.splice(ti, 0, String(dailyDragId));
+    setDailySlotOrders(prev => ({ ...prev, [k]: next }));
+    setDailyDragId(null); setDailyDragOverId(null);
+  }
+
+  function onDailyDragEnd(){ setDailyDragId(null); setDailyDragOverId(null); }
   return <div className="grid">
     <div className="card no-print">
       <div className="view-head">
@@ -3100,7 +3160,8 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
       </div>
       <div className="daily-grid">
         {hourStarts.map(start => {
-          const rowItems = items.filter(it => it.startMinute >= start && it.startMinute < start + 60);
+          const rawItems = items.filter(it => it.startMinute >= start && it.startMinute < start + 60);
+          const rowItems = applyDailyOrder(rawItems, start);
           return <div className="daily-row" key={start}>
             <div className="daily-time">{minuteToTime(start)}</div>
             <div className={`daily-slot ${rowItems.length ? '' : 'empty'}`}>
@@ -3115,7 +3176,17 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
                   const instName = (it.instructors[0]?.name) || it.legacyInstructor || '';
                   const isPersonalIt = lessonTypeByName(it.type)?.class_type === 'personal';
                   const isRescheduledIt = it.rescheduledFromDay != null;
-                  return <div key={it.id} className={`daily-event ${missingInst?'daily-event-warn':''}`} onClick={() => onEdit(it)} style={{background:c.bg, borderLeftColor:c.bd, color:c.tx}}>
+                  const isBeingDragged = String(dailyDragId) === String(it.id);
+                  const isDropTarget  = String(dailyDragOverId) === String(it.id);
+                  return <div key={it.id}
+                    className={`daily-event ${missingInst?'daily-event-warn':''} ${isBeingDragged?'daily-event-dragging':''} ${isDropTarget?'daily-event-dragover':''}`}
+                    draggable={rawItems.length > 1}
+                    onDragStart={e => onDailyDragStart(e, it, rawItems, start)}
+                    onDragOver={e => onDailyDragOver(e, it)}
+                    onDrop={e => onDailyDrop(e, it, rawItems, start)}
+                    onDragEnd={onDailyDragEnd}
+                    onClick={() => onEdit(it)}
+                    style={{background:c.bg, borderLeftColor:c.bd, color:c.tx}}>
                     {missingInst ? <span className="card-warn-corner" title="No instructor assigned — needs reassignment">⚠</span> : null}
                     <div className="daily-event-top">
                       <div style={{minWidth:0,flex:1}}>
@@ -4776,7 +4847,7 @@ function swimmerAccent(idx){ return SWIMMER_ACCENTS[idx % SWIMMER_ACCENTS.length
 //     subscription log, ledger
 // The Swimmers page is intentionally read-only — use this page to admin.
 // ============================================================================
-function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, packageById, familyGroups, groupById, membersByGroup, creditByKey, subscriptions, addStudent, updateStudent, deleteStudent, addGroup, updateGroup, deleteGroup, setStudentGroup, addStudentToGroup, removeStudentFromGroup, groupIdsByStudent, addSubscription, cancelSubscription, adjustBalanceTo, scheduleByStudent, sessions, poolById, selectedWeekStart, createInvoice, setAdminSection, setView }){
+function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, packageById, familyGroups, groupById, membersByGroup, creditByKey, subscriptions, addStudent, updateStudent, deleteStudent, addGroup, updateGroup, deleteGroup, setStudentGroup, addStudentToGroup, removeStudentFromGroup, groupIdsByStudent, addSubscription, cancelSubscription, adjustBalanceTo, scheduleByStudent, sessions, poolById, selectedWeekStart, createInvoice, setAdminSection, onJumpToSession, setView }){
   // ── Sub-view: which Accounts admin pane is showing ──────────────────
   const [adminView, setAdminView] = useState('accounts');
   const [searchQ, setSearchQ] = useState('');
@@ -5222,7 +5293,17 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
                         return <tr key={ltId}>
                           <td><span className="lt-chip" style={{background:lt.bg_color,color:lt.text_color,borderColor:lt.border_color}}>{lt.name}</span></td>
                           <td className="col-pkg">{pkg ? pkg.name : <em className="subtle">—</em>}</td>
-                          <td className={`col-session${schedLabel?'':' no-sched'}`}>{schedLabel || 'Not scheduled'}</td>
+                          <td className={`col-session${schedLabel?'':' no-sched'}`}>
+                            {ltSessions.length
+                              ? ltSessions.map((s, si) => <span
+                                  key={s.id}
+                                  className="session-jump-link"
+                                  title="Click to open this session in the Weekly View"
+                                  onClick={() => onJumpToSession && onJumpToSession(s)}>
+                                  {si > 0 ? ', ' : ''}{DAYS_F[s.day].slice(0,3)} {shortTime(s.startMinute)}
+                                </span>)
+                              : 'Not scheduled'}
+                          </td>
                           <td className="col-credits">
                             {bal
                               ? <><strong className={remaining<=2?'credit-low':''}>{remaining}</strong><span className="subtle"> / {initial} cr</span></>
