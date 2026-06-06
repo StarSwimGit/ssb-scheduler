@@ -1585,15 +1585,19 @@ function App(){
   }
 
   // M4: open a fresh session prefilled with the matcher's type/day/time and the
-  // ── jumpToSession: navigate to Weekly View + open the session modal ──
+  const [highlightedSessionId, setHighlightedSessionId] = useState(null);
+
+  // ── jumpToSession: navigate to Weekly View + pulse-highlight the card ──
   // Called when a swimmer's scheduled session badge is clicked in the
-  // Accounts panel. Sets the week, switches to the Weekly tab, and opens
-  // the edit modal for that specific session so staff can review/edit.
+  // Accounts panel. Switches to Weekly View, scrolls to the right week,
+  // and pulses the specific session card for 10 seconds — no modal opens.
   function jumpToSession(session){
     setSelectedDate(addDays(session.weekStartDate, session.day));
     setView('week');
-    // Brief tick so the view + date update flush before the modal opens
-    setTimeout(() => openEdit(session), 50);
+    setTimeout(() => {
+      setHighlightedSessionId(session.id);
+      setTimeout(() => setHighlightedSessionId(null), 10000);
+    }, 80);
   }
 
   // swimmer already in slot 1. weekStartDate is explicit so it lands in the week
@@ -2525,6 +2529,7 @@ function App(){
         trialStudentIds={trialStudentIds}
         trialByLessonType={trialByLessonType}
         creditByKey={creditByKey}
+        highlightedSessionId={highlightedSessionId}
       />}
 
       {!loading && view==='day' && <DailyView
@@ -2780,7 +2785,7 @@ function WeekView(props){
           activeInstructors, isInstructorActive, onToggleInstructor, onClearInstructors, instructorFilterActive,
           weekPendingReplacements, lessonTypeById, studentById, onCancelPendingReplacement,
           pendingMove, onPlacePendingMove, onCancelPendingMove,
-          trialStudentIds, trialByLessonType, creditByKey } = props;
+          trialStudentIds, trialByLessonType, creditByKey, highlightedSessionId } = props;
 
   const [printMenu, setPrintMenu] = useState(false);
   // ── Slot drag-to-reorder ──────────────────────────────────────────
@@ -2883,6 +2888,7 @@ function WeekView(props){
         isDraggable={rawCell.length > 1}
         isDragging={String(dragId) === String(block.id)}
         isDragOver={String(dragOverId) === String(block.id)}
+        isHighlighted={highlightedSessionId && String(highlightedSessionId) === String(block.id)}
         onDragStartCard={e => onCardDragStart(e, block, rawCell, di, h)}
         onDragOverCard={e => onCardDragOver(e, block)}
         onDropCard={e => onCardDrop(e, block, rawCell, di, h)}
@@ -2996,7 +3002,7 @@ function WeekView(props){
 // M2.2: agenda card — a static, full-width card inside a day-hour cell. Details
 // stack on separate lines; the student list wraps to use vertical space.
 function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadge, onEdit, trialStudentIds, trialByLessonType, creditByKey,
-  isDraggable, isDragging, isDragOver, onDragStartCard, onDragOverCard, onDropCard, onDragEndCard }){
+  isDraggable, isDragging, isDragOver, isHighlighted, onDragStartCard, onDragOverCard, onDropCard, onDragEndCard }){
   const c = colorsFor(block.type);
   const lt = lessonTypeByName(block.type);
   const cap = sessionCapacity(block, lt);
@@ -3029,7 +3035,7 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
       <div className="wa-card-restore-hint">Click to restore</div>
     </div>;
   }
-  return <div className={`wa-card ${isOver?'event-over':''} ${missingInst?'wa-card-warn':''} ${isDragging?'wa-card-dragging':''} ${isDragOver?'wa-card-dragover':''}`}
+  return <div className={`wa-card ${isOver?'event-over':''} ${missingInst?'wa-card-warn':''} ${isDragging?'wa-card-dragging':''} ${isDragOver?'wa-card-dragover':''} ${isHighlighted?'wa-card-highlight':''}`}
     draggable={isDraggable || false}
     onDragStart={onDragStartCard}
     onDragOver={onDragOverCard}
