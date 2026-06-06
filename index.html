@@ -861,7 +861,14 @@
     /* First-level archive/restore button — sits in the card header, no expand needed */
     .parent-archive-btn{font-size:11px !important;padding:3px 8px !important;opacity:.6;transition:opacity .15s ease}
     .parent-archive-btn:hover{opacity:1}
-    /* ESC unsaved-changes warning bar — appears inside session modal header */    .esc-warn-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 14px;background:#1a0d00;border-bottom:1px solid #F59E0B;font-size:12px;color:#FCD34D;flex-wrap:wrap}
+    /* daily-event drag-to-reorder — mirrors wa-card drag states */
+    .daily-event[draggable="true"]{cursor:grab;user-select:none}
+    .daily-event[draggable="true"]:active{cursor:grabbing}
+    .daily-event.daily-event-dragging{opacity:0.35;box-shadow:none}
+    .daily-event.daily-event-dragover{outline:2px solid var(--primary);outline-offset:-2px;box-shadow:0 0 0 4px rgba(109,91,208,.15)}
+    /* Session jump link — schedule label in swimmer enrolment table */
+    .session-jump-link{color:var(--text);font-weight:600;font-size:12px;cursor:pointer;text-decoration:underline;text-decoration-color:var(--primary);text-underline-offset:2px;transition:color .1s ease}
+    .session-jump-link:hover{color:var(--primary)}    .esc-warn-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 14px;background:#1a0d00;border-bottom:1px solid #F59E0B;font-size:12px;color:#FCD34D;flex-wrap:wrap}
     .acct-session-dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#22C55E;box-shadow:0 0 0 3px rgba(34,197,94,.18);margin-right:7px;vertical-align:middle;flex-shrink:0}
     @keyframes dot-pulse{0%,100%{box-shadow:0 0 0 2px rgba(34,197,94,.2)}50%{box-shadow:0 0 0 5px rgba(34,197,94,.05)}}
     .acct-session-dot{animation:dot-pulse 2.4s ease-in-out infinite}
