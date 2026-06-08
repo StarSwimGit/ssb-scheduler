@@ -278,6 +278,11 @@ function App(){
   const [enabledTypes,setEnabledTypes] = useState(null);
   const [selectedInstructors,setSelectedInstructors] = useState(new Set());
   const [modal,setModal] = useState(null);
+  // modalRef always points to the latest modal — used in saveSession so that
+  // even if the user clicks Save immediately after picking a student (before
+  // React has flushed the state update), we still read the correct rows.
+  const modalRef = React.useRef(null);
+  React.useEffect(() => { modalRef.current = modal; });
   const [saveBusy,setSaveBusy] = useState(false);
   const [remarkDraft,setRemarkDraft] = useState('');
   // ── Invoicing state ────────────────────────────────────────────────
@@ -1633,47 +1638,74 @@ function App(){
   // wiped-and-rewritten on every save — the dataset is small enough that the
   // simplicity is worth the extra round-trip.
   async function saveSession(){
-    if(!modal) return;
+    // Always read the latest modal via ref — avoids a stale-closure race where
+    // the user clicks Save immediately after picking a student before React
+    // has committed the state update.
+    const m = modalRef.current;
+    if(!m) return;
     try{
       setSaveBusy(true); setError('');
-      const lt = lessonTypeByName(modal.form.type) || lessonTypeById(modal.form.lessonTypeId);
-      const inst = options.instructors.find(i => i.id === modal.form.instructorId) || instructorByName(modal.form.instructorName);
+      const lt = lessonTypeByName(m.form.type) || lessonTypeById(m.form.lessonTypeId);
+      const inst = options.instructors.find(i => i.id === m.form.instructorId) || instructorByName(m.form.instructorName);
       const payload = {
-        week_start_date: modal.weekStartDate || selectedWeekStart,
-        weekday: modal.day + 1,
-        start_minute: modal.startMinute,
-        duration_minutes: Number(modal.form.durationMinutes),
-        lesson_type: modal.form.type || '',
+        week_start_date: m.weekStartDate || selectedWeekStart,
+        weekday: m.day + 1,
+        start_minute: m.startMinute,
+        duration_minutes: Number(m.form.durationMinutes),
+        lesson_type: m.form.type || '',
         lesson_type_id: lt ? lt.id : null,
-        pool_id: modal.form.poolId || null,
-        family_group_id: null,   // sessions are no longer bound to a group; quick-add is a one-time add action
+        pool_id: m.form.poolId || null,
+        family_group_id: null,
         instructor: inst ? inst.name : '',
-        // Reschedule tracking (personal classes): store original position so
-        // duplicate week can restore it. Null = not rescheduled.
-        rescheduled_from_day: modal.rescheduledFromDay != null ? modal.rescheduledFromDay + 1 : null,
-        rescheduled_from_start_minute: modal.rescheduledFromStartMinute ?? null
+        rescheduled_from_day: m.rescheduledFromDay != null ? m.rescheduledFromDay + 1 : null,
+        rescheduled_from_start_minute: m.rescheduledFromStartMinute ?? null
       };
-      let sessionId = modal.id;
-      if(modal.id){
-        const updated = await patchRows('weekly_sessions', { id: modal.id }, payload);
-        sessionId = updated?.[0]?.id || modal.id;
+      let sessionId = m.id;
+      if(m.id){
+        const updated = await patchRows('weekly_sessions', { id: m.id }, payload);
+        sessionId = updated?.[0]?.id || m.id;
         await deleteRows('weekly_session_students', { session_id: sessionId });
         await deleteRows('session_instructors', { session_id: sessionId });
       } else {
         const inserted = await insertRows('weekly_sessions', payload);
         sessionId = inserted?.[0]?.id;
+        if(!sessionId) throw new Error('Session was created but no ID was returned — cannot save students.');
       }
       // Regular enrolled students
-      const rows = (modal.form.studentRows || []).map(r => ({ studentId:r.studentId || null, name:(r.name || '').trim(), age:r.age, remark:(r.remark || '').trim(), attendance: r.attendance || 'pending' })).filter(r => r.name || r.studentId);
+      const rows = (m.form.studentRows || []).map(r => ({
+        studentId: r.studentId || null,
+        name: (r.name || '').trim(),
+        age: r.age,
+        remark: (r.remark || '').trim(),
+        attendance: r.attendance || 'pending'
+      })).filter(r => r.name || r.studentId);
       if(sessionId && rows.length){
-        await insertRows('weekly_session_students', rows.map(r => ({ session_id: sessionId, student_id: r.studentId, student_name: r.name, student_age: (r.age === '' || r.age === null || r.age === undefined) ? null : Number(r.age), remark: r.remark || null, is_replacement: false, attendance_status: r.attendance })));
+        await insertRows('weekly_session_students', rows.map(r => ({
+          session_id: sessionId,
+          student_id: r.studentId,
+          student_name: r.name,
+          student_age: (r.age === '' || r.age === null || r.age === undefined) ? null : Number(r.age),
+          remark: r.remark || null,
+          is_replacement: false,
+          is_new: false,
+          attendance_status: r.attendance
+        })));
       }
       // Replacement students (group classes) — one-off, tagged separately
-      const replRows = (modal.form.replacementRows || []).filter(r => r.name || r.studentId);
+      const replRows = (m.form.replacementRows || []).filter(r => r.name || r.studentId);
       if(sessionId && replRows.length){
-        await insertRows('weekly_session_students', replRows.map(r => ({ session_id: sessionId, student_id: r.studentId || null, student_name: (r.name || '').trim(), student_age: r.age != null ? Number(r.age) : null, remark: r.remark || null, is_replacement: true, replacement_from: (r.replacementFrom || '').trim() || null, attendance_status: r.attendance || 'pending' })));
-        // Clear pending-replacement entries for swimmers who were placed by this save.
-        const wk = modal.weekStartDate || selectedWeekStart;
+        await insertRows('weekly_session_students', replRows.map(r => ({
+          session_id: sessionId,
+          student_id: r.studentId || null,
+          student_name: (r.name || '').trim(),
+          student_age: r.age != null ? Number(r.age) : null,
+          remark: r.remark || null,
+          is_replacement: true,
+          is_new: false,
+          replacement_from: (r.replacementFrom || '').trim() || null,
+          attendance_status: r.attendance || 'pending'
+        })));
+        const wk = m.weekStartDate || selectedWeekStart;
         for(const r of replRows){
           if(r.studentId && lt?.id && pendingByKey[`${r.studentId}:${lt.id}:${wk}`]){
             try{ await deleteRows('replacement_pending', { student_id: r.studentId, week_start_date: wk, lesson_type_id: lt.id }); } catch(_){}
@@ -1684,11 +1716,6 @@ function App(){
       if(sessionId && inst){
         await insertRows('session_instructors', [{ session_id: sessionId, instructor_id: inst.id }]);
       }
-      // Auto-seed credit balance for any swimmer placed in this session who
-      // doesn't already have one. All lesson types are credit-based now —
-      // not just personals. Default is 4 credits/month (matches the
-      // 4-weeks-1-lesson-per-week cadence); a package with billing_count
-      // overrides that default.
       if(lt && lt.id && sessionId){
         const pkg = (options.packages || []).find(p => p.lesson_type_id === lt.id && (p.name || '').toLowerCase() === 'normal' && p.is_active !== false);
         const initCredits = pkg?.billing_count ? Number(pkg.billing_count) : 4;
@@ -1697,20 +1724,13 @@ function App(){
           const key = creditKey(r.studentId, lt.id);
           if(!creditByKey[key] && initCredits > 0){
             try{ await insertRows('student_credit_balances', [{ student_id: r.studentId, lesson_type_id: lt.id, initial_balance: initCredits, remaining_balance: initCredits }]); }
-            catch(_){} // ignore duplicate-key on parallel saves
+            catch(_){}
           }
         }
         await loadCreditBalances();
       }
-      // Attendance → credit deltas. Compare each saved student's new
-      // attendance to the originalAttendance snapshot. Any pending → marked
-      // transition deducts a credit (one lesson consumed); any marked →
-      // pending restores one. attended ↔ absent doesn't change credits.
-      // adjustCredit is a no-op when the swimmer has no balance row, which
-      // is exactly the right behavior for monthly-package swimmers — their
-      // attendance is still recorded for reporting, just no credit math.
       if(sessionId && lt?.id){
-        const orig = modal.originalAttendance || {};
+        const orig = m.originalAttendance || {};
         const allSavedRows = [...rows, ...replRows.map(r => ({ studentId: r.studentId, attendance: r.attendance || 'pending' }))];
         const isConsuming = (s) => s === 'attended' || s === 'absent';
         for(const r of allSavedRows){
@@ -1723,7 +1743,6 @@ function App(){
           } else if(isConsuming(oldS) && !isConsuming(newS)){
             await adjustCredit(r.studentId, lt.id, 1);
           }
-          // attended ↔ absent: no credit change (both already consumed the lesson)
         }
       }
       await loadSessions();
@@ -6526,7 +6545,7 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
     return [...all].sort((a,b)=>a-b);
   }, [lessonTypes, modal?.form?.durationMinutes]);
 
-  function setForm(patch){ setModal({ ...modal, form: { ...modal.form, ...patch } }); }
+  function setForm(patch){ setModal(prev => prev ? { ...prev, form: { ...prev.form, ...patch } } : prev); }
 
   function onTypeChange(name){
     const lt = lessonTypes.find(t => t.name === name);
