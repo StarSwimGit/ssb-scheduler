@@ -1691,50 +1691,29 @@ function App(){
         attendance: r.attendance || 'pending'
       })).filter(r => r.name || r.studentId);
 
-      // ── DIAGNOSTIC ─────────────────────────────────────────────────
-      // This alert shows exactly what saveSession sees. Remove once fixed.
-      setStatus(`Saving session — ${rows.length} student(s) to write (form had ${allStudentRows.length} slot(s), ${allStudentRows.filter(r=>r.studentId||r.name).length} filled).`);
-      // ───────────────────────────────────────────────────────────────
+      const filledInForm = allStudentRows.filter(r => r.studentId || (r.name||'').trim()).length;
+      setStatus(`Session saved — ${rows.length} student(s) written${rows.length !== filledInForm ? ` (form showed ${filledInForm} filled)` : ''}.`);
+      if(rows.length === 0 && filledInForm > 0){
+        alert(`DEBUG: Form has ${filledInForm} filled slot(s) but 0 passed the filter.\nFirst slot: ${JSON.stringify(allStudentRows[0])}\nCheck console for details.`);
+        console.log('studentRows at save:', JSON.stringify(allStudentRows));
+      }
 
       if(sessionId && rows.length){
-        // Build full payload; fall back to progressively simpler payloads
-        // if columns added by later migrations don't exist in this DB instance.
-        const fullPayload = rows.map(r => ({
+        await insertRows('weekly_session_students', rows.map(r => ({
           session_id: sessionId,
           student_id: r.studentId || null,
           student_name: r.name,
           student_age: (r.age === '' || r.age === null || r.age === undefined) ? null : Number(r.age),
           remark: r.remark || null,
           is_replacement: false,
-          attendance_status: r.attendance
-        }));
-        const minPayload = rows.map(r => ({
-          session_id: sessionId,
-          student_id: r.studentId || null,
-          student_name: r.name
-        }));
-        const barePayload = rows.map(r => ({
-          session_id: sessionId,
-          student_name: r.name || (r.studentId ? `Student ${r.studentId.slice(0,6)}` : '')
-        }));
-        try{
-          await insertRows('weekly_session_students', fullPayload);
-        } catch(e1){
-          if(String(e1.message).includes('PGRST204') || String(e1.message).includes('column')){
-            try{
-              await insertRows('weekly_session_students', minPayload);
-            } catch(e2){
-              if(String(e2.message).includes('PGRST204') || String(e2.message).includes('column')){
-                await insertRows('weekly_session_students', barePayload);
-              } else { throw e2; }
-            }
-          } else { throw e1; }
-        }
+          replacement_from: null,
+          attendance_status: r.attendance || 'pending'
+        })));
       }
       // Replacement students
       const replRows = (m.form.replacementRows || []).filter(r => r.name || r.studentId);
       if(sessionId && replRows.length){
-        const replFull = replRows.map(r => ({
+        await insertRows('weekly_session_students', replRows.map(r => ({
           session_id: sessionId,
           student_id: r.studentId || null,
           student_name: (r.name || '').trim(),
@@ -1743,19 +1722,7 @@ function App(){
           is_replacement: true,
           replacement_from: (r.replacementFrom || '').trim() || null,
           attendance_status: r.attendance || 'pending'
-        }));
-        const replMin = replRows.map(r => ({
-          session_id: sessionId,
-          student_id: r.studentId || null,
-          student_name: (r.name || '').trim()
-        }));
-        try{
-          await insertRows('weekly_session_students', replFull);
-        } catch(e1){
-          if(String(e1.message).includes('PGRST204') || String(e1.message).includes('column')){
-            await insertRows('weekly_session_students', replMin);
-          } else { throw e1; }
-        }
+        })));
         const wk = m.weekStartDate || selectedWeekStart;
         for(const r of replRows){
           if(r.studentId && lt?.id && pendingByKey[`${r.studentId}:${lt.id}:${wk}`]){
