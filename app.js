@@ -570,23 +570,18 @@ function App(){
     });
   }
 
-  // M2: also fetches session_instructors and instructors, then merges so each
-  // session carries instructors:[{id,name}] alongside students:[{id,name}].
+  // M2: students are loaded via PostgREST resource embedding (nested inside
+  // each session row) rather than a separate flat query. This bypasses the
+  // Supabase default 1000-row limit on weekly_session_students — when the
+  // table exceeded 1000 rows, newly saved students were silently cut off.
   async function loadSessions(){
-    const [sessionRows, studentRows, instructorJoinRows, instructorCatalog] = await Promise.all([
-      selectRows('weekly_sessions', '*', '&order=week_start_date.asc,weekday.asc,start_minute.asc,created_at.asc'),
-      selectRows('weekly_session_students', '*', '&order=created_at.asc,student_name.asc'),
+    const [sessionRows, instructorJoinRows, instructorCatalog] = await Promise.all([
+      rest('weekly_sessions?select=*,weekly_session_students(*)&order=week_start_date.asc,weekday.asc,start_minute.asc,created_at.asc'),
       selectRows('session_instructors', '*'),
       selectRows('scheduler_instructors', '*')
     ]);
     const instructorById = {};
     (instructorCatalog || []).forEach(i => { instructorById[i.id] = i; });
-    const studentsBySession = {};
-    (studentRows || []).forEach(r => {
-      const key = String(r.session_id);
-      if(!studentsBySession[key]) studentsBySession[key] = [];
-      studentsBySession[key].push({ id:r.id, studentId:r.student_id || null, name:r.student_name || '', age:(r.student_age === null || r.student_age === undefined ? null : Number(r.student_age)), remark:r.remark || '', isReplacement: !!r.is_replacement, replacementFrom: r.replacement_from || '', attendance: r.attendance_status || 'pending' });
-    });
     const instructorsBySession = {};
     (instructorJoinRows || []).forEach(r => {
       const key = String(r.session_id);
@@ -594,30 +589,33 @@ function App(){
       const inst = instructorById[r.instructor_id];
       if(inst) instructorsBySession[key].push({ id: inst.id, name: inst.name });
     });
-    const merged = (sessionRows || []).map(r => ({
-      id: r.id,
-      weekStartDate: r.week_start_date || weekStartStr(todayStr()),
-      day: Number(r.weekday) - 1,
-      startMinute: Number(r.start_minute),
-      durationMinutes: Number(r.duration_minutes),
-      type: r.lesson_type || '',
-      lessonTypeId: r.lesson_type_id || null,
-      poolId: r.pool_id || null,
-      familyGroupId: r.family_group_id || null,
-      legacyInstructor: r.instructor || '',
-      rescheduledFromDay: r.rescheduled_from_day != null ? Number(r.rescheduled_from_day) - 1 : null,
-      rescheduledFromStartMinute: r.rescheduled_from_start_minute != null ? Number(r.rescheduled_from_start_minute) : null,
-      // Cancellation state — when set, this session is a "ghost" left at
-      // its original spot after being forwarded or rescheduled. The
-      // target_session_id points to the replacement (next-week clone or
-      // new-slot session). Clicking the ghost in the grid offers a
-      // restore action that unwinds back to this row.
-      cancelledAt: r.cancelled_at || null,
-      cancelledReason: r.cancelled_reason || null,
-      cancelledTargetSessionId: r.cancelled_target_session_id || null,
-      students: studentsBySession[String(r.id)] || [],
-      instructors: instructorsBySession[String(r.id)] || []
-    }));
+    const merged = (sessionRows || []).map(r => {
+      const students = (r.weekly_session_students || []).map(s => ({
+        id: s.id, studentId: s.student_id || null, name: s.student_name || '',
+        age: (s.student_age === null || s.student_age === undefined) ? null : Number(s.student_age),
+        remark: s.remark || '', isReplacement: !!s.is_replacement,
+        replacementFrom: s.replacement_from || '', attendance: s.attendance_status || 'pending'
+      }));
+      return {
+        id: r.id,
+        weekStartDate: r.week_start_date || weekStartStr(todayStr()),
+        day: Number(r.weekday) - 1,
+        startMinute: Number(r.start_minute),
+        durationMinutes: Number(r.duration_minutes),
+        type: r.lesson_type || '',
+        lessonTypeId: r.lesson_type_id || null,
+        poolId: r.pool_id || null,
+        familyGroupId: r.family_group_id || null,
+        legacyInstructor: r.instructor || '',
+        rescheduledFromDay: r.rescheduled_from_day != null ? Number(r.rescheduled_from_day) - 1 : null,
+        rescheduledFromStartMinute: r.rescheduled_from_start_minute != null ? Number(r.rescheduled_from_start_minute) : null,
+        cancelledAt: r.cancelled_at || null,
+        cancelledReason: r.cancelled_reason || null,
+        cancelledTargetSessionId: r.cancelled_target_session_id || null,
+        students,
+        instructors: instructorsBySession[String(r.id)] || []
+      };
+    });
     setSessions(merged);
   }
 
