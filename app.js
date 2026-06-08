@@ -87,7 +87,7 @@ function hourLabel(mins){ const h24 = Math.floor(mins / 60), m = mins % 60, ampm
 // Display-only: shorten a full name to its first two words ("Ashton Ang Zi Yang" → "Ashton Ang"). Full name is untouched in the database.
 function shortName(name){ const parts = String(name || '').trim().split(/\s+/).filter(Boolean); return parts.slice(0, 3).join(' '); }
 // clip20: truncate name to 20 chars max (with ellipsis) for tight weekly grid cells
-function clip22(name){ const n = shortName(name); return n.length > 18 ? n.slice(0, 17) + '…' : n; }
+function clip22(name){ const n = shortName(name); return n.length > 20 ? n.slice(0, 19) + '…' : n; }
 // toTitleCase: capitalize first letter of every word; used to auto-correct name inputs
 function toTitleCase(s){ return (s||'').replace(/\b\w/g, c => c.toUpperCase()); }
 // Age shown in years, e.g. " (5)". Blank when unknown.
@@ -6727,13 +6727,13 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
       </div>
     </div>}
     <div className="modal-body">
-      <div className="form-grid form-grid-4">
+      <div className="form-grid">
         <div className="field"><label>Lesson Type</label><select className="select" value={modal.form.type} onChange={(e)=>onTypeChange(e.target.value)}>{lessonTypes.map(x => <option key={x.id} value={x.name}>{x.name}</option>)}</select></div>
         <div className="field"><label>Pool</label><select className="select" value={modal.form.poolId || ''} onChange={(e)=>setForm({ poolId: e.target.value || null })}><option value="">(no pool)</option>{pools.map(p => <option key={p.id} value={p.id}>{p.name} · cap {p.capacity_total}</option>)}</select></div>
         <div className="field"><label>Instructor</label><select className="select" value={modal.form.instructorId || ''} onChange={(e)=>onInstructorChange(e.target.value)}><option value="">(unassigned)</option>{instructors.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></div>
         <div className="field"><label>Duration</label><select className="select" value={String(modal.form.durationMinutes)} onChange={(e)=>setForm({ durationMinutes: Number(e.target.value) })}>{durationOptions.map(d => <option key={d} value={d}>{d} min</option>)}</select></div>
         {/* Plain inline meta line — replaces the boxed Time/Capacity fields. */}
-        <div className="modal-meta-strip" style={{gridColumn:'1 / -1'}}>
+        <div className="modal-meta-strip">
           <span>⏱ <strong>{formatRange(modal.startMinute, modal.form.durationMinutes)}</strong></span>
           {previewMax > 0
             ? <span className={previewStatus==='over'?'meta-warn':''}>👥 <strong>{previewStudents} / {previewMax}</strong>{previewStatus==='over'?' Over':previewStatus==='full'?' Full':previewStatus==='tight'?' Tight':''}</span>
@@ -6784,6 +6784,51 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
               </div>;
             })}
           </div>
+          {/* ── Quick Add Groups ─────────────────────────────────────
+              Show family-group chips below the swimmer list. Two-layer
+              filter:
+                (a) STRICT IDENTITY — the group's package's lesson_type
+                    must equal this session's lesson_type. A group is
+                    bound to one (lesson_type, package) by its package_id;
+                    that's the identity that decides whether it belongs
+                    in this session. Groups without a package_id are
+                    hidden (misconfigured — Billing Preview surfaces them).
+                (b) NON-EMPTY UTILITY — at least one member must still
+                    be addable (enrolled in this lesson type AND not
+                    already in this session). Empty groups and groups
+                    whose members are all already added produce no
+                    useful click, so we hide them.
+              Together: a chip only appears when clicking it would
+              actually add at least one swimmer. */}
+          {(() => {
+            const ltId = currentLt?.id;
+            if(!ltId) return null;
+            const existingIds = new Set((modal.form.studentRows || []).filter(r => r.studentId).map(r => r.studentId));
+            const eligibleGroups = (familyGroups || []).filter(g => {
+              // (a) Strict package identity
+              if(!g.packageId) return false;
+              const pkg = packageById?.(g.packageId);
+              if(!pkg || pkg.lesson_type_id !== ltId) return false;
+              // (b) At least one addable member
+              const members = (membersByGroup && membersByGroup[g.id]) || [];
+              const addable = members.filter(m => (m.lessonTypeIds || []).includes(ltId) && !existingIds.has(m.id));
+              return addable.length > 0;
+            });
+            if(!eligibleGroups.length) return null;
+            return <div className="quick-add-groups">
+              <span className="quick-add-label">Quick add group:</span>
+              {eligibleGroups.map(g => {
+                const members = (membersByGroup && membersByGroup[g.id]) || [];
+                const addable = members.filter(m => (m.lessonTypeIds || []).includes(ltId) && !existingIds.has(m.id));
+                const isBound = g.groupType === 'bound';
+                return <button key={g.id} type="button" className={`group-chip ${isBound?'group-chip-bound':''}`}
+                  onClick={() => quickAddGroup(g)}
+                  title={isBound ? `Bound group — all ${addable.length} members must attend together` : `Discount group — click to add ${addable.length} member${addable.length===1?'':'s'} not yet in this session`}>
+                  {isBound ? '🔗' : '👪'} {g.name} · {addable.length}
+                </button>;
+              })}
+            </div>;
+          })()}
         </div>
       </div>
 
