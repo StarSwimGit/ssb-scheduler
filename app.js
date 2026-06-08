@@ -1682,23 +1682,34 @@ function App(){
         if(!sessionId) throw new Error('Session was created but no ID was returned — cannot save students.');
       }
       // Regular enrolled students
-      const rows = (m.form.studentRows || []).map(r => ({
+      const allStudentRows = m.form.studentRows || [];
+      const rows = allStudentRows.map(r => ({
         studentId: r.studentId || null,
         name: (r.name || '').trim(),
         age: r.age,
         remark: (r.remark || '').trim(),
         attendance: r.attendance || 'pending'
       })).filter(r => r.name || r.studentId);
+
+      // ── DIAGNOSTIC ─────────────────────────────────────────────────
+      // This alert shows exactly what saveSession sees. Remove once fixed.
+      setStatus(`Saving session — ${rows.length} student(s) to write (form had ${allStudentRows.length} slot(s), ${allStudentRows.filter(r=>r.studentId||r.name).length} filled).`);
+      // ───────────────────────────────────────────────────────────────
+
       if(sessionId && rows.length){
-        await insertRows('weekly_session_students', rows.map(r => ({
-          session_id: sessionId,
-          student_id: r.studentId,
-          student_name: r.name,
-          student_age: (r.age === '' || r.age === null || r.age === undefined) ? null : Number(r.age),
-          remark: r.remark || null,
-          is_replacement: false,
-          attendance_status: r.attendance
-        })));
+        try{
+          await insertRows('weekly_session_students', rows.map(r => ({
+            session_id: sessionId,
+            student_id: r.studentId,
+            student_name: r.name,
+            student_age: (r.age === '' || r.age === null || r.age === undefined) ? null : Number(r.age),
+            remark: r.remark || null,
+            is_replacement: false,
+            attendance_status: r.attendance
+          })));
+        } catch(stuErr){
+          throw new Error(`Student insert failed (${rows.length} students, session ${sessionId}): ${stuErr.message}`);
+        }
       }
       // Replacement students (group classes) — one-off, tagged separately
       const replRows = (m.form.replacementRows || []).filter(r => r.name || r.studentId);
