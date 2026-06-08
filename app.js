@@ -1687,7 +1687,6 @@ function App(){
           student_age: (r.age === '' || r.age === null || r.age === undefined) ? null : Number(r.age),
           remark: r.remark || null,
           is_replacement: false,
-          is_new: false,
           attendance_status: r.attendance
         })));
       }
@@ -1701,7 +1700,6 @@ function App(){
           student_age: r.age != null ? Number(r.age) : null,
           remark: r.remark || null,
           is_replacement: true,
-          is_new: false,
           replacement_from: (r.replacementFrom || '').trim() || null,
           attendance_status: r.attendance || 'pending'
         })));
