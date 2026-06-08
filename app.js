@@ -87,7 +87,7 @@ function hourLabel(mins){ const h24 = Math.floor(mins / 60), m = mins % 60, ampm
 // Display-only: shorten a full name to its first two words ("Ashton Ang Zi Yang" → "Ashton Ang"). Full name is untouched in the database.
 function shortName(name){ const parts = String(name || '').trim().split(/\s+/).filter(Boolean); return parts.slice(0, 3).join(' '); }
 // clip20: truncate name to 20 chars max (with ellipsis) for tight weekly grid cells
-function clip22(name){ const n = shortName(name); return n.length > 20 ? n.slice(0, 19) + '…' : n; }
+function clip22(name){ const n = shortName(name); return n.length > 18 ? n.slice(0, 17) + '…' : n; }
 // toTitleCase: capitalize first letter of every word; used to auto-correct name inputs
 function toTitleCase(s){ return (s||'').replace(/\b\w/g, c => c.toUpperCase()); }
 // Age shown in years, e.g. " (5)". Blank when unknown.
@@ -277,7 +277,22 @@ function App(){
   const [selectedPoolId,setSelectedPoolId] = useState(null);
   const [enabledTypes,setEnabledTypes] = useState(null);
   const [selectedInstructors,setSelectedInstructors] = useState(new Set());
-  const [modal,setModal] = useState(null);
+  const [modal,_setModal] = useState(null);
+  // modalRef is always the latest modal value — updated synchronously
+  // inside every setModal call so saveSession never reads stale data.
+  const modalRef = React.useRef(null);
+  function setModal(valOrFn){
+    if(typeof valOrFn === 'function'){
+      _setModal(prev => {
+        const next = valOrFn(prev);
+        modalRef.current = next;
+        return next;
+      });
+    } else {
+      modalRef.current = valOrFn;
+      _setModal(valOrFn);
+    }
+  }
   const [saveBusy,setSaveBusy] = useState(false);
   const [remarkDraft,setRemarkDraft] = useState('');
   // ── Invoicing state ────────────────────────────────────────────────
@@ -1633,47 +1648,115 @@ function App(){
   // wiped-and-rewritten on every save — the dataset is small enough that the
   // simplicity is worth the extra round-trip.
   async function saveSession(){
-    if(!modal) return;
+    // Always read the latest modal via ref — avoids a stale-closure race where
+    // the user clicks Save immediately after picking a student before React
+    // has committed the state update.
+    const m = modalRef.current;
+    if(!m) return;
     try{
       setSaveBusy(true); setError('');
-      const lt = lessonTypeByName(modal.form.type) || lessonTypeById(modal.form.lessonTypeId);
-      const inst = options.instructors.find(i => i.id === modal.form.instructorId) || instructorByName(modal.form.instructorName);
+      const lt = lessonTypeByName(m.form.type) || lessonTypeById(m.form.lessonTypeId);
+      const inst = options.instructors.find(i => i.id === m.form.instructorId) || instructorByName(m.form.instructorName);
       const payload = {
-        week_start_date: modal.weekStartDate || selectedWeekStart,
-        weekday: modal.day + 1,
-        start_minute: modal.startMinute,
-        duration_minutes: Number(modal.form.durationMinutes),
-        lesson_type: modal.form.type || '',
+        week_start_date: m.weekStartDate || selectedWeekStart,
+        weekday: m.day + 1,
+        start_minute: m.startMinute,
+        duration_minutes: Number(m.form.durationMinutes),
+        lesson_type: m.form.type || '',
         lesson_type_id: lt ? lt.id : null,
-        pool_id: modal.form.poolId || null,
-        family_group_id: null,   // sessions are no longer bound to a group; quick-add is a one-time add action
+        pool_id: m.form.poolId || null,
+        family_group_id: null,
         instructor: inst ? inst.name : '',
-        // Reschedule tracking (personal classes): store original position so
-        // duplicate week can restore it. Null = not rescheduled.
-        rescheduled_from_day: modal.rescheduledFromDay != null ? modal.rescheduledFromDay + 1 : null,
-        rescheduled_from_start_minute: modal.rescheduledFromStartMinute ?? null
+        rescheduled_from_day: m.rescheduledFromDay != null ? m.rescheduledFromDay + 1 : null,
+        rescheduled_from_start_minute: m.rescheduledFromStartMinute ?? null
       };
-      let sessionId = modal.id;
-      if(modal.id){
-        const updated = await patchRows('weekly_sessions', { id: modal.id }, payload);
-        sessionId = updated?.[0]?.id || modal.id;
+      let sessionId = m.id;
+      if(m.id){
+        const updated = await patchRows('weekly_sessions', { id: m.id }, payload);
+        sessionId = updated?.[0]?.id || m.id;
         await deleteRows('weekly_session_students', { session_id: sessionId });
         await deleteRows('session_instructors', { session_id: sessionId });
       } else {
         const inserted = await insertRows('weekly_sessions', payload);
         sessionId = inserted?.[0]?.id;
+        if(!sessionId) throw new Error('Session was created but no ID was returned — cannot save students.');
       }
       // Regular enrolled students
-      const rows = (modal.form.studentRows || []).map(r => ({ studentId:r.studentId || null, name:(r.name || '').trim(), age:r.age, remark:(r.remark || '').trim(), attendance: r.attendance || 'pending' })).filter(r => r.name || r.studentId);
+      const allStudentRows = m.form.studentRows || [];
+      const rows = allStudentRows.map(r => ({
+        studentId: r.studentId || null,
+        name: (r.name || '').trim(),
+        age: r.age,
+        remark: (r.remark || '').trim(),
+        attendance: r.attendance || 'pending'
+      })).filter(r => r.name || r.studentId);
+
+      // ── DIAGNOSTIC ─────────────────────────────────────────────────
+      // This alert shows exactly what saveSession sees. Remove once fixed.
+      setStatus(`Saving session — ${rows.length} student(s) to write (form had ${allStudentRows.length} slot(s), ${allStudentRows.filter(r=>r.studentId||r.name).length} filled).`);
+      // ───────────────────────────────────────────────────────────────
+
       if(sessionId && rows.length){
-        await insertRows('weekly_session_students', rows.map(r => ({ session_id: sessionId, student_id: r.studentId, student_name: r.name, student_age: (r.age === '' || r.age === null || r.age === undefined) ? null : Number(r.age), remark: r.remark || null, is_replacement: false, attendance_status: r.attendance })));
+        // Build full payload; fall back to progressively simpler payloads
+        // if columns added by later migrations don't exist in this DB instance.
+        const fullPayload = rows.map(r => ({
+          session_id: sessionId,
+          student_id: r.studentId || null,
+          student_name: r.name,
+          student_age: (r.age === '' || r.age === null || r.age === undefined) ? null : Number(r.age),
+          remark: r.remark || null,
+          is_replacement: false,
+          attendance_status: r.attendance
+        }));
+        const minPayload = rows.map(r => ({
+          session_id: sessionId,
+          student_id: r.studentId || null,
+          student_name: r.name
+        }));
+        const barePayload = rows.map(r => ({
+          session_id: sessionId,
+          student_name: r.name || (r.studentId ? `Student ${r.studentId.slice(0,6)}` : '')
+        }));
+        try{
+          await insertRows('weekly_session_students', fullPayload);
+        } catch(e1){
+          if(String(e1.message).includes('PGRST204') || String(e1.message).includes('column')){
+            try{
+              await insertRows('weekly_session_students', minPayload);
+            } catch(e2){
+              if(String(e2.message).includes('PGRST204') || String(e2.message).includes('column')){
+                await insertRows('weekly_session_students', barePayload);
+              } else { throw e2; }
+            }
+          } else { throw e1; }
+        }
       }
-      // Replacement students (group classes) — one-off, tagged separately
-      const replRows = (modal.form.replacementRows || []).filter(r => r.name || r.studentId);
+      // Replacement students
+      const replRows = (m.form.replacementRows || []).filter(r => r.name || r.studentId);
       if(sessionId && replRows.length){
-        await insertRows('weekly_session_students', replRows.map(r => ({ session_id: sessionId, student_id: r.studentId || null, student_name: (r.name || '').trim(), student_age: r.age != null ? Number(r.age) : null, remark: r.remark || null, is_replacement: true, replacement_from: (r.replacementFrom || '').trim() || null, attendance_status: r.attendance || 'pending' })));
-        // Clear pending-replacement entries for swimmers who were placed by this save.
-        const wk = modal.weekStartDate || selectedWeekStart;
+        const replFull = replRows.map(r => ({
+          session_id: sessionId,
+          student_id: r.studentId || null,
+          student_name: (r.name || '').trim(),
+          student_age: r.age != null ? Number(r.age) : null,
+          remark: r.remark || null,
+          is_replacement: true,
+          replacement_from: (r.replacementFrom || '').trim() || null,
+          attendance_status: r.attendance || 'pending'
+        }));
+        const replMin = replRows.map(r => ({
+          session_id: sessionId,
+          student_id: r.studentId || null,
+          student_name: (r.name || '').trim()
+        }));
+        try{
+          await insertRows('weekly_session_students', replFull);
+        } catch(e1){
+          if(String(e1.message).includes('PGRST204') || String(e1.message).includes('column')){
+            await insertRows('weekly_session_students', replMin);
+          } else { throw e1; }
+        }
+        const wk = m.weekStartDate || selectedWeekStart;
         for(const r of replRows){
           if(r.studentId && lt?.id && pendingByKey[`${r.studentId}:${lt.id}:${wk}`]){
             try{ await deleteRows('replacement_pending', { student_id: r.studentId, week_start_date: wk, lesson_type_id: lt.id }); } catch(_){}
@@ -1684,11 +1767,6 @@ function App(){
       if(sessionId && inst){
         await insertRows('session_instructors', [{ session_id: sessionId, instructor_id: inst.id }]);
       }
-      // Auto-seed credit balance for any swimmer placed in this session who
-      // doesn't already have one. All lesson types are credit-based now —
-      // not just personals. Default is 4 credits/month (matches the
-      // 4-weeks-1-lesson-per-week cadence); a package with billing_count
-      // overrides that default.
       if(lt && lt.id && sessionId){
         const pkg = (options.packages || []).find(p => p.lesson_type_id === lt.id && (p.name || '').toLowerCase() === 'normal' && p.is_active !== false);
         const initCredits = pkg?.billing_count ? Number(pkg.billing_count) : 4;
@@ -1697,20 +1775,13 @@ function App(){
           const key = creditKey(r.studentId, lt.id);
           if(!creditByKey[key] && initCredits > 0){
             try{ await insertRows('student_credit_balances', [{ student_id: r.studentId, lesson_type_id: lt.id, initial_balance: initCredits, remaining_balance: initCredits }]); }
-            catch(_){} // ignore duplicate-key on parallel saves
+            catch(_){}
           }
         }
         await loadCreditBalances();
       }
-      // Attendance → credit deltas. Compare each saved student's new
-      // attendance to the originalAttendance snapshot. Any pending → marked
-      // transition deducts a credit (one lesson consumed); any marked →
-      // pending restores one. attended ↔ absent doesn't change credits.
-      // adjustCredit is a no-op when the swimmer has no balance row, which
-      // is exactly the right behavior for monthly-package swimmers — their
-      // attendance is still recorded for reporting, just no credit math.
       if(sessionId && lt?.id){
-        const orig = modal.originalAttendance || {};
+        const orig = m.originalAttendance || {};
         const allSavedRows = [...rows, ...replRows.map(r => ({ studentId: r.studentId, attendance: r.attendance || 'pending' }))];
         const isConsuming = (s) => s === 'attended' || s === 'absent';
         for(const r of allSavedRows){
@@ -1723,7 +1794,6 @@ function App(){
           } else if(isConsuming(oldS) && !isConsuming(newS)){
             await adjustCredit(r.studentId, lt.id, 1);
           }
-          // attended ↔ absent: no credit change (both already consumed the lesson)
         }
       }
       await loadSessions();
@@ -6526,7 +6596,7 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
     return [...all].sort((a,b)=>a-b);
   }, [lessonTypes, modal?.form?.durationMinutes]);
 
-  function setForm(patch){ setModal({ ...modal, form: { ...modal.form, ...patch } }); }
+  function setForm(patch){ setModal(prev => prev ? { ...prev, form: { ...prev.form, ...patch } } : prev); }
 
   function onTypeChange(name){
     const lt = lessonTypes.find(t => t.name === name);
@@ -6727,13 +6797,13 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
       </div>
     </div>}
     <div className="modal-body">
-      <div className="form-grid">
+      <div className="form-grid form-grid-4">
         <div className="field"><label>Lesson Type</label><select className="select" value={modal.form.type} onChange={(e)=>onTypeChange(e.target.value)}>{lessonTypes.map(x => <option key={x.id} value={x.name}>{x.name}</option>)}</select></div>
         <div className="field"><label>Pool</label><select className="select" value={modal.form.poolId || ''} onChange={(e)=>setForm({ poolId: e.target.value || null })}><option value="">(no pool)</option>{pools.map(p => <option key={p.id} value={p.id}>{p.name} · cap {p.capacity_total}</option>)}</select></div>
         <div className="field"><label>Instructor</label><select className="select" value={modal.form.instructorId || ''} onChange={(e)=>onInstructorChange(e.target.value)}><option value="">(unassigned)</option>{instructors.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></div>
         <div className="field"><label>Duration</label><select className="select" value={String(modal.form.durationMinutes)} onChange={(e)=>setForm({ durationMinutes: Number(e.target.value) })}>{durationOptions.map(d => <option key={d} value={d}>{d} min</option>)}</select></div>
         {/* Plain inline meta line — replaces the boxed Time/Capacity fields. */}
-        <div className="modal-meta-strip">
+        <div className="modal-meta-strip" style={{gridColumn:'1 / -1'}}>
           <span>⏱ <strong>{formatRange(modal.startMinute, modal.form.durationMinutes)}</strong></span>
           {previewMax > 0
             ? <span className={previewStatus==='over'?'meta-warn':''}>👥 <strong>{previewStudents} / {previewMax}</strong>{previewStatus==='over'?' Over':previewStatus==='full'?' Full':previewStatus==='tight'?' Tight':''}</span>
@@ -6784,51 +6854,6 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
               </div>;
             })}
           </div>
-          {/* ── Quick Add Groups ─────────────────────────────────────
-              Show family-group chips below the swimmer list. Two-layer
-              filter:
-                (a) STRICT IDENTITY — the group's package's lesson_type
-                    must equal this session's lesson_type. A group is
-                    bound to one (lesson_type, package) by its package_id;
-                    that's the identity that decides whether it belongs
-                    in this session. Groups without a package_id are
-                    hidden (misconfigured — Billing Preview surfaces them).
-                (b) NON-EMPTY UTILITY — at least one member must still
-                    be addable (enrolled in this lesson type AND not
-                    already in this session). Empty groups and groups
-                    whose members are all already added produce no
-                    useful click, so we hide them.
-              Together: a chip only appears when clicking it would
-              actually add at least one swimmer. */}
-          {(() => {
-            const ltId = currentLt?.id;
-            if(!ltId) return null;
-            const existingIds = new Set((modal.form.studentRows || []).filter(r => r.studentId).map(r => r.studentId));
-            const eligibleGroups = (familyGroups || []).filter(g => {
-              // (a) Strict package identity
-              if(!g.packageId) return false;
-              const pkg = packageById?.(g.packageId);
-              if(!pkg || pkg.lesson_type_id !== ltId) return false;
-              // (b) At least one addable member
-              const members = (membersByGroup && membersByGroup[g.id]) || [];
-              const addable = members.filter(m => (m.lessonTypeIds || []).includes(ltId) && !existingIds.has(m.id));
-              return addable.length > 0;
-            });
-            if(!eligibleGroups.length) return null;
-            return <div className="quick-add-groups">
-              <span className="quick-add-label">Quick add group:</span>
-              {eligibleGroups.map(g => {
-                const members = (membersByGroup && membersByGroup[g.id]) || [];
-                const addable = members.filter(m => (m.lessonTypeIds || []).includes(ltId) && !existingIds.has(m.id));
-                const isBound = g.groupType === 'bound';
-                return <button key={g.id} type="button" className={`group-chip ${isBound?'group-chip-bound':''}`}
-                  onClick={() => quickAddGroup(g)}
-                  title={isBound ? `Bound group — all ${addable.length} members must attend together` : `Discount group — click to add ${addable.length} member${addable.length===1?'':'s'} not yet in this session`}>
-                  {isBound ? '🔗' : '👪'} {g.name} · {addable.length}
-                </button>;
-              })}
-            </div>;
-          })()}
         </div>
       </div>
 
