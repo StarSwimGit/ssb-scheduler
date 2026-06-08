@@ -1709,6 +1709,10 @@ function App(){
           replacement_from: null,
           attendance_status: r.attendance || 'pending'
         })));
+        // ── VERIFY: immediately read back what's in the DB ──
+        const verify = await selectRows('weekly_session_students', '*', `&session_id=eq.${sessionId}`);
+        console.log('DB verify after insert:', verify?.length, 'rows for session', sessionId, JSON.stringify(verify));
+        setStatus(`Wrote ${rows.length} student(s) → DB shows ${verify?.length ?? '?'} for this session. sessionId=${sessionId}`);
       }
       // Replacement students
       const replRows = (m.form.replacementRows || []).filter(r => r.name || r.studentId);
