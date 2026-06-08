@@ -277,12 +277,22 @@ function App(){
   const [selectedPoolId,setSelectedPoolId] = useState(null);
   const [enabledTypes,setEnabledTypes] = useState(null);
   const [selectedInstructors,setSelectedInstructors] = useState(new Set());
-  const [modal,setModal] = useState(null);
-  // modalRef always points to the latest modal — used in saveSession so that
-  // even if the user clicks Save immediately after picking a student (before
-  // React has flushed the state update), we still read the correct rows.
+  const [modal,_setModal] = useState(null);
+  // modalRef is always the latest modal value — updated synchronously
+  // inside every setModal call so saveSession never reads stale data.
   const modalRef = React.useRef(null);
-  React.useEffect(() => { modalRef.current = modal; });
+  function setModal(valOrFn){
+    if(typeof valOrFn === 'function'){
+      _setModal(prev => {
+        const next = valOrFn(prev);
+        modalRef.current = next;
+        return next;
+      });
+    } else {
+      modalRef.current = valOrFn;
+      _setModal(valOrFn);
+    }
+  }
   const [saveBusy,setSaveBusy] = useState(false);
   const [remarkDraft,setRemarkDraft] = useState('');
   // ── Invoicing state ────────────────────────────────────────────────
