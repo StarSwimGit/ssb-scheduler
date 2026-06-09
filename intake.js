@@ -88,6 +88,8 @@ function IntakeForm(){
   const [gName, setGName] = useState('');
   const [gEmail, setGEmail] = useState('');
   const [gPhone, setGPhone] = useState('');
+  const [gIC,    setGIC]    = useState('');
+  const [gTIN,   setGTIN]   = useState('');
 
   // Children — array of { name, dob, gender }. Always at least one row.
   const [children, setChildren] = useState([{ name:'', dob:'', gender:null }]);
@@ -156,6 +158,8 @@ function IntakeForm(){
           guardian_name: gName.trim(),
           guardian_email: gEmail.trim(),
           guardian_phone: gPhone.trim(),
+          guardian_ic:  gIC.trim()  || null,
+          guardian_tin: gTIN.trim() || null,
           emergency_name: emergencyName,
           emergency_phone: emergencyPhone,
           emergency_relationship: emergencyRel,
@@ -230,6 +234,10 @@ function IntakeForm(){
       <div className="field-row">
         <div className="field"><label>Email<span className="req">*</span></label><input className="input" type="email" value={gEmail} onChange={e=>setGEmail(e.target.value)} placeholder="email@example.com" autoComplete="email" inputMode="email" /></div>
         <div className="field"><label>Phone<span className="req">*</span></label><input className="input" type="tel" value={gPhone} onChange={e=>setGPhone(e.target.value)} placeholder="+60 1X-XXX XXXX" autoComplete="tel" inputMode="tel" /></div>
+      </div>
+      <div className="field-row">
+        <div className="field"><label>IC No. <span className="opt-label">optional</span></label><input className="input" value={gIC} onChange={e=>setGIC(e.target.value)} placeholder="e.g. 901231-14-5678" /></div>
+        <div className="field"><label>TIN No. <span className="opt-label">optional</span></label><input className="input" value={gTIN} onChange={e=>setGTIN(e.target.value)} placeholder="e.g. IG12345678090" /></div>
       </div>
     </div>
 
