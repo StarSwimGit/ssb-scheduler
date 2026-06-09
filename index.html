@@ -24,7 +24,13 @@
     }
     body{font-family:Inter,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
     button,input,select,textarea{font:inherit;color:inherit}
-    .header{position:sticky;top:0;z-index:50;background:var(--surface);border-bottom:1px solid var(--border);padding:0 22px}
+    /* ── Nav dropdown groups ─────────────────────────────────────── */
+    .nav-group{position:relative;display:inline-block}
+    .nav-group-trigger{padding-right:10px !important}
+    .nav-group-menu{position:absolute;top:calc(100% + 4px);left:0;background:#0C2340;border:1px solid #1A3050;border-radius:8px;padding:4px;z-index:200;min-width:170px;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+    .nav-group-item{display:block;width:100%;padding:6px 12px;border:none;background:transparent;color:#94A3B8;font-weight:600;font-size:11.5px;font-family:inherit;cursor:pointer;border-radius:6px;text-align:left}
+    .nav-group-item:hover{background:rgba(6,182,212,.1);color:#E2E8F0}
+    .nav-group-item.on{background:rgba(6,182,212,.18);color:#67E8F9}background:var(--surface);border-bottom:1px solid var(--border);padding:0 22px}
     .header-inner{max-width:1500px;min-height:54px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:6px 0;flex-wrap:wrap}
     .brand{display:flex;align-items:center;gap:10px}
     .logo{width:34px;height:34px;border-radius:50%;object-fit:contain;display:block;flex-shrink:0;box-shadow:0 4px 12px rgba(28,156,224,.28)}
