@@ -260,6 +260,8 @@ function PeriodNav({ rangeLabel, onPrev, onNext, onToday, isCurrent, children })
 function App(){
   const [view,setView] = useState('week');
   const [adminSection,setAdminSection] = useState('summary');
+  const [accountSection,setAccountSection] = useState('accounts'); // 'accounts'|'familyGroups'|'swimmers'
+  const [openDropdown,setOpenDropdown] = useState(null); // 'schedule'|'accounts'|'billing'|'admin'
   const [loading,setLoading] = useState(true);
   const [status,setStatus] = useState('');
   const [error,setError] = useState('');
@@ -1559,10 +1561,10 @@ function App(){
     setModal({ mode:'add', id:null, weekStartDate: selectedWeekStart, day, startMinute, form: defaultFormForStart(startMinute, poolId) });
   }
 
-  // Same as openAdd but uses an explicit weekStartDate — used by EnrollView
-  // which may be showing a different week than the WeekView's selectedWeekStart.
-  function openAddForWeek(weekStartDate, day, slot, poolId){
-    const startMinute = slotToMinute(slot);
+  // Same as openAdd but uses an explicit weekStartDate and accepts startMinute
+  // directly (not a slot index) — used by EnrollView which passes raw minute
+  // values from its hour grid and doesn't have access to App's minuteToSlot.
+  function openAddForWeek(weekStartDate, day, startMinute, poolId){
     setModal({ mode:'add', id:null, weekStartDate, day, startMinute, form: defaultFormForStart(startMinute, poolId) });
   }
 
@@ -2562,14 +2564,45 @@ function App(){
         <div className="header-summary"><span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalStudents}</span> students · <span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalSessions}</span> sessions · <span style={{color:'var(--primary)',fontWeight:800}}>{new Date().toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'})}</span></div>
         <div className="header-status"><span className={`status-dot ${loading?'is-loading':(error?'is-error':'is-ok')}`} aria-hidden="true" />{loading ? 'Connecting…' : (error ? 'Error' : (status || 'Ready'))}</div>
       </div>
-      <div className="header-tabs">
+      <div className="header-tabs" onClick={()=>setOpenDropdown(null)}>
         <div className="tabs">
-          {['day','week','month','accounts','students','enroll'].map(v => <button key={v} className={`tab ${view===v?'active':''}`} onClick={() => setView(v)}>{v==='week'?'📅 Weekly':v==='day'?'📋 Daily':v==='month'?'🗓️ Monthly':v==='accounts'?'👤 Accounts':v==='students'?'👥 Swimmers':'🔍 Explore'}</button>)}
-          {/* Intake opens intake.html in a new tab. */}
-          <button type="button" className="tab tab-link" onClick={() => window.open('./intake.html', '_blank', 'noopener,noreferrer')} title="Open the digital parent intake form in a new tab">📝 Intake <span aria-hidden="true" style={{marginLeft:3,opacity:.6,fontSize:11}}>↗</span></button>
+          <div className="nav-group" onClick={e=>e.stopPropagation()}>
+            <button className={`tab nav-group-trigger ${['day','week','month'].includes(view)?'active':''}`} onClick={()=>setOpenDropdown(openDropdown==='schedule'?null:'schedule')}>📅 Schedule ▾</button>
+            {openDropdown==='schedule' && <div className="nav-group-menu">
+              <button className={`nav-group-item ${view==='week'?'on':''}`} onClick={()=>{setView('week');setOpenDropdown(null);}}>📅 Weekly</button>
+              <button className={`nav-group-item ${view==='day'?'on':''}`} onClick={()=>{setView('day');setOpenDropdown(null);}}>📋 Daily</button>
+              <button className={`nav-group-item ${view==='month'?'on':''}`} onClick={()=>{setView('month');setOpenDropdown(null);}}>🗓 Monthly</button>
+            </div>}
+          </div>
+          <button className={`tab ${view==='enroll'?'active':''}`} onClick={()=>{setView('enroll');setOpenDropdown(null);}}>🔍 Explore</button>
+          <div className="nav-group" onClick={e=>e.stopPropagation()}>
+            <button className={`tab nav-group-trigger ${['accounts','students'].includes(view)?'active':''}`} onClick={()=>setOpenDropdown(openDropdown==='accounts'?null:'accounts')}>👤 Accounts ▾</button>
+            {openDropdown==='accounts' && <div className="nav-group-menu">
+              <button className={`nav-group-item ${view==='accounts'&&accountSection==='accounts'?'on':''}`} onClick={()=>{setView('accounts');setAccountSection('accounts');setOpenDropdown(null);}}>👤 Accounts</button>
+              <button className={`nav-group-item ${view==='accounts'&&accountSection==='familyGroups'?'on':''}`} onClick={()=>{setView('accounts');setAccountSection('familyGroups');setOpenDropdown(null);}}>👪 Family Groups</button>
+              <button className={`nav-group-item ${view==='students'?'on':''}`} onClick={()=>{setView('students');setOpenDropdown(null);}}>👥 Swimmers</button>
+            </div>}
+          </div>
+          <div className="nav-group" onClick={e=>e.stopPropagation()}>
+            <button className={`tab nav-group-trigger ${view==='settings'&&['invoices','receipts','pendingCredits','aging','codes'].includes(adminSection)?'active':''}`} onClick={()=>setOpenDropdown(openDropdown==='billing'?null:'billing')}>💰 Billing ▾</button>
+            {openDropdown==='billing' && <div className="nav-group-menu">
+              <button className={`nav-group-item ${adminSection==='invoices'?'on':''}`} onClick={()=>{setView('settings');setAdminSection('invoices');setOpenDropdown(null);}}>🧾 Invoices</button>
+              <button className={`nav-group-item ${adminSection==='receipts'?'on':''}`} onClick={()=>{setView('settings');setAdminSection('receipts');setOpenDropdown(null);}}>💰 Receipts</button>
+              <button className={`nav-group-item ${adminSection==='pendingCredits'?'on':''}`} onClick={()=>{setView('settings');setAdminSection('pendingCredits');setOpenDropdown(null);}}>⏳ Pending Credits</button>
+              <button className={`nav-group-item ${adminSection==='aging'?'on':''}`} onClick={()=>{setView('settings');setAdminSection('aging');setOpenDropdown(null);}}>📈 Aging Report</button>
+              <button className={`nav-group-item ${adminSection==='codes'?'on':''}`} onClick={()=>{setView('settings');setAdminSection('codes');setOpenDropdown(null);}}>🎟 Referral &amp; Codes</button>
+            </div>}
+          </div>
+          <button type="button" className="tab tab-link" onClick={() => window.open('./intake.html','_blank','noopener,noreferrer')}>📝 Intake ↗</button>
         </div>
-        <div className="tabs tabs-right">
-          <button className={`tab ${view==='settings'?'active':''}`} onClick={() => setView('settings')}>🔧 Admin</button>
+        <div className="tabs tabs-right" style={{position:'relative'}} onClick={e=>e.stopPropagation()}>
+          <button className={`tab nav-group-trigger ${view==='settings'&&['summary','pools','instructors','lessonTypes'].includes(adminSection)?'active':''}`} onClick={()=>setOpenDropdown(openDropdown==='admin'?null:'admin')}>🔧 Admin ▾</button>
+          {openDropdown==='admin' && <div className="nav-group-menu" style={{right:0,left:'auto'}}>
+            <button className={`nav-group-item ${adminSection==='summary'?'on':''}`} onClick={()=>{setView('settings');setAdminSection('summary');setOpenDropdown(null);}}>📊 Summary</button>
+            <button className={`nav-group-item ${adminSection==='pools'?'on':''}`} onClick={()=>{setView('settings');setAdminSection('pools');setOpenDropdown(null);}}>🏊 Pools</button>
+            <button className={`nav-group-item ${adminSection==='instructors'?'on':''}`} onClick={()=>{setView('settings');setAdminSection('instructors');setOpenDropdown(null);}}>🏅 Instructors</button>
+            <button className={`nav-group-item ${adminSection==='lessonTypes'?'on':''}`} onClick={()=>{setView('settings');setAdminSection('lessonTypes');setOpenDropdown(null);}}>📚 Lesson Types</button>
+          </div>}
         </div>
       </div>
     </div></div>
@@ -2666,6 +2699,8 @@ function App(){
       />}
 
       {!loading && view==='accounts' && <ParentsView
+        accountSection={accountSection}
+        setAccountSection={setAccountSection}
         parentGroups={parentGroups}
         lessonTypes={activeLessonTypes()}
         lessonTypeById={lessonTypeById}
@@ -2768,13 +2803,8 @@ function App(){
         <div className="admin-hub-content">
           {adminSection === 'summary' && <SummaryView summary={summary} pools={activePools()} />}
           {adminSection === 'receipts' && <ReceiptsView
-            subscriptions={subscriptions}
-            students={students}
-            studentById={studentById}
-            familyGroups={familyGroups}
-            groupById={groupById}
-            lessonTypeById={lessonTypeById}
-            cancelSubscription={cancelSubscription}
+            pmts={pmts}
+            invoices={invoices}
           />}
           {adminSection === 'invoices' && <InvoicesView
             invoices={invoices}
@@ -4433,7 +4463,7 @@ function EnrollView({ sessions, students, studentById, lessonTypes, lessonTypeBy
                 </div>;
               })}
               {onAdd && <div className="enroll-add-btn" title="Add session" onClick={()=>{
-                try{ onAdd(di, minuteToSlot(h), null, weekStart); }
+                try{ onAdd(di, h, null, weekStart); }
                 catch(err){ console.error('EnrollView + error:', err); alert('Could not open add session: ' + err.message); }
               }}>+</div>}
             </div>;
@@ -4967,9 +4997,10 @@ function swimmerAccent(idx){ return SWIMMER_ACCENTS[idx % SWIMMER_ACCENTS.length
 //     subscription log, ledger
 // The Swimmers page is intentionally read-only — use this page to admin.
 // ============================================================================
-function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, packageById, familyGroups, groupById, membersByGroup, creditByKey, subscriptions, addStudent, updateStudent, deleteStudent, addGroup, updateGroup, deleteGroup, setStudentGroup, addStudentToGroup, removeStudentFromGroup, groupIdsByStudent, addSubscription, cancelSubscription, adjustBalanceTo, scheduleByStudent, sessions, poolById, selectedWeekStart, createInvoice, setAdminSection, onJumpToSession, setView }){
-  // ── Sub-view: which Accounts admin pane is showing ──────────────────
-  const [adminView, setAdminView] = useState('accounts');
+function ParentsView({ accountSection, setAccountSection, parentGroups, lessonTypes, lessonTypeById, packages, packageById, familyGroups, groupById, membersByGroup, creditByKey, subscriptions, addStudent, updateStudent, deleteStudent, addGroup, updateGroup, deleteGroup, setStudentGroup, addStudentToGroup, removeStudentFromGroup, groupIdsByStudent, addSubscription, cancelSubscription, adjustBalanceTo, scheduleByStudent, sessions, poolById, selectedWeekStart, createInvoice, setAdminSection, onJumpToSession, setView }){
+  // ── Sub-view driven by external accountSection prop (from nav dropdown) ──
+  const adminView = accountSection || 'accounts';
+  const setAdminView = (v) => { if(setAccountSection) setAccountSection(v); };
   const [searchQ, setSearchQ] = useState('');
   const [statusFilter, setStatusFilter] = useState('active');
   const [expandedKey, setExpandedKey] = useState(null);
@@ -6125,91 +6156,70 @@ function ParentGroupManager({ pg, familyGroups, groupById, membersByGroup, group
   </div>;
 }
 
-function ReceiptsView({ subscriptions, students, studentById, familyGroups, groupById, lessonTypeById, cancelSubscription }){
-  const [statusFilter, setStatusFilter] = useState('all');
+function ReceiptsView({ pmts, invoices }){
   const [searchQ, setSearchQ] = useState('');
-  const [printSub, setPrintSub] = useState(null);
-  const list = (subscriptions || [])
-    .filter(s => statusFilter === 'all' ? true : statusFilter === 'active' ? !s.cancelled_at : !!s.cancelled_at)
-    .filter(s => {
-      if(!searchQ.trim()) return true;
-      const q = searchQ.toLowerCase();
-      const subjectName = s.subject_type === 'student' ? (studentById[s.subject_id]?.name || '') : (groupById?.[s.subject_id]?.name || '');
-      const lt = lessonTypeById ? lessonTypeById(s.lesson_type_id)?.name || '' : '';
-      return (subjectName + ' ' + lt + ' ' + (s.receipt_number || '') + ' ' + (s.notes || '')).toLowerCase().includes(q);
-    });
-  // Aggregate totals (active only)
-  const activeOnly = (subscriptions || []).filter(s => !s.cancelled_at);
-  const totalRevenue = activeOnly.reduce((sum, s) => sum + (Number(s.amount_paid) || 0), 0);
-  const totalCreditsIssued = activeOnly.reduce((sum, s) => sum + (Number(s.credits_per_swimmer) * Number(s.swimmer_count) || 0), 0);
-  function fmtDate(d){ if(!d) return ''; try{ return new Date(d).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}); } catch(_){ return d; } }
-  function subjectName(s){
-    return s.subject_type === 'student' ? (studentById[s.subject_id]?.name || '— deleted swimmer —') : (groupById?.[s.subject_id]?.name || '— deleted group —');
-  }
-  function ltName(s){ return lessonTypeById ? lessonTypeById(s.lesson_type_id)?.name || '—' : '—'; }
-
+  const invoiceById = {};
+  (invoices || []).forEach(inv => { invoiceById[inv.id] = inv; });
+  const sorted = (pmts || []).slice().sort((a,b) => (b.payment_date||'').localeCompare(a.payment_date||''));
+  const filtered = sorted.filter(p => {
+    if(!searchQ.trim()) return true;
+    const inv = invoiceById[p.invoice_id] || {};
+    const q = searchQ.toLowerCase();
+    return (
+      (p.receipt_number||'').toLowerCase().includes(q) ||
+      (inv.invoice_number||'').toLowerCase().includes(q) ||
+      (inv.account_name||'').toLowerCase().includes(q) ||
+      (p.payment_method||'').toLowerCase().includes(q)
+    );
+  });
+  const total = (pmts||[]).reduce((s,p)=>s+Number(p.amount||0),0);
+  function fmtDate(d){ if(!d) return '—'; try{ return new Date(d).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}); } catch(_){ return d; } }
   return <>
     <div className="card" style={{marginBottom:12}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap',marginBottom:10}}>
-        <div>
-          <div style={{fontSize:18,fontWeight:800}}>💰 Receipts &amp; Subscriptions</div>
-          <div className="small subtle" style={{marginTop:3}}>Every subscription added or cancelled, in chronological order. Click a row to print a receipt.</div>
+        <div><div style={{fontSize:18,fontWeight:800}}>💰 Receipts</div>
+          <div className="small subtle" style={{marginTop:3}}>All recorded payments. Click 🖨 to print a receipt.</div>
         </div>
-        <div style={{display:'flex',gap:14,alignItems:'flex-end',flexWrap:'wrap'}}>
-          <div><div className="small subtle">Active revenue</div><div style={{fontSize:22,fontWeight:800,color:'var(--green-tx)'}}>RM{totalRevenue.toFixed(2)}</div></div>
-          <div><div className="small subtle">Credits issued (active)</div><div style={{fontSize:22,fontWeight:800,color:'var(--teal)'}}>{totalCreditsIssued}</div></div>
-        </div>
+        <div><div className="small subtle">Total collected</div><div style={{fontSize:22,fontWeight:800,color:'var(--green-tx)'}}>RM{total.toFixed(2)}</div></div>
       </div>
-      <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
-        <div className="tabs" style={{gap:2,padding:2}}>
-          {['all','active','cancelled'].map(v => <button key={v} className={`tab ${statusFilter===v?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setStatusFilter(v)}>{v==='all'?'All':v==='active'?'Active':'Cancelled'}</button>)}
-        </div>
-        <input className="input" style={{flex:1,minWidth:200,maxWidth:360}} placeholder="Search by swimmer, group, lesson type, receipt #, notes…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
-        <span className="small subtle">{list.length} of {(subscriptions||[]).length}</span>
+      <div style={{display:'flex',gap:8,alignItems:'center'}}>
+        <input className="input" style={{flex:1,maxWidth:360}} placeholder="Search receipt #, invoice #, account, method…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
+        <span className="small subtle">{filtered.length} / {(pmts||[]).length}</span>
       </div>
     </div>
     <div className="card" style={{padding:0,overflow:'hidden'}}>
       <div className="table-wrap" style={{border:'none',borderRadius:0,maxHeight:'70vh'}}>
-        <table>
-          <thead><tr>
-            <th style={{width:90}}>Date</th>
-            <th>Subject</th>
-            <th style={{width:130}}>Lesson Type</th>
-            <th style={{width:90}}>Credits</th>
-            <th style={{width:100}}>Source</th>
-            <th style={{width:100}}>Amount</th>
-            <th style={{width:110}}>Receipt #</th>
-            <th style={{width:90}}>Status</th>
-            <th style={{width:160,textAlign:'right'}}></th>
-          </tr></thead>
-          <tbody>
-            {list.length === 0 && <tr><td colSpan={9} className="empty">No subscriptions match.</td></tr>}
-            {list.map(s => <tr key={s.id} style={s.cancelled_at?{opacity:0.65}:undefined}>
-              <td style={{whiteSpace:'nowrap',fontWeight:600}}>{fmtDate(s.subscription_date)}</td>
-              <td>
-                <div style={{fontWeight:700}}>{s.subject_type === 'family_group' ? '👪 ' : '👤 '}{subjectName(s)}</div>
-                {s.notes ? <div className="subtle" style={{fontSize:11}}>{s.notes}</div> : null}
+        <table><thead><tr>
+          <th style={{width:110}}>Date</th>
+          <th style={{width:130}}>Receipt #</th>
+          <th style={{width:130}}>Invoice #</th>
+          <th>Account</th>
+          <th style={{width:110}}>Method</th>
+          <th style={{width:110,textAlign:'right'}}>Amount</th>
+          <th style={{width:60}}></th>
+        </tr></thead>
+        <tbody>
+          {filtered.length === 0 && <tr><td colSpan={7} className="empty">No receipts found.</td></tr>}
+          {filtered.map(p => {
+            const inv = invoiceById[p.invoice_id] || {};
+            return <tr key={p.id}>
+              <td>{fmtDate(p.payment_date)}</td>
+              <td style={{fontFamily:'monospace',fontSize:12}}>{p.receipt_number||'—'}</td>
+              <td style={{fontFamily:'monospace',fontSize:12}}>{inv.invoice_number||'—'}</td>
+              <td style={{fontWeight:600}}>{inv.account_name||'—'}</td>
+              <td className="small subtle">{methodLabel(p.payment_method)}</td>
+              <td style={{textAlign:'right',fontWeight:700,color:'var(--green-tx)'}}>RM{Number(p.amount).toFixed(2)}</td>
+              <td style={{textAlign:'center'}}>
+                <button className="btn btn-ghost small" title="Print receipt" onClick={()=>printReceipt(p, inv)}>🖨</button>
               </td>
-              <td>{ltName(s)}</td>
-              <td><span style={{color:'var(--teal)',fontWeight:700}}>+{s.credits_per_swimmer}</span> × {s.swimmer_count}</td>
-              <td className="subtle">{s.source || '—'}</td>
-              <td>{s.amount_paid != null ? `RM${Number(s.amount_paid).toFixed(2)}` : <span className="subtle">—</span>}</td>
-              <td>{s.receipt_number || <span className="subtle">—</span>}</td>
-              <td>{s.cancelled_at ? <span className="pill" style={{background:'var(--red-bg)',color:'var(--red-tx)',borderColor:'var(--red-bd)'}}>Cancelled</span> : <span className="pill" style={{background:'var(--green-bg)',color:'var(--green-tx)',borderColor:'var(--green-bd)'}}>Active</span>}</td>
-              <td style={{textAlign:'right',whiteSpace:'nowrap'}}>
-                <button className="btn btn-ghost small" onClick={()=>setPrintSub(s)}>🖨 Receipt</button>
-                {!s.cancelled_at && cancelSubscription ? <button className="btn btn-danger small" style={{marginLeft:4}} onClick={()=>cancelSubscription(s)}>Cancel</button> : null}
-              </td>
-            </tr>)}
-          </tbody>
+            </tr>;
+          })}
+        </tbody>
         </table>
       </div>
     </div>
-    {printSub ? <ReceiptModal subscription={printSub} subjectName={subjectName(printSub)} ltName={ltName(printSub)} onClose={()=>setPrintSub(null)} /> : null}
   </>;
 }
-
-// Receipt printable popover — simple, prints to A6/A5 cleanly.
 function ReceiptModal({ subscription, subjectName, ltName, onClose }){
   function doPrint(){
     document.body.setAttribute('data-print-view', 'receipt');
@@ -7304,118 +7314,211 @@ function invoiceStatusLabel(s){ return({draft:'Draft',sent:'Sent',partial:'Part 
 function invoiceStatusColor(s){ return({draft:'#94A3B8',sent:'#3B82F6',partial:'#F59E0B',paid:'#10B981',void:'#EF4444'})[s]||'#94A3B8'; }
 function methodLabel(m){ return({cash:'Cash',bank_transfer:'Bank Transfer',duitnow:'DuitNow',card:'Card',cheque:'Cheque',other:'Other'})[m]||m; }
 
-function printInvoice(invoice, lines){
-  const billable=lines.filter(l=>l.is_billable);
-  const outstanding=Math.max(0,Number(invoice.total_amount)-Number(invoice.amount_paid));
-  const linesHtml=billable.map(l=>`<tr>
-    <td style="padding:7px 10px;border-bottom:1px solid #eee;font-size:11pt">${l.description||''}</td>
-    <td style="padding:7px 10px;border-bottom:1px solid #eee;font-size:10pt;color:#555">${l.line_type==='group_bundle'?'Group Bundle':'Individual'}</td>
-    <td style="padding:7px 10px;border-bottom:1px solid #eee;text-align:right;font-size:11pt;font-weight:600">RM${Number(l.amount).toFixed(2)}</td>
+function printInvoice(invoice, lines, pmts){
+  const billable = (lines||[]).filter(l=>l.is_billable);
+  const paidAmt = Number(invoice.amount_paid)||0;
+  const total = Number(invoice.total_amount)||0;
+  const outstanding = Math.max(0, total - paidAmt);
+  const isPaid = outstanding <= 0 && invoice.status !== 'void';
+  const logoUrl = window.location.origin + '/logo.png';
+  const linesHtml = billable.map(l=>`<tr>
+    <td class="td-desc">${l.description||''}</td>
+    <td class="td-type">${l.line_type==='group_bundle'?'Group Bundle':'Individual'}</td>
+    <td class="td-amt">RM ${Number(l.amount).toFixed(2)}</td>
   </tr>`).join('');
-  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invoice ${invoice.invoice_number}</title>
+  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${invoice.invoice_number}</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:Inter,system-ui,-apple-system,sans-serif;color:#111;padding:0;background:#fff}
-.page{max-width:740px;margin:0 auto;padding:32px 36px}
-@page{size:A4 portrait;margin:18mm 16mm}
+body{font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:9pt;color:#1a1a1a;background:#fff}
+@page{size:A5 landscape;margin:10mm 12mm}
 @media print{.page{padding:0}}
-.hdr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2.5px solid #111}
-.brand{font-size:18pt;font-weight:800;letter-spacing:-.3px}
-.brand-sub{font-size:10pt;color:#555;margin-top:3px}
-.inv-title{font-size:22pt;font-weight:800;color:#111}
-.inv-meta{font-size:10pt;color:#555;margin-top:4px;line-height:1.6}
-.status-pill{display:inline-block;padding:3px 10px;border-radius:4px;font-size:10pt;font-weight:700}
-.status-draft{background:#F1F5F9;color:#475569}
-.status-sent{background:#DBEAFE;color:#1D4ED8}
-.status-partial{background:#FEF3C7;color:#92400E}
-.status-paid{background:#D1FAE5;color:#065F46}
-.status-void{background:#FEE2E2;color:#7F1D1D}
-.bill-to{background:#F8FAFC;border-radius:8px;padding:12px 16px;margin-bottom:20px}
-.bill-to-label{font-size:9pt;text-transform:uppercase;letter-spacing:.6px;color:#888;font-weight:700;margin-bottom:4px}
-.bill-to-name{font-size:13pt;font-weight:800}
-.bill-to-contact{font-size:10pt;color:#555;margin-top:2px}
-table{width:100%;border-collapse:collapse;margin-bottom:16px}
-thead th{background:#111;color:#fff;padding:8px 10px;font-size:10pt;text-align:left;font-weight:700}
-thead th:last-child{text-align:right}
-.total-section{border-top:2px solid #111;padding-top:10px}
-.total-row{display:flex;justify-content:space-between;padding:4px 0;font-size:11pt}
-.total-row.grand{font-size:14pt;font-weight:800;padding-top:8px;border-top:1px solid #ccc;margin-top:4px}
-.total-row.paid{color:#10B981}
-.total-row.outstanding{color:#F59E0B;font-weight:800}
-.settled{color:#10B981;font-weight:800}
-.notes-box{margin-top:16px;padding:10px 14px;background:#F8FAFC;border-radius:6px;font-size:10pt;color:#555}
-.footer{margin-top:28px;padding-top:10px;border-top:1px solid #ddd;font-size:9pt;color:#999;text-align:center;line-height:1.5}
+.page{width:210mm;min-height:148mm;padding:10mm 12mm;display:flex;flex-direction:column}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:7pt;border-bottom:1pt solid #1a1a1a;margin-bottom:9pt}
+.brand-logo{height:36pt;width:auto;object-fit:contain;display:block}
+.brand-text{font-size:7pt;color:#555;margin-top:5pt;line-height:1.55}
+.inv-number{font-size:11pt;font-weight:400;letter-spacing:.5px;color:#1a1a1a}
+.inv-meta{font-size:7.5pt;color:#777;margin-top:3pt;line-height:1.6;text-align:right}
+.status-chip{display:inline-block;padding:1pt 6pt;border-radius:2pt;font-size:7pt;font-weight:600;letter-spacing:.3px;margin-top:3pt}
+.s-draft{background:#f1f5f9;color:#475569}.s-sent{background:#dbeafe;color:#1d4ed8}
+.s-partial{background:#fef3c7;color:#92400e}.s-paid{background:#d1fae5;color:#065f46}.s-void{background:#fee2e2;color:#7f1d1d}
+.bill-row{display:flex;gap:16pt;margin-bottom:8pt}
+.bill-box{background:#f8f9fa;border-radius:3pt;padding:5pt 8pt;flex:1}
+.bill-label{font-size:6.5pt;text-transform:uppercase;letter-spacing:.5px;color:#999;margin-bottom:2pt}
+.bill-name{font-size:9pt;font-weight:600;line-height:1.3}
+.bill-contact{font-size:7.5pt;color:#666;margin-top:1pt}
+table{width:100%;border-collapse:collapse;margin-bottom:7pt}
+thead th{font-size:7pt;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600;padding:4pt 5pt;border-bottom:1pt solid #e5e5e5;text-align:left}
+thead th.td-amt{text-align:right}
+.td-desc{padding:4pt 5pt;font-size:8.5pt;border-bottom:1pt solid #f0f0f0}
+.td-type{padding:4pt 5pt;font-size:7.5pt;color:#777;border-bottom:1pt solid #f0f0f0}
+.td-amt{padding:4pt 5pt;font-size:8.5pt;font-weight:600;text-align:right;border-bottom:1pt solid #f0f0f0;white-space:nowrap}
+.totals{margin-left:auto;min-width:130pt}
+.tot-row{display:flex;justify-content:space-between;gap:12pt;padding:2.5pt 0;font-size:8.5pt;color:#555}
+.tot-row.grand{font-size:10pt;font-weight:700;color:#1a1a1a;border-top:1pt solid #1a1a1a;margin-top:4pt;padding-top:5pt}
+.tot-row.paid-line{color:#059669}
+.paid-full{color:#059669;font-weight:700;font-size:8.5pt}
+.notes{font-size:7.5pt;color:#666;background:#f8f9fa;border-radius:3pt;padding:5pt 8pt;margin-bottom:7pt}
+.footer{margin-top:auto;padding-top:6pt;border-top:1pt solid #e5e5e5;font-size:6.5pt;color:#aaa;display:flex;justify-content:space-between}
 </style>
-<script>window.onload=function(){setTimeout(function(){window.print()},400)}<\/script>
+<script>window.onload=function(){setTimeout(function(){window.print()},350)}<\/script>
 </head><body><div class="page">
 <div class="hdr">
   <div>
-    <div class="brand">Star Swim Sdn Bhd</div>
-    <div class="brand-sub">Professional Swimming Instruction</div>
+    <img class="brand-logo" src="${logoUrl}" onerror="this.style.display='none'">
+    <div class="brand-text">Star Swim Sdn Bhd (1602674-U)<br>No.137 Jalan Sultan Abdul Jalil, 30000 Ipoh, Perak<br>TIN: C59796139050</div>
   </div>
   <div style="text-align:right">
-    <div class="inv-title">${invoice.invoice_number}</div>
-    <div class="inv-meta">
-      Issued: ${invoice.issue_date||''}${invoice.due_date?`<br>Due: ${invoice.due_date}`:''}<br>
-      <span class="status-pill status-${invoice.status}">${invoiceStatusLabel(invoice.status)}</span>
-    </div>
+    <div class="inv-number">INVOICE</div>
+    <div style="font-size:13pt;font-weight:300;letter-spacing:1px;margin-top:2pt">${invoice.invoice_number||''}</div>
+    <div class="inv-meta">Issued: ${invoice.issue_date||'—'}${invoice.due_date?`<br>Due: ${invoice.due_date}`:''}<br>
+    <span class="status-chip s-${invoice.status||'draft'}">${invoiceStatusLabel(invoice.status)}</span></div>
   </div>
 </div>
-<div class="bill-to">
-  <div class="bill-to-label">Bill To</div>
-  <div class="bill-to-name">${invoice.account_name}</div>
-  ${invoice.account_email||invoice.account_phone?`<div class="bill-to-contact">${[invoice.account_email,invoice.account_phone].filter(Boolean).join(' · ')}</div>`:''}
+<div class="bill-row">
+  <div class="bill-box">
+    <div class="bill-label">Bill To</div>
+    <div class="bill-name">${invoice.account_name||'—'}</div>
+    ${invoice.account_email||invoice.account_phone?`<div class="bill-contact">${[invoice.account_email,invoice.account_phone].filter(Boolean).join(' &middot; ')}</div>`:''}
+  </div>
 </div>
-${invoice.notes?`<div class="notes-box">📝 ${invoice.notes}</div>`:''}
-<table style="margin-top:${invoice.notes?'14px':'4px'}">
-  <thead><tr>
-    <th style="width:60%">Description</th>
-    <th style="width:20%">Type</th>
-    <th style="width:20%;text-align:right">Amount</th>
-  </tr></thead>
+${invoice.notes?`<div class="notes">${invoice.notes}</div>`:''}
+<table>
+  <thead><tr><th>Description</th><th>Type</th><th class="td-amt">Amount</th></tr></thead>
   <tbody>${linesHtml}</tbody>
 </table>
-<div class="total-section" style="max-width:260px;margin-left:auto">
-  <div class="total-row"><span>Subtotal</span><span>RM${Number(invoice.total_amount).toFixed(2)}</span></div>
-  ${Number(invoice.amount_paid)>0?`<div class="total-row paid"><span>Paid</span><span>- RM${Number(invoice.amount_paid).toFixed(2)}</span></div>`:''}
-  <div class="total-row grand ${outstanding<=0?'settled':'outstanding'}">
-    <span>${outstanding<=0?'Settled ✓':'Outstanding'}</span>
-    <span>${outstanding<=0?'RM 0.00':'RM'+outstanding.toFixed(2)}</span>
+<div class="totals">
+  <div class="tot-row"><span>Subtotal</span><span>RM ${total.toFixed(2)}</span></div>
+  ${paidAmt>0?`<div class="tot-row paid-line"><span>Paid</span><span>− RM ${paidAmt.toFixed(2)}</span></div>`:''}
+  <div class="tot-row grand">
+    <span>${isPaid?'Paid in full ✓':'Outstanding'}</span>
+    <span>${isPaid?'RM 0.00':'RM '+outstanding.toFixed(2)}</span>
   </div>
 </div>
-<div class="footer">Thank you for choosing Star Swim Sdn Bhd · Please retain this invoice for your records<br>Generated ${new Date().toLocaleDateString(undefined,{dateStyle:'long'})}</div>
+<div class="footer"><span>Thank you for choosing Star Swim Sdn Bhd</span><span>Generated ${new Date().toLocaleDateString(undefined,{dateStyle:'long'})}</span></div>
 </div></body></html>`;
   const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
 }
 
 function printReceipt(pmt, invoice){
-  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Receipt ${pmt.receipt_number}</title>
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Inter,system-ui,sans-serif;color:#111;padding:28px;max-width:480px;margin:0 auto}
-@page{size:A5;margin:12mm}@media print{body{padding:0}}
-.rct-box{border:1.5px solid #111;border-radius:8px;padding:20px 22px}
-h1{font-size:15pt;font-weight:800;margin-bottom:4px}.sub{font-size:10pt;color:#555;margin-bottom:14px}
-.row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #eee;font-size:11pt}
-.row:last-child{border-bottom:none}.amount-row{font-size:14pt;font-weight:800;margin-top:10px;padding-top:10px;border-top:2px solid #111}
-.footer{margin-top:16px;font-size:9pt;color:#888;text-align:center}</style>
-<script>window.onload=function(){setTimeout(function(){window.print()},400)}<\/script>
-</head><body><div class="rct-box">
-<h1>Receipt</h1><div class="sub">Star Swim Sdn Bhd</div>
-<div class="row"><span>Receipt #</span><span>${pmt.receipt_number}</span></div>
-<div class="row"><span>Invoice</span><span>${invoice.invoice_number}</span></div>
-<div class="row"><span>Account</span><span>${invoice.account_name}</span></div>
-<div class="row"><span>Date</span><span>${pmt.payment_date||''}</span></div>
-<div class="row"><span>Method</span><span>${methodLabel(pmt.payment_method)}</span></div>
-${pmt.reference_number?`<div class="row"><span>Reference</span><span>${pmt.reference_number}</span></div>`:''}
-${pmt.notes?`<div class="row"><span>Notes</span><span>${pmt.notes}</span></div>`:''}
-<div class="row amount-row"><span>Amount Paid</span><span>RM${Number(pmt.amount).toFixed(2)}</span></div>
-</div><div class="footer">Thank you · Generated ${new Date().toLocaleDateString(undefined,{dateStyle:'long'})}</div>
+  const logoUrl = window.location.origin + '/logo.png';
+  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Receipt ${pmt.receipt_number||''}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:9pt;color:#1a1a1a;background:#fff}
+@page{size:A5 landscape;margin:10mm 12mm}
+.page{width:210mm;min-height:148mm;padding:10mm 12mm;display:flex;flex-direction:column}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:7pt;border-bottom:1pt solid #1a1a1a;margin-bottom:10pt}
+.brand-logo{height:32pt;object-fit:contain;display:block}
+.brand-text{font-size:7pt;color:#555;margin-top:4pt;line-height:1.55}
+.rct-title{font-size:11pt;font-weight:300;letter-spacing:.8px;color:#1a1a1a;margin-bottom:2pt}
+.rct-num{font-size:13pt;font-weight:300;letter-spacing:1px}
+.row{display:flex;justify-content:space-between;padding:4.5pt 0;border-bottom:1pt solid #f0f0f0;font-size:8.5pt}
+.row-label{color:#777}
+.row-val{font-weight:500}
+.row.amount{border-bottom:none;border-top:1.5pt solid #1a1a1a;margin-top:6pt;padding-top:7pt;font-size:12pt;font-weight:700}
+.paid-stamp{display:inline-block;border:1.5pt solid #059669;color:#059669;padding:3pt 10pt;border-radius:2pt;font-size:8.5pt;font-weight:600;letter-spacing:.5px;margin-top:10pt}
+.footer{margin-top:auto;padding-top:6pt;border-top:1pt solid #e5e5e5;font-size:6.5pt;color:#aaa;display:flex;justify-content:space-between}
+</style>
+<script>window.onload=function(){setTimeout(function(){window.print()},350)}<\/script>
+</head><body><div class="page">
+<div class="hdr">
+  <div>
+    <img class="brand-logo" src="${logoUrl}" onerror="this.style.display='none'">
+    <div class="brand-text">Star Swim Sdn Bhd (1602674-U)<br>No.137 Jalan Sultan Abdul Jalil, 30000 Ipoh, Perak<br>TIN: C59796139050</div>
+  </div>
+  <div style="text-align:right">
+    <div class="rct-title">RECEIPT</div>
+    <div class="rct-num">${pmt.receipt_number||'—'}</div>
+  </div>
+</div>
+<div class="row"><span class="row-label">Invoice</span><span class="row-val">${invoice.invoice_number||'—'}</span></div>
+<div class="row"><span class="row-label">Account</span><span class="row-val">${invoice.account_name||'—'}</span></div>
+<div class="row"><span class="row-label">Date</span><span class="row-val">${pmt.payment_date||'—'}</span></div>
+<div class="row"><span class="row-label">Payment Method</span><span class="row-val">${methodLabel(pmt.payment_method)}</span></div>
+${pmt.reference_number?`<div class="row"><span class="row-label">Reference</span><span class="row-val">${pmt.reference_number}</span></div>`:''}
+${pmt.notes?`<div class="row"><span class="row-label">Notes</span><span class="row-val">${pmt.notes}</span></div>`:''}
+<div class="row amount"><span>Amount Paid</span><span>RM ${Number(pmt.amount).toFixed(2)}</span></div>
+<div><span class="paid-stamp">PAID IN FULL</span></div>
+<div class="footer"><span>Thank you for your payment · Star Swim Sdn Bhd</span><span>Generated ${new Date().toLocaleDateString(undefined,{dateStyle:'long'})}</span></div>
+</div></body></html>`;
+  const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
+}
+
+function printInvoiceAndReceipt(invoice, lines, pmt){
+  // Prints Invoice + Receipt stacked on one A4 portrait (two A5 landscape)
+  const logoUrl = window.location.origin + '/logo.png';
+  const billable = (lines||[]).filter(l=>l.is_billable);
+  const paidAmt = Number(invoice.amount_paid)||0;
+  const total = Number(invoice.total_amount)||0;
+  const linesHtml = billable.map(l=>`<tr><td class="td-d">${l.description||''}</td><td class="td-t">${l.line_type==='group_bundle'?'Group':'Indiv.'}</td><td class="td-a">RM ${Number(l.amount).toFixed(2)}</td></tr>`).join('');
+  const co = `<img class="logo" src="${logoUrl}" onerror="this.style.display='none'"><div class="co">Star Swim Sdn Bhd (1602674-U)<br>No.137 Jalan Sultan Abdul Jalil, 30000 Ipoh<br>TIN: C59796139050</div>`;
+  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invoice & Receipt</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:8.5pt;color:#1a1a1a;background:#fff}
+@page{size:A4 portrait;margin:6mm}
+.block{width:195mm;height:135mm;overflow:hidden;display:flex;flex-direction:column;padding:7mm 8mm}
+.block+.block{border-top:1pt dashed #bbb}
+.hdr{display:flex;justify-content:space-between;padding-bottom:5pt;border-bottom:1pt solid #1a1a1a;margin-bottom:6pt}
+.logo{height:26pt;object-fit:contain}
+.co{font-size:6pt;color:#666;margin-top:3pt;line-height:1.5}
+.rtitle{font-size:8.5pt;font-weight:400;letter-spacing:.5px}
+.rnum{font-size:10pt;font-weight:300;letter-spacing:.8px}
+.rmeta{font-size:6.5pt;color:#888;margin-top:2pt;text-align:right;line-height:1.5}
+.bill{background:#f8f9fa;border-radius:2pt;padding:3pt 6pt;margin-bottom:5pt;font-size:7.5pt}
+.bill strong{font-size:8pt;display:block}
+table{width:100%;border-collapse:collapse;margin-bottom:5pt}
+th{font-size:6pt;text-transform:uppercase;letter-spacing:.4px;color:#999;font-weight:600;padding:2pt 4pt;border-bottom:1pt solid #e5e5e5;text-align:left}
+.td-d,.td-t,.td-a{padding:3pt 4pt;font-size:7.5pt;border-bottom:1pt solid #f2f2f2}
+.td-a{text-align:right;font-weight:600;white-space:nowrap}
+.td-t{color:#888}
+.totals{margin-left:auto;min-width:100pt}
+.tr{display:flex;justify-content:space-between;font-size:7.5pt;color:#666;padding:1.5pt 0}
+.tr.grand{font-size:9pt;font-weight:700;color:#1a1a1a;border-top:1pt solid #1a1a1a;margin-top:3pt;padding-top:3pt}
+.row{display:flex;justify-content:space-between;padding:3.5pt 0;border-bottom:1pt solid #f0f0f0;font-size:8pt}
+.rl{color:#777}.rv{font-weight:500}
+.row.big{border-top:1.5pt solid #1a1a1a;border-bottom:none;margin-top:4pt;padding-top:5pt;font-size:10pt;font-weight:700}
+.stamp{display:inline-block;border:1pt solid #059669;color:#059669;padding:2pt 8pt;border-radius:2pt;font-size:7.5pt;font-weight:600;margin-top:6pt}
+.foot{margin-top:auto;padding-top:4pt;border-top:1pt solid #eee;font-size:6pt;color:#bbb;display:flex;justify-content:space-between}
+</style>
+<script>window.onload=function(){setTimeout(function(){window.print()},350)}<\/script>
+</head><body>
+<div class="block">
+  <div class="hdr">
+    <div>${co}</div>
+    <div style="text-align:right">
+      <div class="rtitle">INVOICE</div>
+      <div class="rnum">${invoice.invoice_number||''}</div>
+      <div class="rmeta">Issued: ${invoice.issue_date||'—'}${invoice.due_date?`<br>Due: ${invoice.due_date}`:''}</div>
+    </div>
+  </div>
+  <div class="bill"><span style="font-size:5.5pt;text-transform:uppercase;letter-spacing:.4px;color:#999">Bill To</span><strong>${invoice.account_name||'—'}</strong>${invoice.account_email?`<span style="font-size:7pt;color:#666"> ${invoice.account_email}</span>`:''}</div>
+  <table><thead><tr><th>Description</th><th>Type</th><th style="text-align:right">Amount</th></tr></thead><tbody>${linesHtml}</tbody></table>
+  <div class="totals">
+    <div class="tr"><span>Subtotal</span><span>RM ${total.toFixed(2)}</span></div>
+    ${paidAmt>0?`<div class="tr" style="color:#059669"><span>Paid</span><span>− RM ${paidAmt.toFixed(2)}</span></div>`:''}
+    <div class="tr grand"><span>Paid in full</span><span>RM 0.00</span></div>
+  </div>
+  <div class="foot"><span>Thank you · Star Swim Sdn Bhd</span><span>${new Date().toLocaleDateString(undefined,{dateStyle:'long'})}</span></div>
+</div>
+${pmt?`<div class="block">
+  <div class="hdr">
+    <div>${co}</div>
+    <div style="text-align:right"><div class="rtitle">RECEIPT</div><div class="rnum">${pmt.receipt_number||'—'}</div></div>
+  </div>
+  <div class="row"><span class="rl">Invoice</span><span class="rv">${invoice.invoice_number||'—'}</span></div>
+  <div class="row"><span class="rl">Account</span><span class="rv">${invoice.account_name||'—'}</span></div>
+  <div class="row"><span class="rl">Date</span><span class="rv">${pmt.payment_date||'—'}</span></div>
+  <div class="row"><span class="rl">Method</span><span class="rv">${methodLabel(pmt.payment_method)}</span></div>
+  ${pmt.reference_number?`<div class="row"><span class="rl">Reference</span><span class="rv">${pmt.reference_number}</span></div>`:''}
+  <div class="row big"><span>Amount Paid</span><span>RM ${Number(pmt.amount).toFixed(2)}</span></div>
+  <div><span class="stamp">PAID IN FULL</span></div>
+  <div class="foot"><span>Thank you for your payment</span><span>${new Date().toLocaleDateString(undefined,{dateStyle:'long'})}</span></div>
+</div>`:''}
 </body></html>`;
   const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
 }
 
-// ============================================================================
-// InvoicesView — Phase 2: bulk select, overdue badges, batch actions
-// ============================================================================
 function InvoicesView({ invoices, invoiceLines, pmts, pendingCredits, lessonTypeById, packageById, studentById, invoiceSettings, onSaveSettings, formatInvoiceNumber, formatReceiptNumber, onVoid, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
   const [statusFilter,setStatusFilter]=useState('all');
   const [searchQ,setSearchQ]=useState('');
@@ -7673,6 +7776,11 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, o
       {(invoice.status==='sent'||invoice.status==='partial')&&outstanding>0&&!showPayForm&&<button className="btn btn-primary small" onClick={()=>setShowPayForm(true)}>💳 Record Payment</button>}
       {showPayForm&&<button className="btn btn-ghost small" onClick={()=>setShowPayForm(false)}>Cancel Payment</button>}
       <button className="btn btn-ghost small" onClick={()=>printInvoice(invoice,lines)}>🖨 Print Invoice</button>
+      {(invoice.status==='paid'||outstanding<=0) && pmts && pmts.filter(p=>p.invoice_id===invoice.id).length>0 &&
+        <button className="btn btn-primary small" onClick={()=>{
+          const lastPmt = [...pmts.filter(p=>p.invoice_id===invoice.id)].sort((a,b)=>(b.payment_date||'').localeCompare(a.payment_date||''))[0];
+          printInvoiceAndReceipt(invoice, lines, lastPmt);
+        }}>🖨 Print Invoice &amp; Receipt</button>}
       {invoice.status!=='void'&&invoice.status!=='paid'&&<button className="btn btn-danger small" onClick={onVoid}>Void</button>}
     </div>
   </div>;
