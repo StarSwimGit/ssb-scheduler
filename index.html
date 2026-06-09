@@ -26,19 +26,19 @@
     button,input,select,textarea{font:inherit;color:inherit}
     /* ── Nav dropdown groups ─────────────────────────────────────── */
     /* ── New flat nav + sub-bar ─────────────────────────────────── */
-    .main-nav{display:flex;align-items:center;gap:2px}
-    .nav-btn{padding:7px 14px;border:none;border-radius:8px;background:transparent;color:rgba(255,255,255,.65);font-weight:600;font-size:13px;cursor:pointer;letter-spacing:.1px;transition:background .15s,color .15s;white-space:nowrap}
-    .nav-btn:hover{background:rgba(255,255,255,.1);color:#fff}
-    .nav-btn.active{background:rgba(255,255,255,.18);color:#fff;box-shadow:0 1px 4px rgba(0,0,0,.2)}
-    .nav-btn-link{opacity:.75;font-size:12px}
-    .nav-btn-link:hover{opacity:1}
+    .main-nav{display:flex;align-items:center;gap:1px}
+    .nav-btn{padding:7px 16px;border:none;border-radius:7px;background:transparent;color:rgba(255,255,255,.62);font-weight:500;font-size:13px;cursor:pointer;letter-spacing:.02px;transition:background .14s ease,color .14s ease;white-space:nowrap;font-family:inherit}
+    .nav-btn:hover{background:rgba(255,255,255,.09);color:rgba(255,255,255,.9)}
+    .nav-btn.active{background:rgba(255,255,255,.16);color:#fff;font-weight:600}
+    .nav-btn-link{color:rgba(255,255,255,.45);font-size:12px}
+    .nav-btn-link:hover{color:rgba(255,255,255,.8);background:rgba(255,255,255,.07)}
     /* Sub-bar sits flush below the sticky header */
-    .sub-bar{background:var(--surface);border-bottom:2px solid var(--border);position:sticky;top:54px;z-index:40}
-    .sub-bar-inner{max-width:1500px;margin:0 auto;padding:0 22px;display:flex;gap:2px;align-items:center}
-    .sub-tab{padding:8px 15px;border:none;background:transparent;color:var(--text-2);font-weight:600;font-size:12.5px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:color .15s,border-color .15s;white-space:nowrap}
-    .sub-tab:hover{color:var(--text)}
-    .sub-tab.active{color:var(--primary);border-bottom-color:var(--primary)}
-    .header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 22px;position:sticky;top:0;z-index:50}
+    .sub-bar{background:rgba(255,255,255,.97);backdrop-filter:blur(8px);border-bottom:1px solid var(--border);position:sticky;top:54px;z-index:40;box-shadow:0 1px 0 var(--border)}
+    .sub-bar-inner{max-width:1500px;margin:0 auto;padding:0 24px;display:flex;justify-content:flex-end;align-items:center;gap:0;height:40px}
+    .sub-tab{padding:0 14px;border:none;background:transparent;color:var(--text-3);font-weight:500;font-size:12px;cursor:pointer;border-bottom:2px solid transparent;height:40px;margin-bottom:-1px;transition:color .13s ease,border-color .13s ease;white-space:nowrap;letter-spacing:.01px;font-family:inherit;display:inline-flex;align-items:center}
+    .sub-tab:hover{color:var(--text-2);background:var(--surface-2)}
+    .sub-tab.active{color:var(--primary);border-bottom-color:var(--primary);font-weight:600}
+    .header{background:linear-gradient(135deg,#1a1147 0%,#0e0928 100%);border-bottom:1px solid rgba(255,255,255,.08);padding:0 22px;position:sticky;top:0;z-index:50}
     .header-inner{max-width:1500px;min-height:54px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:6px 0;flex-wrap:wrap}
     .brand{display:flex;align-items:center;gap:10px}
     .logo{width:34px;height:34px;border-radius:50%;object-fit:contain;display:block;flex-shrink:0;box-shadow:0 4px 12px rgba(28,156,224,.28)}
@@ -47,8 +47,8 @@
        into the middle of the header; it grows to absorb spare space so the
        tab groups always sit flush to the right. */
     .header-meta{display:flex;flex-direction:column;align-items:flex-start;gap:2px;flex:1;min-width:200px;line-height:1.3}
-    .header-summary{font-size:11px;color:var(--text-3)}
-    .header-status{font-size:10px;color:var(--text-3);display:inline-flex;align-items:center;gap:6px;font-weight:600}
+    .header-summary{font-size:11px;color:rgba(255,255,255,.55)}
+    .header-status{font-size:10px;color:rgba(255,255,255,.5);display:inline-flex;align-items:center;gap:6px;font-weight:600}
     .status-dot{display:inline-block;width:7px;height:7px;border-radius:999px;background:var(--text-3);flex-shrink:0}
     .status-dot.is-ok{background:#10B981;box-shadow:0 0 0 3px rgba(16,185,129,.18)}
     .status-dot.is-loading{background:#F59E0B;animation:pulse-dot 1.2s ease-in-out infinite}
@@ -58,7 +58,6 @@
        Intake outbound link; right holds Summary and Settings, mirroring
        the convention of putting admin/utility tools apart from main views.
        Slightly tighter than v1 — smaller font, less padding, less radius. */
-    .header-tabs{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
     .tabs{display:flex;gap:3px;background:var(--surface-2);border-radius:11px;padding:4px;border:1px solid var(--border);flex-wrap:wrap}
     .tab{padding:6px 13px;border:none;border-radius:8px;background:transparent;color:var(--text-2);font-weight:600;font-size:13px;cursor:pointer;letter-spacing:.1px}
     .tab:hover{color:var(--text)}
@@ -68,7 +67,6 @@
        dashed border so it visually breaks from the in-app tabs to its left. */
     .tab.tab-link{color:var(--primary-on-soft);font-weight:700;border:1px dashed var(--primary);background:rgba(109,91,208,.06)}
     .tab.tab-link:hover{background:var(--primary-soft);border-style:solid}
-    .wrap{max-width:1500px;margin:0 auto;padding:22px 22px 40px}
     .card{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:20px;box-shadow:var(--shadow)}
     .small{font-size:12px}.muted{color:var(--text-2)}.subtle{color:var(--text-2)}
     .pill{display:inline-block;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:600;border:1px solid var(--border-2);background:var(--surface-2);color:var(--text-2)}
@@ -133,7 +131,6 @@
     .wa-time{background:var(--surface-3);border-bottom:1px solid var(--border);border-right:1px solid var(--border);color:var(--text-2);font-weight:600;font-size:12.5px;letter-spacing:.2px;white-space:nowrap;display:flex;align-items:flex-start;justify-content:flex-end;padding:8px 9px 0 4px}
     .wa-cell{border-bottom:1px solid var(--border);border-left:1px solid var(--border);padding:6px;display:flex;flex-direction:column;gap:5px;min-height:48px;cursor:pointer}
     .wa-cell:hover{background:var(--primary-soft)}
-    .wa-card{border-radius:11px;padding:7px 9px;cursor:pointer;box-shadow:0 1px 3px rgba(30,27,75,0.07)}
     /* Drag-to-reorder — card is draggable when multiple sessions share the slot */
     .wa-card[draggable="true"]{cursor:grab;user-select:none}
     .wa-card[draggable="true"]:active{cursor:grabbing}
@@ -170,7 +167,6 @@
     .event.event-over{box-shadow:0 0 0 1px rgba(214,59,59,0.4) inset, 0 2px 10px rgba(214,59,59,0.18)!important}
     .pool-badge{display:inline-block;padding:2px 8px;border-radius:999px;background:var(--primary-soft);color:var(--primary-on-soft);font-size:10px;font-weight:700;margin-left:6px;vertical-align:middle}
     .cap-preview{display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:11px;padding:9px 11px;min-height:42px}
-    .lesson-row{display:flex;flex-direction:column;gap:0}
     .lesson-edit{background:var(--surface-2);border:1px solid var(--border);border-radius:11px;padding:12px;margin-top:6px}
     .btn.small{padding:5px 10px;font-size:11px;border-radius:9px}
     .event{position:absolute;padding:4px 7px;overflow:hidden;cursor:pointer;z-index:4;box-sizing:border-box;border-radius:0 7px 7px 0;box-shadow:0 2px 8px rgba(30,27,75,.12)}
@@ -256,9 +252,6 @@
     .ssel-control:focus-within{border-color:var(--primary);background:#fff}
     .ssel-input{flex:1;min-width:0;border:none;background:transparent;outline:none;padding:6px 0;font-size:12px;font-weight:600;color:var(--text)}
     .ssel-input::placeholder{color:var(--text-3);font-weight:600}
-    .ssel-caret{font-size:10px;color:var(--text-3);cursor:pointer;padding:4px 4px;flex-shrink:0}
-    .ssel-x{font-size:16px;line-height:1;color:var(--text-3);cursor:pointer;padding:0 4px;flex-shrink:0}
-    .ssel-x:hover{color:var(--red-tx)}
     .ssel-btn{display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;background:var(--surface-2);border:1px solid var(--border-2);border-radius:11px;padding:9px 11px;cursor:pointer;text-align:left;color:var(--text-3)}
     .ssel-btn.has{color:var(--text);background:#fff;border-color:#CFCFDE}
     .ssel-btn:hover{border-color:#CFCFDE}
@@ -304,7 +297,6 @@
     .grip{cursor:grab;color:var(--text-3);font-size:15px;line-height:1;padding:2px 4px;border-radius:6px;user-select:none;letter-spacing:-1px}
     .grip:hover{color:var(--primary);background:var(--primary-soft)}
     .grip:active{cursor:grabbing}
-    .lesson-row{border-radius:12px;transition:box-shadow .12s ease,transform .12s ease}
     .lt-dragging{opacity:.5}
     .lt-drop{box-shadow:0 0 0 2px var(--primary) inset;border-radius:12px}
     .lt-packages{margin:8px 0 4px 8px;padding:14px;background:var(--surface-2);border:1px solid var(--border-2);border-left:3px solid var(--primary);border-radius:12px}
@@ -339,7 +331,6 @@
        Greyed-out name, amber ⚠ triangle inline, "Needs instructor" pill,
        and a corner ⚠ on the card itself for at-a-glance spotting. */
     .wa-card{position:relative}
-    .daily-event{position:relative}
     .wa-card-warn{box-shadow:0 0 0 1.5px var(--amber-bd) inset}
     .daily-event-warn{box-shadow:0 0 0 1.5px var(--amber-bd) inset}
     .card-warn-corner{position:absolute;top:6px;right:8px;font-size:14px;color:var(--amber-tx);filter:drop-shadow(0 1px 1px rgba(0,0,0,0.15));pointer-events:none;line-height:1;z-index:1}
@@ -719,10 +710,6 @@
     /* ════════════════════════════════════════════════════════════════
        Admin Hub — left sidebar + content panel (replaces Settings)
        ════════════════════════════════════════════════════════════════ */
-    .admin-hub{display:grid;grid-template-columns:220px 1fr;gap:16px;align-items:start}
-    .admin-hub-sidebar{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:10px;position:sticky;top:70px}
-    .admin-hub-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;color:var(--text-3);padding:6px 10px 8px;border-bottom:1px solid var(--border);margin-bottom:6px}
-    .admin-hub-item{display:flex;align-items:center;gap:9px;width:100%;padding:9px 10px;border:none;background:transparent;border-radius:8px;color:var(--text-2);font-size:13px;font-weight:600;cursor:pointer;text-align:left;transition:.1s ease}
     .admin-hub-item:hover{background:var(--surface-2);color:var(--text)}
     .admin-hub-item.is-on{background:var(--primary-soft);color:var(--primary-on-soft);font-weight:800}
     .admin-hub-icon{font-size:15px;flex-shrink:0;width:22px;text-align:center}
@@ -777,9 +764,9 @@
     /* Pending credit rows */
     .pc-card{border:1px solid var(--border);border-radius:10px;overflow:hidden}
     .pc-card-body{display:flex;align-items:flex-start;gap:12px;padding:12px 14px;flex-wrap:wrap}
-    .pc-card.status-pending{border-color:#F59E0B44;background:#1a1200}
-    .pc-card.status-confirmed{border-color:#10B98144;background:#001a0d}
-    .pc-card.status-reversed{border-color:#EF444444;background:#1a0000;opacity:.7}
+    .pc-card.status-pending{border-color:#FCD34D;background:#FFFBEB}
+    .pc-card.status-confirmed{border-color:#A7F3D0;background:#ECFDF5}
+    .pc-card.status-reversed{border-color:#FCA5A5;background:#FFF5F5;opacity:.75}
     .pc-status-chip{display:inline-block;padding:3px 8px;border-radius:5px;font-size:10.5px;font-weight:800}
     .pc-status-chip.status-pending{background:#FEF3C7;color:#92400E}
     .pc-status-chip.status-confirmed{background:#D1FAE5;color:#065F46}
@@ -898,7 +885,6 @@
     /* Session jump link — schedule label in swimmer enrolment table */
     .session-jump-link{color:var(--text);font-weight:600;font-size:12px;cursor:pointer;text-decoration:underline;text-decoration-color:var(--primary);text-underline-offset:2px;transition:color .1s ease}
     .session-jump-link:hover{color:var(--primary)}    .esc-warn-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 14px;background:#1a0d00;border-bottom:1px solid #F59E0B;font-size:12px;color:#FCD34D;flex-wrap:wrap}
-    .acct-session-dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#22C55E;box-shadow:0 0 0 3px rgba(34,197,94,.18);margin-right:7px;vertical-align:middle;flex-shrink:0}
     @keyframes dot-pulse{0%,100%{box-shadow:0 0 0 2px rgba(34,197,94,.2)}50%{box-shadow:0 0 0 5px rgba(34,197,94,.05)}}
     .acct-session-dot{animation:dot-pulse 2.4s ease-in-out infinite}
     /* Cross-filter search notice — shown when results exist in another status bucket */
@@ -1079,10 +1065,6 @@
       body[data-print-view="weekly"] .print-rundown{display:block !important;background:#fff !important;color:#000 !important}
       body[data-print-view="daily"] .print-daily{display:block !important;background:#fff !important;color:#000 !important}
       body[data-print-view="weekly-table"] .print-weekly-table{display:block !important;background:#fff !important;color:#000 !important}
-      .print-title{font-size:15pt;font-weight:800;margin-bottom:3mm;color:#000 !important}
-      .print-meta{font-size:11pt;margin-bottom:4mm;color:#000 !important}
-      .print-day{margin-bottom:4mm;break-inside:avoid}
-      .print-day h3{font-size:11pt;margin:0 0 2mm;color:#000 !important}
       /* ── no-print: hides screen-only elements (e.g. DailyView card) ── */
       .no-print{display:none !important}
 
@@ -1097,7 +1079,6 @@
       .print-rundown tbody td{font-size:10.5pt;padding:6px 8px;border-bottom:1px solid #e0e0e0;vertical-align:top;line-height:1.4}
       .print-rundown tbody tr:last-child td{border-bottom:none}
       .print-rundown .empty-row td{color:#999 !important;font-style:italic;font-size:9.5pt}
-      .print-time-cell{white-space:nowrap;font-weight:700;width:15%}
       .print-type-cell{white-space:nowrap;font-size:10.5pt}
       .print-day{margin-bottom:8mm;break-inside:avoid}
       .print-day h3{font-size:12pt;font-weight:800;color:#000 !important;margin:0 0 3mm;padding-bottom:2mm;border-bottom:1.5px solid #000}
