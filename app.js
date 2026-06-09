@@ -2591,6 +2591,14 @@ function App(){
       <button className={`sub-tab ${accountSection==='codes'?'active':''}`} onClick={()=>setAccountSection('codes')}>Discounts</button>
     </div></div>}
 
+    {/* ── Sub-bar: admin tabs ── */}
+    {!loading && view==='settings' && <div className="sub-bar"><div className="sub-bar-inner">
+      <button className={`sub-tab ${adminSection==='summary'?'active':''}`} onClick={()=>setAdminSection('summary')}>Summary</button>
+      <button className={`sub-tab ${adminSection==='pools'?'active':''}`} onClick={()=>setAdminSection('pools')}>Pools & Hours</button>
+      <button className={`sub-tab ${adminSection==='instructors'?'active':''}`} onClick={()=>setAdminSection('instructors')}>Instructors</button>
+      <button className={`sub-tab ${adminSection==='lessonTypes'?'active':''}`} onClick={()=>setAdminSection('lessonTypes')}>Lesson Types</button>
+    </div></div>}
+
     <div className="wrap">
       {loading ? <div className="card" style={{textAlign:'center',padding:'42px'}}><div style={{fontSize:34,marginBottom:10}}>⏳</div><div>Loading scheduler…</div><div className="small subtle" style={{marginTop:6}}>{status || 'Connecting'}</div></div> : null}
       {!loading && error ? <div className="card error-card"><div style={{fontWeight:800,marginBottom:4}}>Error</div><div className="small">{error}</div></div> : null}
@@ -2770,45 +2778,30 @@ function App(){
 
       {/* ── Admin (pools / instructors / lesson types / summary) ── */}
       {/* ── Admin (side-nav + content) ── */}
-      {!loading && view==='settings' && <div className="admin-hub">
-        <div className="admin-hub-sidebar">
-          <div className="admin-hub-title">🔧 Admin</div>
-          {[
-            { key:'summary',     icon:'📊', label:'Summary' },
-            { key:'pools',       icon:'🏊', label:'Pools & Operating Hours' },
-            { key:'instructors', icon:'👨‍🏫', label:'Instructors' },
-            { key:'lessonTypes', icon:'📋', label:'Lesson Types' },
-          ].map(item => <button key={item.key} className={`admin-hub-item ${adminSection===item.key?'is-on':''}`} onClick={()=>setAdminSection(item.key)}>
-            <span className="admin-hub-icon">{item.icon}</span>
-            <span className="admin-hub-label">{item.label}</span>
-          </button>)}
-        </div>
-        <div className="admin-hub-content">
-          {adminSection === 'summary' && <SummaryView summary={summary} pools={activePools()} />}
-          {(adminSection === 'pools' || adminSection === 'instructors' || adminSection === 'lessonTypes') && <SettingsView
-            section={adminSection}
-            options={options}
-            addOption={addOption}
-            toggleOption={toggleOption}
-            deleteOption={deleteOption}
-            deleteInstructor={deleteInstructor}
-            patchOption={patchOption}
-            reorderOption={reorderOption}
-            moveOption={moveOption}
-            saveLessonType={saveLessonType}
-            deleteLessonType={deleteLessonType}
-            lessonTypeCounts={lessonTypeCounts}
-            codes={codes}
-            students={students}
-            packages={options.packages}
-            addCode={addCode}
-            updateCode={updateCode}
-            deleteCode={deleteCode}
-            pools={activePools()}
-            onUpdatePool={updatePool}
-          />}
-        </div>
-      </div>}
+      {/* ── Admin views (no side column — sub-bar handles navigation) ── */}
+      {!loading && view==='settings' && adminSection==='summary' && <SummaryView summary={summary} pools={activePools()} />}
+      {!loading && view==='settings' && (adminSection==='pools'||adminSection==='instructors'||adminSection==='lessonTypes') && <SettingsView
+        section={adminSection}
+        options={options}
+        addOption={addOption}
+        toggleOption={toggleOption}
+        deleteOption={deleteOption}
+        deleteInstructor={deleteInstructor}
+        patchOption={patchOption}
+        reorderOption={reorderOption}
+        moveOption={moveOption}
+        saveLessonType={saveLessonType}
+        deleteLessonType={deleteLessonType}
+        lessonTypeCounts={lessonTypeCounts}
+        codes={codes}
+        students={students}
+        packages={options.packages}
+        addCode={addCode}
+        updateCode={updateCode}
+        deleteCode={deleteCode}
+        pools={activePools()}
+        onUpdatePool={updatePool}
+      />}
 
     </div>{/* end .wrap */}
 
