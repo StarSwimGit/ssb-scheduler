@@ -34,11 +34,11 @@
     .nav-btn-link{color:var(--text-3);font-size:12px}
     .nav-btn-link:hover{color:var(--primary);background:var(--primary-soft)}
     /* Sub-bar sits flush below the sticky header */
-    .sub-bar{background:rgba(255,255,255,.97);backdrop-filter:blur(8px);border-bottom:1px solid var(--border);position:sticky;top:54px;z-index:40;box-shadow:0 1px 0 var(--border)}
-    .sub-bar-inner{max-width:1500px;margin:0 auto;padding:0 24px;display:flex;justify-content:flex-end;align-items:center;gap:0;height:40px}
-    .sub-tab{padding:0 14px;border:none;background:transparent;color:var(--text-3);font-weight:500;font-size:12px;cursor:pointer;border-bottom:2px solid transparent;height:40px;margin-bottom:-1px;transition:color .13s ease,border-color .13s ease;white-space:nowrap;letter-spacing:.01px;font-family:inherit;display:inline-flex;align-items:center}
-    .sub-tab:hover{color:var(--text-2);background:var(--surface-2)}
-    .sub-tab.active{color:var(--primary);border-bottom-color:var(--primary);font-weight:600}
+    .sub-bar{background:transparent;position:sticky;top:54px;z-index:40;padding:8px 24px 0}
+    .sub-bar-inner{max-width:1500px;margin:0 auto;display:flex;justify-content:flex-end;align-items:center;gap:4px;background:var(--surface);border:1px solid var(--border);border-bottom:none;border-radius:12px 12px 0 0;padding:6px 10px;box-shadow:0 -1px 0 var(--border) inset}
+    .sub-tab{padding:5px 14px;border:none;background:transparent;color:var(--text-3);font-weight:500;font-size:12px;cursor:pointer;border-radius:8px;transition:color .13s ease,background .13s ease;white-space:nowrap;letter-spacing:.01px;font-family:inherit;display:inline-flex;align-items:center;height:30px}
+    .sub-tab:hover{color:var(--text);background:var(--surface-2)}
+    .sub-tab.active{color:var(--primary-on-soft);background:var(--primary-soft);font-weight:600}
     .header{background:#fff;border-bottom:1px solid var(--border);border-bottom-left-radius:16px;border-bottom-right-radius:16px;padding:0 22px;position:sticky;top:0;z-index:50;box-shadow:0 2px 8px rgba(14,40,60,.06)}
     .header-inner{max-width:1500px;min-height:54px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:6px 0;flex-wrap:wrap}
     .brand{display:flex;align-items:center;gap:10px}
