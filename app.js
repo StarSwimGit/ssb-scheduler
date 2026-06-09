@@ -170,11 +170,6 @@ function computeGridBounds(operatingHours){
 
 // M2: mirrors the Postgres pool_occupancy() rounding so JS and DB agree on
 // when one session blocks another.
-function effectiveEndMinute(startMin, durationMin){
-  return Math.ceil((Number(startMin) + Number(durationMin)) / SLOT_MIN) * SLOT_MIN;
-}
-
-// M2: compute current/max capacity for a session given its lesson type.
 function sessionCapacity(session, lessonType){
   const ratio = Number((lessonType && lessonType.students_per_instructor) || 0);
   const instCount = Math.max(0, (session.instructors || []).length);
@@ -814,13 +809,6 @@ function App(){
     } catch(e){ console.warn('Subscriptions not available (run subscriptions migration):', e?.message || e); setSubscriptions([]); }
   }
 
-  // ============================================================================
-  // Referral & Discount Codes — one unified codes table handles both kinds.
-  // Industry standard (Stripe Coupons / Shopify Discounts): a single record
-  // can be either an owner-attached referral or a business-issued promo,
-  // with shared validity/usage/scope semantics so the future invoice module
-  // applies them through one lookup.
-  // ============================================================================
   async function loadCodes(){
     try{
       const rows = await selectRows('scheduler_codes', '*', '&order=created_at.desc');
@@ -1982,6 +1970,11 @@ function App(){
       await patchRows(table, match, patch);
       await loadOptions();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to update option'); }
+  }
+
+  async function updatePool(id, patch){
+    try{ await patchRows('pools', {id}, patch); await loadOptions(); }
+    catch(err){ handleErr(err); alert(err.message || 'Failed to update pool'); }
   }
 
   // Reorder a settings list by reindexing sort_order across the whole list, so
@@ -3443,90 +3436,6 @@ function SummaryView({ summary, pools }){
 // ============================================================================
 
 function billingText(mode, count){ if(count === null || count === undefined || count === '') return ''; return `${count} ${mode === 'credit' ? 'credits' : 'monthly'}`; }
-function fmtMoney(n){ if(n === null || n === undefined) return '—'; return Number.isInteger(Number(n)) ? String(Number(n)) : Number(n).toFixed(2); }
-
-// Render package <option>s grouped by their lesson type, with any unassigned
-// (legacy) packages collected at the bottom. Reused by every package dropdown.
-function packageOptionGroups(packages, lessonTypes){
-  const pkgs = packages || [];
-  return React.createElement(React.Fragment, null,
-    (lessonTypes || []).map(lt => {
-      const inLt = pkgs.filter(p => p.lesson_type_id === lt.id);
-      if(!inLt.length) return null;
-      return React.createElement('optgroup', { key:lt.id, label:lt.name },
-        inLt.map(p => React.createElement('option', { key:p.id, value:p.id },
-          `${p.name}${p.pax!=null?` · ${p.pax}pax`:''}${p.amount!=null?` · RM${p.amount}`:''}${billingText(p.billing_mode,p.billing_count)?` · ${billingText(p.billing_mode,p.billing_count)}`:''}${p.is_group?' · family':''}`
-        ))
-      );
-    }),
-    (() => {
-      const orphans = pkgs.filter(p => !p.lesson_type_id);
-      if(!orphans.length) return null;
-      return React.createElement('optgroup', { key:'__unassigned__', label:'Unassigned' },
-        orphans.map(p => React.createElement('option', { key:p.id, value:p.id }, p.name))
-      );
-    })()
-  );
-}
-
-// Look up a lesson type's "Trial" package amount (its trial fee).
-function trialAmountFor(lt, packages){
-  if(!lt) return null;
-  const trial = (packages || []).find(p => p.lesson_type_id === lt.id && (p.name || '').toLowerCase() === 'trial' && p.is_active !== false);
-  return (trial && trial.amount != null) ? Number(trial.amount) : null;
-}
-
-// Live billing for a family group. New rule: the bundle price covers the
-// group regardless of how many members are actually in it (1, 2, … up to
-// `required`). The account is billed for the package, not per swimmer.
-// Underfill is fully allowed. Only an overfill (more members than the
-// package's pax allowance) triggers the per-pax overflow surcharge — and
-// even that is only applied if `fallback_per_pax` is set on the package.
-function groupBilling(pkg, memberCount){
-  const n = memberCount;
-  if(!pkg) return { n, status:'unknown', total:null, perHead:null, required:null, bundle:null, fb:null, credits:null, mode:null, isGroup:false };
-  const required = (pkg.pax != null) ? Number(pkg.pax) : null;
-  const bundle   = (pkg.amount != null) ? Number(pkg.amount) : null;
-  const fb       = (pkg.fallback_per_pax != null) ? Number(pkg.fallback_per_pax) : null;
-  const credits  = (pkg.billing_count != null) ? Number(pkg.billing_count) : null;
-  const mode     = pkg.billing_mode || 'monthly';
-  // Flat / private package (e.g. a credit-based private class): the group is
-  // simply a binding of swimmers sharing one package — no discount fallback.
-  if(!pkg.is_group){
-    const total = bundle;
-    const perHead = (total != null && n > 0) ? total / n : null;
-    // For a flat/private package, pax is the MAXIMUM capacity (Clara 1–3, Duo
-    // 1–2). Fewer than the max is perfectly fine; only exceeding it warns.
-    let status = 'flat';
-    if(required != null && n > required) status = 'over_soft';
-    return { n, status, total, perHead, required, bundle, fb, credits, mode, isGroup:false };
-  }
-  // Family bundle: account is billed the bundle price for any size ≤ required.
-  // Underfill no longer falls back to per-pax — that rule was removed: a
-  // Family-5 group with 3 swimmers still pays the Family-5 bundle. The
-  // account opts out of the family price by changing each swimmer's
-  // individual package on their enrolment instead.
-  let status = 'unknown', total = null;
-  if(required != null && bundle != null){
-    if(n === 0){
-      status = 'empty'; total = bundle;  // bundle still charged even if empty (package was purchased)
-    } else if(n < required){
-      status = 'under_ok'; total = bundle;  // bundle covers underfill — no fallback
-    } else if(n === required){
-      status = 'qualified'; total = bundle;
-    } else {
-      // Overfill: bundle + (extras × per-pax fallback if set, otherwise just bundle)
-      status = 'over'; total = (fb != null ? bundle + (n - required) * fb : bundle);
-    }
-  } else if(bundle != null){
-    // No pax constraint set — bundle is a flat charge regardless of size
-    status = n === 0 ? 'empty' : 'flat_bundle'; total = bundle;
-  }
-  const perHead = (total != null && n > 0) ? total / n : null;
-  return { n, status, total, perHead, required, bundle, fb, credits, mode, isGroup:true };
-}
-
-// Monthly/Credit segmented toggle + a count input whose suffix flips to match.
 function BillingControl({ mode, count, onMode, onCount }){
   return <div style={{display:'flex',alignItems:'flex-end',gap:12,flexWrap:'wrap'}}>
     <div className="field" style={{margin:0}}>
@@ -5096,12 +5005,6 @@ function ParentsView({ accountSection, setAccountSection, parentGroups, lessonTy
   }
 
   return <>
-    {/* ── Sub-navigation: two children under the Accounts top tab ───── */}
-    <div className="admin-subnav">
-      <button className={`admin-subnav-btn ${adminView==='accounts'?'is-on':''}`} onClick={()=>setAdminView('accounts')}>👤 Accounts — Administration</button>
-      <button className={`admin-subnav-btn ${adminView==='familyGroups'?'is-on':''}`} onClick={()=>setAdminView('familyGroups')}>👪 Family Groups — Administration</button>
-    </div>
-
     {adminView === 'familyGroups' && <FamilyGroupsAdminView
       familyGroups={familyGroups}
       membersByGroup={membersByGroup}
@@ -6171,49 +6074,6 @@ function ReceiptsView({ pmts, invoices }){
     </div>
   </>;
 }
-function ReceiptModal({ subscription, subjectName, ltName, onClose }){
-  function doPrint(){
-    document.body.setAttribute('data-print-view', 'receipt');
-    window.print();
-    setTimeout(()=>document.body.removeAttribute('data-print-view'), 300);
-  }
-  const totalCredits = Number(subscription.credits_per_swimmer) * Number(subscription.swimmer_count);
-  return <div className="modal-backdrop"><div className="modal-card" style={{maxWidth:520}}>
-    <div className="modal-head">
-      <div style={{fontSize:14,fontWeight:800}}>Receipt Preview</div>
-      <button className="btn btn-ghost small" onClick={onClose}>✕</button>
-    </div>
-    <div className="modal-body">
-      <div className="receipt-sheet" id="receipt-sheet">
-        <div className="receipt-head">
-          <div className="receipt-brand">SSB · Star Swim Sdn Bhd</div>
-          <div className="receipt-meta">Receipt</div>
-        </div>
-        <table className="receipt-table">
-          <tbody>
-            <tr><th>Date</th><td>{subscription.subscription_date}</td></tr>
-            <tr><th>Receipt #</th><td>{subscription.receipt_number || '—'}</td></tr>
-            <tr><th>For</th><td>{subjectName}</td></tr>
-            <tr><th>Lesson Type</th><td>{ltName}</td></tr>
-            <tr><th>Credits</th><td>+{subscription.credits_per_swimmer} × {subscription.swimmer_count} swimmer{subscription.swimmer_count===1?'':'s'} = <strong>{totalCredits}</strong> credits</td></tr>
-            <tr><th>Source</th><td>{subscription.source || '—'}</td></tr>
-            {subscription.notes ? <tr><th>Notes</th><td>{subscription.notes}</td></tr> : null}
-            <tr><th>Amount</th><td><strong>{subscription.amount_paid != null ? `RM ${Number(subscription.amount_paid).toFixed(2)}` : '—'}</strong></td></tr>
-            {subscription.cancelled_at ? <tr><th>Status</th><td style={{color:'var(--red-tx)'}}>CANCELLED on {String(subscription.cancelled_at).slice(0,10)}</td></tr> : null}
-          </tbody>
-        </table>
-        <div className="receipt-foot">Thank you.</div>
-      </div>
-    </div>
-    <div className="modal-foot">
-      <button className="btn btn-ghost small" onClick={onClose}>Close</button>
-      <button className="btn btn-primary" onClick={doPrint}>🖨 Print</button>
-    </div>
-  </div></div>;
-}
-
-
-
 function StudentsView({ students, lessonTypes, lessonTypeById, packages, packageById, groupById, familyGroups, membersByGroup, scheduleByStudent, sessions, jumpToWeek, creditByKey, purchasesByStudent, subscriptions, addCreditPurchase, deleteCreditPurchase, addSubscription, cancelSubscription, adjustBalanceTo, addStudent, updateStudent, deleteStudent }){
   const [name, setName] = useState('');
   const [dob, setDob] = useState('');
