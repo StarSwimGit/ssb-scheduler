@@ -258,10 +258,10 @@ function PeriodNav({ rangeLabel, onPrev, onNext, onToday, isCurrent, children })
 }
 
 function App(){
-  const [view,setView] = useState('week');
-  const [adminSection,setAdminSection] = useState('summary');
-  const [accountSection,setAccountSection] = useState('accounts'); // 'accounts'|'familyGroups'|'swimmers'
-  const [openDropdown,setOpenDropdown] = useState(null); // 'schedule'|'accounts'|'billing'|'admin'
+  const [view,setView] = useState('schedule');          // 'schedule'|'accounts'|'enroll'|'settings'|'students'
+  const [scheduleSection,setScheduleSection] = useState('week'); // 'week'|'day'|'month'
+  const [adminSection,setAdminSection] = useState('pools');      // 'summary'|'pools'|'instructors'|'lessonTypes'
+  const [accountSection,setAccountSection] = useState('accounts'); // 'accounts'|'familyGroups'|'invoices'|'receipts'|'pendingCredits'|'aging'|'codes'
   const [loading,setLoading] = useState(true);
   const [status,setStatus] = useState('');
   const [error,setError] = useState('');
@@ -317,11 +317,18 @@ function App(){
     if(!cfg.supabaseUrl || !cfg.supabaseAnonKey){ setError('Missing config.js values.'); setLoading(false); return; }
     try{
       setLoading(true); setError('');
-      await loadOptions();
-      await Promise.all([loadSessions(), loadStudents(), loadGroups(), loadGroupMemberships(), loadCreditBalances(), loadCreditPurchases(), loadSubscriptions(), loadCodes(), loadReplacementPending(), loadTcAcceptances(), loadRemarks(monthCursor), loadInvoiceData()]);
+      // Phase 1 — critical: options + sessions needed to render the first view.
+      await Promise.all([loadOptions(), loadSessions()]);
+      setLoading(false);
       setStatus('Connected');
-    } catch(err){ handleErr(err); }
-    finally{ setLoading(false); }
+      // Phase 2 — background: load everything else after first paint.
+      Promise.all([
+        loadStudents(), loadGroups(), loadGroupMemberships(),
+        loadCreditBalances(), loadCreditPurchases(),
+        loadSubscriptions(), loadCodes(), loadReplacementPending(),
+        loadTcAcceptances(), loadRemarks(monthCursor), loadInvoiceData()
+      ]).catch(e => console.warn('Background load warning:', e));
+    } catch(err){ handleErr(err); setLoading(false); }
   }
 
   // ── Invoice loaders ────────────────────────────────────────────────
@@ -2559,59 +2566,44 @@ function App(){
 
   return <div>
     <div className="header"><div className="header-inner">
-      <div className="brand"><img src="./logo.png" alt="Star Swim Sdn Bhd" className="logo" /><div><div style={{fontSize:14,fontWeight:800,letterSpacing:'-.3px',lineHeight:1}}>SSB Scheduler</div><div style={{fontSize:9,color:'#64748B',marginTop:2}}>Pool-aware lesson calendar</div></div></div>
+      <div className="brand"><img src="./logo.png" alt="SSB" className="logo" /><div><div style={{fontSize:14,fontWeight:800,letterSpacing:'-.3px',lineHeight:1}}>SSB Scheduler</div><div style={{fontSize:9,color:'#64748B',marginTop:2}}>Pool-aware lesson calendar</div></div></div>
       <div className="header-meta">
-        <div className="header-summary"><span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalStudents}</span> students · <span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalSessions}</span> sessions · <span style={{color:'var(--primary)',fontWeight:800}}>{new Date().toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'})}</span></div>
+        <div className="header-summary"><span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalStudents}</span> students · <span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalSessions}</span> sessions</div>
         <div className="header-status"><span className={`status-dot ${loading?'is-loading':(error?'is-error':'is-ok')}`} aria-hidden="true" />{loading ? 'Connecting…' : (error ? 'Error' : (status || 'Ready'))}</div>
       </div>
-      <div className="header-tabs" onClick={()=>setOpenDropdown(null)}>
-        <div className="tabs">
-          <div className="nav-group" onClick={e=>e.stopPropagation()}>
-            <button className={`tab nav-group-trigger ${['day','week','month'].includes(view)?'active':''}`} onClick={()=>setOpenDropdown(openDropdown==='schedule'?null:'schedule')}>📅 Schedule ▾</button>
-            {openDropdown==='schedule' && <div className="nav-group-menu">
-              <button className={`nav-group-item ${view==='week'?'on':''}`} onClick={()=>{setView('week');setOpenDropdown(null);}}>📅 Weekly</button>
-              <button className={`nav-group-item ${view==='day'?'on':''}`} onClick={()=>{setView('day');setOpenDropdown(null);}}>📋 Daily</button>
-              <button className={`nav-group-item ${view==='month'?'on':''}`} onClick={()=>{setView('month');setOpenDropdown(null);}}>🗓 Monthly</button>
-            </div>}
-          </div>
-          <button className={`tab ${view==='enroll'?'active':''}`} onClick={()=>{setView('enroll');setOpenDropdown(null);}}>🔍 Explore</button>
-          <div className="nav-group" onClick={e=>e.stopPropagation()}>
-            <button className={`tab nav-group-trigger ${['accounts','students'].includes(view)?'active':''}`} onClick={()=>setOpenDropdown(openDropdown==='accounts'?null:'accounts')}>👤 Accounts ▾</button>
-            {openDropdown==='accounts' && <div className="nav-group-menu">
-              <button className={`nav-group-item ${view==='accounts'&&accountSection==='accounts'?'on':''}`} onClick={()=>{setView('accounts');setAccountSection('accounts');setOpenDropdown(null);}}>👤 Accounts</button>
-              <button className={`nav-group-item ${view==='accounts'&&accountSection==='familyGroups'?'on':''}`} onClick={()=>{setView('accounts');setAccountSection('familyGroups');setOpenDropdown(null);}}>👪 Family Groups</button>
-              <button className={`nav-group-item ${view==='students'?'on':''}`} onClick={()=>{setView('students');setOpenDropdown(null);}}>👥 Swimmers</button>
-            </div>}
-          </div>
-          <div className="nav-group" onClick={e=>e.stopPropagation()}>
-            <button className={`tab nav-group-trigger ${view==='settings'&&['invoices','receipts','pendingCredits','aging','codes'].includes(adminSection)?'active':''}`} onClick={()=>setOpenDropdown(openDropdown==='billing'?null:'billing')}>💰 Billing ▾</button>
-            {openDropdown==='billing' && <div className="nav-group-menu">
-              <button className={`nav-group-item ${adminSection==='invoices'?'on':''}`} onClick={()=>{setView('settings');setAdminSection('invoices');setOpenDropdown(null);}}>🧾 Invoices</button>
-              <button className={`nav-group-item ${adminSection==='receipts'?'on':''}`} onClick={()=>{setView('settings');setAdminSection('receipts');setOpenDropdown(null);}}>💰 Receipts</button>
-              <button className={`nav-group-item ${adminSection==='pendingCredits'?'on':''}`} onClick={()=>{setView('settings');setAdminSection('pendingCredits');setOpenDropdown(null);}}>⏳ Pending Credits</button>
-              <button className={`nav-group-item ${adminSection==='aging'?'on':''}`} onClick={()=>{setView('settings');setAdminSection('aging');setOpenDropdown(null);}}>📈 Aging Report</button>
-              <button className={`nav-group-item ${adminSection==='codes'?'on':''}`} onClick={()=>{setView('settings');setAdminSection('codes');setOpenDropdown(null);}}>🎟 Referral &amp; Codes</button>
-            </div>}
-          </div>
-          <button type="button" className="tab tab-link" onClick={() => window.open('./intake.html','_blank','noopener,noreferrer')}>📝 Intake ↗</button>
-        </div>
-        <div className="tabs tabs-right" style={{position:'relative'}} onClick={e=>e.stopPropagation()}>
-          <button className={`tab nav-group-trigger ${view==='settings'&&['summary','pools','instructors','lessonTypes'].includes(adminSection)?'active':''}`} onClick={()=>setOpenDropdown(openDropdown==='admin'?null:'admin')}>🔧 Admin ▾</button>
-          {openDropdown==='admin' && <div className="nav-group-menu" style={{right:0,left:'auto'}}>
-            <button className={`nav-group-item ${adminSection==='summary'?'on':''}`} onClick={()=>{setView('settings');setAdminSection('summary');setOpenDropdown(null);}}>📊 Summary</button>
-            <button className={`nav-group-item ${adminSection==='pools'?'on':''}`} onClick={()=>{setView('settings');setAdminSection('pools');setOpenDropdown(null);}}>🏊 Pools</button>
-            <button className={`nav-group-item ${adminSection==='instructors'?'on':''}`} onClick={()=>{setView('settings');setAdminSection('instructors');setOpenDropdown(null);}}>🏅 Instructors</button>
-            <button className={`nav-group-item ${adminSection==='lessonTypes'?'on':''}`} onClick={()=>{setView('settings');setAdminSection('lessonTypes');setOpenDropdown(null);}}>📚 Lesson Types</button>
-          </div>}
-        </div>
-      </div>
+      <nav className="main-nav">
+        <button className={`nav-btn ${view==='schedule'?'active':''}`} onClick={()=>setView('schedule')}>📅 Schedule</button>
+        <button className={`nav-btn ${view==='accounts'?'active':''}`} onClick={()=>{ setView('accounts'); setAccountSection('accounts'); }}>👤 Accounts</button>
+        <button className={`nav-btn ${view==='enroll'?'active':''}`} onClick={()=>setView('enroll')}>🔍 Explore</button>
+        <button type="button" className="nav-btn nav-btn-link" onClick={()=>window.open('./intake.html','_blank','noopener,noreferrer')}>📝 Intake ↗</button>
+        <button className={`nav-btn ${view==='settings'?'active':''}`} onClick={()=>{ setView('settings'); setAdminSection('pools'); }}>🔧 Admin</button>
+      </nav>
     </div></div>
 
+    {/* ── Sub-bar: schedule tabs ── */}
+    {!loading && view==='schedule' && <div className="sub-bar"><div className="sub-bar-inner">
+      <button className={`sub-tab ${scheduleSection==='week'?'active':''}`} onClick={()=>setScheduleSection('week')}>Weekly</button>
+      <button className={`sub-tab ${scheduleSection==='day'?'active':''}`} onClick={()=>setScheduleSection('day')}>Daily</button>
+      <button className={`sub-tab ${scheduleSection==='month'?'active':''}`} onClick={()=>setScheduleSection('month')}>Monthly</button>
+    </div></div>}
+
+    {/* ── Sub-bar: accounts tabs ── */}
+    {!loading && view==='accounts' && <div className="sub-bar"><div className="sub-bar-inner">
+      <button className={`sub-tab ${accountSection==='accounts'?'active':''}`} onClick={()=>setAccountSection('accounts')}>Accounts</button>
+      <button className={`sub-tab ${accountSection==='familyGroups'?'active':''}`} onClick={()=>setAccountSection('familyGroups')}>Groups</button>
+      <button className={`sub-tab ${accountSection==='invoices'?'active':''}`} onClick={()=>setAccountSection('invoices')}>Invoices</button>
+      <button className={`sub-tab ${accountSection==='receipts'?'active':''}`} onClick={()=>setAccountSection('receipts')}>Receipts</button>
+      <button className={`sub-tab ${accountSection==='pendingCredits'?'active':''}`} onClick={()=>setAccountSection('pendingCredits')}>Pending Credits</button>
+      <button className={`sub-tab ${accountSection==='aging'?'active':''}`} onClick={()=>setAccountSection('aging')}>Aging</button>
+      <button className={`sub-tab ${accountSection==='codes'?'active':''}`} onClick={()=>setAccountSection('codes')}>Discounts</button>
+    </div></div>}
+
     <div className="wrap">
-      {loading ? <div className="card" style={{textAlign:'center',padding:'42px'}}><div style={{fontSize:34,marginBottom:10}}>⏳</div><div>Loading scheduler…</div><div className="small subtle" style={{marginTop:6}}>{status || 'Connecting to Supabase'}</div></div> : null}
+      {loading ? <div className="card" style={{textAlign:'center',padding:'42px'}}><div style={{fontSize:34,marginBottom:10}}>⏳</div><div>Loading scheduler…</div><div className="small subtle" style={{marginTop:6}}>{status || 'Connecting'}</div></div> : null}
       {!loading && error ? <div className="card error-card"><div style={{fontWeight:800,marginBottom:4}}>Error</div><div className="small">{error}</div></div> : null}
 
-      {!loading && view==='week' && <WeekView
+      {/* ── Schedule views ── */}
+      {!loading && view==='schedule' && scheduleSection==='week' && <WeekView
         weekBlocks={weekBlocks}
         weekBlocksAllPools={weekBlocksAllPools}
         pools={activePools()}
@@ -2637,7 +2629,7 @@ function App(){
         onThisWeek={()=>setSelectedDate(todayStr())}
         onDuplicateWeek={duplicatePreviousWeek}
         onClearDay={clearDayClasses}
-        onJumpToDay={(dayIndex)=>{ const d=fromDateStr(selectedWeekStart); d.setDate(d.getDate()+dayIndex); setSelectedDate(toDateStr(d)); setView('day'); }}
+        onJumpToDay={(dayIndex)=>{ const d=fromDateStr(selectedWeekStart); d.setDate(d.getDate()+dayIndex); setSelectedDate(toDateStr(d)); setScheduleSection('day'); }}
         isTypeEnabled={isTypeEnabled}
         onToggleType={toggleType}
         onToggleAllTypes={toggleAllTypes}
@@ -2662,7 +2654,7 @@ function App(){
         onReorderSlot={saveDragOrder}
       />}
 
-      {!loading && view==='day' && <DailyView
+      {!loading && view==='schedule' && scheduleSection==='day' && <DailyView
         selectedDate={selectedDate} setSelectedDate={setSelectedDate}
         sessionsForDate={filteredSessionsForDate} colorsFor={colorsFor}
         lessonTypeByName={lessonTypeByName} poolById={poolById}
@@ -2684,13 +2676,12 @@ function App(){
         onToggleInstructor={toggleInstructor}
         onClearInstructors={clearInstructors}
         instructorFilterActive={selectedInstructors.size > 0}
-        colorsFor={colorsFor}
         trialStudentIds={trialStudentIds}
         trialByLessonType={trialByLessonType}
         creditByKey={creditByKey}
       />}
 
-      {!loading && view==='month' && <MonthView
+      {!loading && view==='schedule' && scheduleSection==='month' && <MonthView
         monthCursor={monthCursor} setMonthCursor={setMonthCursor}
         selectedDate={selectedDate} setSelectedDate={setSelectedDate}
         monthDates={monthDates} sessionsForDate={sessionsForDate} colorsFor={colorsFor}
@@ -2698,7 +2689,8 @@ function App(){
         selectedItems={selectedItems}
       />}
 
-      {!loading && view==='accounts' && <ParentsView
+      {/* ── Accounts views (no side-column for billing sub-sections) ── */}
+      {!loading && view==='accounts' && (accountSection==='accounts'||accountSection==='familyGroups') && <ParentsView
         accountSection={accountSection}
         setAccountSection={setAccountSection}
         parentGroups={parentGroups}
@@ -2733,55 +2725,58 @@ function App(){
         onJumpToSession={jumpToSession}
         setView={setView}
       />}
-
-      {!loading && view==='students' && <>
-        <StudentsView
-          students={students}
-          lessonTypes={activeLessonTypes()}
-          lessonTypeById={lessonTypeById}
-          packages={activePackages()}
-          packageById={packageById}
-          groupById={groupById}
-          familyGroups={familyGroups}
-          membersByGroup={membersByGroup}
-          scheduleByStudent={scheduleByStudent}
-          sessions={sessions}
-          jumpToWeek={(weekStartDate, dayIndex)=>{ const d = fromDateStr(weekStartDate); d.setDate(d.getDate() + (dayIndex || 0)); setSelectedDate(toDateStr(d)); setView('week'); }}
-          creditByKey={creditByKey}
-          purchasesByStudent={purchasesByStudent}
-          subscriptions={subscriptions}
-          addCreditPurchase={addCreditPurchase}
-          deleteCreditPurchase={deleteCreditPurchase}
-          addSubscription={addSubscription}
-          cancelSubscription={cancelSubscription}
-          adjustBalanceTo={adjustBalanceTo}
-          addStudent={addStudent}
-          updateStudent={updateStudent}
-          deleteStudent={deleteStudent}
-        />
-        {/* FamilyGroupsPanel removed — family groups are now managed
-            exclusively inside the Accounts tab, per-account context. */}
-        <div style={{height:'42vh'}} aria-hidden="true"></div>
-      </>}
-      {!loading && view==='enroll' && <EnrollView
-        sessions={sessions}
-        students={students}
-        studentById={studentById}
-        lessonTypes={activeLessonTypes()}
-        lessonTypeById={lessonTypeById}
-        lessonTypeByName={lessonTypeByName}
-        poolById={poolById}
-        colorsFor={colorsFor}
-        gridBounds={gridBounds}
-        packages={options.packages}
-        instructors={activeInstructors()}
-        initialWeekStart={selectedWeekStart}
-        onEnroll={openEnroll}
-        onCreate={openCreateFor}
-        onEdit={openEdit}
-        onAdd={(day, slot, poolId, weekStart) => openAddForWeek(weekStart, day, slot, poolId)}
+      {!loading && view==='accounts' && accountSection==='invoices' && <InvoicesView
+        invoices={invoices} invoiceLines={invoiceLines} pmts={pmts}
+        pendingCredits={pendingCredits} lessonTypeById={lessonTypeById}
+        packageById={packageById} studentById={studentById}
+        invoiceSettings={invoiceSettings} onSaveSettings={saveInvoiceSettings}
+        formatInvoiceNumber={formatInvoiceNumber} formatReceiptNumber={formatReceiptNumber}
+        onVoid={voidInvoice} onUpdateStatus={updateInvoiceStatus}
+        onRecordPayment={recordPayment} onConfirmCredit={confirmCredit}
+        onReverseCredit={reverseCredit} onAddLine={addInvoiceLine}
+        onUpdateLine={updateInvoiceLine} onDeleteLine={deleteInvoiceLine}
       />}
-      {/* ── Admin Hub — left sidebar + content panel ───────────────── */}
+      {!loading && view==='accounts' && accountSection==='receipts' && <ReceiptsView pmts={pmts} invoices={invoices} />}
+      {!loading && view==='accounts' && accountSection==='pendingCredits' && <PendingCreditsView
+        pendingCredits={pendingCredits} invoices={invoices}
+        studentById={studentById} familyGroups={familyGroups}
+        groupById={id => groupById[id]} lessonTypeById={lessonTypeById}
+        packageById={packageById} onConfirm={confirmCredit} onReverse={reverseCredit}
+      />}
+      {!loading && view==='accounts' && accountSection==='aging' && <AgingReportView invoices={invoices} pmts={pmts} />}
+      {!loading && view==='accounts' && accountSection==='codes' && <SettingsView
+        section="codes" options={options}
+        addOption={addOption} toggleOption={toggleOption} deleteOption={deleteOption}
+        pools={activePools()} onUpdatePool={updatePool}
+      />}
+
+      {/* ── Explore ── */}
+      {!loading && view==='enroll' && <EnrollView
+        sessions={sessions} students={students} studentById={studentById}
+        lessonTypes={activeLessonTypes()} lessonTypeById={lessonTypeById}
+        lessonTypeByName={lessonTypeByName} poolById={poolById} colorsFor={colorsFor}
+        gridBounds={gridBounds} packages={options.packages} instructors={activeInstructors()}
+        initialWeekStart={selectedWeekStart} onEnroll={openEnroll}
+        onCreate={openCreateFor} onEdit={openEdit}
+        onAdd={(day, startMinute, poolId, weekStart) => openAddForWeek(weekStart, day, startMinute, poolId)}
+      />}
+
+      {/* ── Swimmers (legacy direct link) ── */}
+      {!loading && view==='students' && <StudentsView
+        students={students} lessonTypes={activeLessonTypes()} lessonTypeById={lessonTypeById}
+        packages={activePackages()} packageById={packageById}
+        groupById={groupById} familyGroups={familyGroups} membersByGroup={membersByGroup}
+        scheduleByStudent={scheduleByStudent} sessions={sessions}
+        jumpToWeek={(weekStartDate, dayIndex)=>{ const d=fromDateStr(weekStartDate); d.setDate(d.getDate()+(dayIndex||0)); setSelectedDate(toDateStr(d)); setView('schedule'); setScheduleSection('week'); }}
+        creditByKey={creditByKey} purchasesByStudent={purchasesByStudent}
+        subscriptions={subscriptions} addCreditPurchase={addCreditPurchase}
+        deleteCreditPurchase={deleteCreditPurchase} addSubscription={addSubscription}
+        cancelSubscription={cancelSubscription} adjustBalanceTo={adjustBalanceTo}
+        addStudent={addStudent} updateStudent={updateStudent} deleteStudent={deleteStudent}
+      />}
+
+      {/* ── Admin (pools / instructors / lesson types / summary) ── */}
+      {/* ── Admin (side-nav + content) ── */}
       {!loading && view==='settings' && <div className="admin-hub">
         <div className="admin-hub-sidebar">
           <div className="admin-hub-title">🔧 Admin</div>
@@ -2790,62 +2785,16 @@ function App(){
             { key:'pools',       icon:'🏊', label:'Pools & Operating Hours' },
             { key:'instructors', icon:'👨‍🏫', label:'Instructors' },
             { key:'lessonTypes', icon:'📋', label:'Lesson Types' },
-            { key:'codes',       icon:'🎟', label:'Referral & Discount Codes' },
-            { key:'receipts',    icon:'💰', label:'Receipts' },
-            { key:'invoices',       icon:'🧾', label:'Invoices' },
-            { key:'pendingCredits', icon:'⏳', label:'Pending Credits' },
-            { key:'aging',          icon:'📈', label:'Aging Report' },
           ].map(item => <button key={item.key} className={`admin-hub-item ${adminSection===item.key?'is-on':''}`} onClick={()=>setAdminSection(item.key)}>
             <span className="admin-hub-icon">{item.icon}</span>
-            <span>{item.label}</span>
+            <span className="admin-hub-label">{item.label}</span>
           </button>)}
         </div>
         <div className="admin-hub-content">
           {adminSection === 'summary' && <SummaryView summary={summary} pools={activePools()} />}
-          {adminSection === 'receipts' && <ReceiptsView
-            pmts={pmts}
-            invoices={invoices}
-          />}
-          {adminSection === 'invoices' && <InvoicesView
-            invoices={invoices}
-            invoiceLines={invoiceLines}
-            pmts={pmts}
-            pendingCredits={pendingCredits}
-            lessonTypeById={lessonTypeById}
-            packageById={packageById}
-            studentById={studentById}
-            invoiceSettings={invoiceSettings}
-            onSaveSettings={saveInvoiceSettings}
-            formatInvoiceNumber={formatInvoiceNumber}
-            formatReceiptNumber={formatReceiptNumber}
-            onVoid={voidInvoice}
-            onUpdateStatus={updateInvoiceStatus}
-            onRecordPayment={recordPayment}
-            onConfirmCredit={confirmCredit}
-            onReverseCredit={reverseCredit}
-            onAddLine={addInvoiceLine}
-            onUpdateLine={updateInvoiceLine}
-            onDeleteLine={deleteInvoiceLine}
-          />}
-          {adminSection === 'pendingCredits' && <PendingCreditsView
-            pendingCredits={pendingCredits}
-            invoices={invoices}
-            studentById={studentById}
-            familyGroups={familyGroups}
-            groupById={id => groupById[id]}
-            lessonTypeById={lessonTypeById}
-            packageById={packageById}
-            onConfirm={confirmCredit}
-            onReverse={reverseCredit}
-          />}
-          {adminSection === 'aging' && <AgingReportView
-            invoices={invoices}
-            pmts={pmts}
-          />}
-          {(adminSection === 'pools' || adminSection === 'instructors' || adminSection === 'lessonTypes' || adminSection === 'codes') && <SettingsView
+          {(adminSection === 'pools' || adminSection === 'instructors' || adminSection === 'lessonTypes') && <SettingsView
             section={adminSection}
             options={options}
-            status={status}
             addOption={addOption}
             toggleOption={toggleOption}
             deleteOption={deleteOption}
@@ -2862,11 +2811,13 @@ function App(){
             addCode={addCode}
             updateCode={updateCode}
             deleteCode={deleteCode}
+            pools={activePools()}
+            onUpdatePool={updatePool}
           />}
         </div>
       </div>}
-      {/* T&C view removed from the menu — parents now sign T&C inside intake.html. */}
-    </div>
+
+    </div>{/* end .wrap */}
 
     {modal ? <SessionModal
       modal={modal} setModal={setModal} saveBusy={saveBusy}
@@ -2885,7 +2836,7 @@ function App(){
       membersByGroup={membersByGroup}
       groupById={groupById}
       trialStudentIds={trialStudentIds}
-        trialByLessonType={trialByLessonType}
+      trialByLessonType={trialByLessonType}
       creditByKey={creditByKey}
       purchasesByKey={purchasesByKey}
       addCreditPurchase={addCreditPurchase}
