@@ -1,4 +1,3 @@
-
 // ============================================================================
 // SSB Scheduler app.js — Module 2 build
 // ============================================================================
@@ -464,17 +463,40 @@ function App(){
   }
 
   async function confirmCredit(credit){
-    const pkg = options.packages?.find(p=>p.id===credit.package_id);
-    const creditsNum = credit.credits_per_swimmer || pkg?.billing_count || 4;
+    // Write credits directly — skips the `subscriptions` table (which is
+    // optional / not yet migrated) and writes straight to credit_purchases
+    // + student_credit_balances, which are always present.
     try{
-      await addSubscription({
-        subjectType: credit.family_group_id ? 'family_group' : 'student',
-        subjectId: credit.family_group_id || credit.student_id,
-        lessonTypeId: credit.lesson_type_id, packageId: credit.package_id,
-        creditsPerSwimmer: creditsNum, quantity:1, subscriptionDate: toDateStr(new Date())
+      const creditsNum = credit.credits_per_swimmer || 4;
+      const date = toDateStr(new Date());
+      // Resolve which swimmers receive the credit
+      let affectedStudents = [];
+      if(credit.family_group_id){
+        const members = (membersByGroup && membersByGroup[credit.family_group_id]) || [];
+        affectedStudents = credit.lesson_type_id
+          ? members.filter(m => (m.lessonTypeIds || []).includes(credit.lesson_type_id))
+          : members;
+      } else if(credit.student_id){
+        const stu = studentById[credit.student_id];
+        if(stu) affectedStudents = [stu];
+      }
+      if(!affectedStudents.length){ alert('No swimmers found to credit.'); return; }
+      // Insert credit_purchases rows
+      await insertRows('credit_purchases', affectedStudents.map(s => ({
+        student_id: s.id, lesson_type_id: credit.lesson_type_id,
+        purchase_date: date, credits_added: creditsNum,
+        source: 'pending_credit_confirmed', notes: `Confirmed from pending credit ${credit.id}`
+      })));
+      // Bump each balance
+      for(const s of affectedStudents){
+        await bumpBalance(s.id, credit.lesson_type_id, creditsNum);
+      }
+      // Mark the pending credit as confirmed
+      await patchRows('pending_credits',{id:credit.id},{
+        status:'confirmed', confirmed_at: new Date().toISOString()
       });
-      await patchRows('pending_credits',{id:credit.id},{status:'confirmed',confirmed_at:new Date().toISOString()});
-      await loadInvoiceData(); await loadStudents();
+      await Promise.all([loadCreditBalances(), loadInvoiceData(), loadStudents()]);
+      setStatus(`Confirmed: +${creditsNum} credits to ${affectedStudents.length} swimmer${affectedStudents.length===1?'':'s'}.`);
     }catch(err){ handleErr(err); alert(err.message||'Failed to confirm credit'); }
   }
 
@@ -4410,7 +4432,10 @@ function EnrollView({ sessions, students, studentById, lessonTypes, lessonTypeBy
                   <div className="enroll-mini-meta">{minuteToTime(info.s.startMinute)}{info.instName ? ` · ${info.instName}` : ''}</div>
                 </div>;
               })}
-              {onAdd && <div className="enroll-add-btn" title="Add session" onClick={()=>{ const d = fromDateStr(weekStart); d.setDate(d.getDate()+di); onAdd(di, minuteToSlot(h), null, weekStart); }}>+</div>}
+              {onAdd && <div className="enroll-add-btn" title="Add session" onClick={()=>{
+                try{ onAdd(di, minuteToSlot(h), null, weekStart); }
+                catch(err){ console.error('EnrollView + error:', err); alert('Could not open add session: ' + err.message); }
+              }}>+</div>}
             </div>;
           })}
         </React.Fragment>)}
