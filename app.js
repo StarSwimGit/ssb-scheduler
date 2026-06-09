@@ -2569,7 +2569,7 @@ function App(){
         <button className={`nav-btn ${view==='accounts'?'active':''}`} onClick={()=>{ setView('accounts'); setAccountSection('accounts'); }}>👤 Accounts</button>
         <button className={`nav-btn ${view==='enroll'?'active':''}`} onClick={()=>setView('enroll')}>🔍 Explore</button>
         <button type="button" className="nav-btn nav-btn-link" onClick={()=>window.open('./intake.html','_blank','noopener,noreferrer')}>📝 Intake ↗</button>
-        <button className={`nav-btn ${view==='settings'?'active':''}`} onClick={()=>{ setView('settings'); setAdminSection('pools'); }}>🔧 Admin</button>
+        <button className={`nav-btn ${view==='settings'?'active':''}`} onClick={()=>{ setView('settings'); setAdminSection('pools'); }}>⚙️ Settings</button>
       </nav>
     </div></div>
 
@@ -2730,6 +2730,7 @@ function App(){
         invoices={invoices} invoiceLines={invoiceLines} pmts={pmts}
         pendingCredits={pendingCredits} lessonTypeById={lessonTypeById}
         packageById={packageById} studentById={studentById}
+        membersByGroup={membersByGroup}
         invoiceSettings={invoiceSettings} onSaveSettings={saveInvoiceSettings}
         formatInvoiceNumber={formatInvoiceNumber} formatReceiptNumber={formatReceiptNumber}
         onVoid={voidInvoice} onUpdateStatus={updateInvoiceStatus}
@@ -7135,51 +7136,357 @@ function invoiceStatusLabel(s){ return({draft:'Draft',sent:'Sent',partial:'Part 
 function invoiceStatusColor(s){ return({draft:'#94A3B8',sent:'#3B82F6',partial:'#F59E0B',paid:'#10B981',void:'#EF4444'})[s]||'#94A3B8'; }
 function methodLabel(m){ return({cash:'Cash',bank_transfer:'Bank Transfer',duitnow:'DuitNow',card:'Card',cheque:'Cheque',other:'Other'})[m]||m; }
 
-function printInvoice(invoice, lines, pmts){
+// Helper: resolve swimmer names for a group line
+
+
+function InvoicesView({ invoices, invoiceLines, pmts, pendingCredits, lessonTypeById, packageById, studentById, membersByGroup, invoiceSettings, onSaveSettings, formatInvoiceNumber, formatReceiptNumber, onVoid, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
+  const [statusFilter,setStatusFilter]=useState('all');
+  const [searchQ,setSearchQ]=useState('');
+  const [expandedId,setExpandedId]=useState(null);
+  const [selectedIds,setSelectedIds]=useState(new Set());
+  const [showSettings,setShowSettings]=useState(false);
+  const today=todayStr();
+
+  function isOverdue(inv){ return inv.due_date && inv.due_date < today && inv.status !== 'paid' && inv.status !== 'void'; }
+
+  const counts = useMemo(()=>{
+    const c={all:invoices.length,draft:0,sent:0,partial:0,paid:0,void:0,overdue:0};
+    invoices.forEach(i=>{ if(c[i.status]!=null)c[i.status]++; if(isOverdue(i))c.overdue++; });
+    return c;
+  },[invoices]);
+
+  const filtered = useMemo(()=>{
+    let list = invoices.slice();
+    if(statusFilter==='overdue') list = list.filter(i=>isOverdue(i));
+    else if(statusFilter !== 'all') list = list.filter(i=>i.status===statusFilter);
+    if(searchQ.trim()){
+      const q=searchQ.toLowerCase();
+      list=list.filter(i=>(i.invoice_number||'').toLowerCase().includes(q)||(i.account_name||'').toLowerCase().includes(q));
+    }
+    return list.sort((a,b)=>(b.created_at||'').localeCompare(a.created_at||''));
+  },[invoices,statusFilter,searchQ]);
+
+  function toggleSelect(id){ const s=new Set(selectedIds); s.has(id)?s.delete(id):s.add(id); setSelectedIds(s); }
+  function toggleAll(){ setSelectedIds(selectedIds.size===filtered.length?new Set():new Set(filtered.map(i=>i.id))); }
+  const selCount=selectedIds.size;
+  const selDraft=filtered.filter(i=>selectedIds.has(i.id)&&i.status==='draft').length;
+  async function bulkMarkSent(){
+    const targets=filtered.filter(i=>selectedIds.has(i.id)&&i.status==='draft');
+    for(const inv of targets) await onUpdateStatus(inv.id,'sent');
+    setSelectedIds(new Set());
+  }
+  async function bulkPrint(){
+    const targets=filtered.filter(i=>selectedIds.has(i.id));
+    targets.forEach(inv=>{ const lines=invoiceLines.filter(l=>l.invoice_id===inv.id); printInvoice(inv,lines,membersByGroup); });
+  }
+
+  return <>
+    <div className="card" style={{marginBottom:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap',marginBottom:10}}>
+        <div>
+          <div style={{fontSize:18,fontWeight:800}}>🧾 Invoices</div>
+          <div className="small subtle" style={{marginTop:3}}>Create and manage invoices, record payments, and issue receipts.</div>
+        </div>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          <button className="btn btn-ghost small" onClick={()=>setShowSettings(s=>!s)}>⚙ Numbering</button>
+        </div>
+      </div>
+      {showSettings && invoiceSettings && <InvoiceSettingsPanel settings={invoiceSettings} onSave={onSaveSettings} formatInvoiceNumber={formatInvoiceNumber} formatReceiptNumber={formatReceiptNumber} />}
+      <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',marginBottom:8}}>
+        {[['all','All'],['draft','Draft'],['sent','Sent'],['partial','Part Paid'],['paid','Paid'],['void','Void'],['overdue','Overdue']].map(([k,l])=>
+          <button key={k} className={`tab ${statusFilter===k?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setStatusFilter(k)}>
+            {l} {counts[k]!=null?`(${counts[k]})`:null}
+          </button>)}
+      </div>
+      <div style={{display:'flex',gap:8,alignItems:'center'}}>
+        <input className="input" style={{flex:1,maxWidth:340}} placeholder="Search invoice # or account…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
+        <label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,cursor:'pointer'}}>
+          <input type="checkbox" checked={selCount===filtered.length&&filtered.length>0} onChange={toggleAll} /> Select all
+        </label>
+        <span className="small subtle">{filtered.length} / {invoices.length}</span>
+      </div>
+      {selCount>0&&<div className="inv-bulk-bar">
+        <span className="small" style={{fontWeight:700}}>{selCount} selected</span>
+        {selDraft>0&&<button className="btn btn-ghost small" onClick={bulkMarkSent}>Mark Sent ({selDraft})</button>}
+        <button className="btn btn-ghost small" onClick={bulkPrint}>🖨 Print Selected</button>
+        <button className="btn btn-ghost small" onClick={()=>setSelectedIds(new Set())}>Clear</button>
+      </div>}
+    </div>
+
+    {filtered.length===0&&<div className="card empty" style={{padding:32}}>No invoices match the current filter.</div>}
+
+    <div style={{display:'flex',flexDirection:'column',gap:8}}>
+      {filtered.map(inv=>{
+        const overdue=isOverdue(inv);
+        const isExpanded=expandedId===inv.id;
+        const isSelected=selectedIds.has(inv.id);
+        const invLines=invoiceLines.filter(l=>l.invoice_id===inv.id);
+        const invPmts=pmts.filter(p=>p.invoice_id===inv.id);
+        const invPcs=pendingCredits.filter(pc=>pc.invoice_id===inv.id);
+        const total=Number(inv.total_amount)||0;
+        const paid=Number(inv.amount_paid)||0;
+        const outstanding=Math.max(0,total-paid);
+        return <div key={inv.id} className={`inv-card${isExpanded?' is-expanded':''}${overdue?' is-overdue':''}`}>
+          <div className="inv-card-head" onClick={()=>setExpandedId(isExpanded?null:inv.id)}>
+            <label style={{display:'flex',alignItems:'center'}} onClick={e=>e.stopPropagation()}>
+              <input type="checkbox" checked={isSelected} onChange={()=>toggleSelect(inv.id)} />
+            </label>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                <span style={{fontWeight:800,fontSize:14}}>{inv.invoice_number||'#—'}</span>
+                <span className={`inv-status-chip s-${inv.status||'draft'}`}>{invoiceStatusLabel(inv.status)}</span>
+                {overdue&&<span className="inv-status-chip s-overdue">Overdue</span>}
+              </div>
+              <div className="small subtle">{inv.account_name||'—'} · Issued {inv.issue_date||'—'}{inv.due_date?` · Due ${inv.due_date}`:''}</div>
+            </div>
+            <div style={{textAlign:'right',flexShrink:0}}>
+              <div style={{fontWeight:800,fontSize:15}}>RM {total.toFixed(2)}</div>
+              {paid>0&&<div className="small subtle">Paid RM {paid.toFixed(2)} · Owed RM {outstanding.toFixed(2)}</div>}
+            </div>
+            <div style={{flexShrink:0,color:'var(--text-3)',fontSize:12}}>{isExpanded?'▲':'▼'}</div>
+          </div>
+          {isExpanded&&<InvoiceDetailPanel
+            invoice={inv} lines={invLines} pmts={invPmts} pendingCredits={invPcs}
+            isOverdue={overdue} membersByGroup={membersByGroup}
+            onVoid={()=>onVoid(inv.id)}
+            onUpdateStatus={(s)=>onUpdateStatus(inv.id,s)}
+            onRecordPayment={(data)=>onRecordPayment({invoiceId:inv.id,...data})}
+            onConfirmCredit={onConfirmCredit} onReverseCredit={onReverseCredit}
+            onAddLine={(data)=>onAddLine(inv.id,data)}
+            onUpdateLine={onUpdateLine} onDeleteLine={onDeleteLine}
+          />}
+        </div>;
+      })}
+    </div>
+  </>;
+}
+
+function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, membersByGroup, onVoid, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
+  const [showPayForm,setShowPayForm]=useState(false);
+  const [lastReceipt,setLastReceipt]=useState(null);
+  const outstanding=Math.max(0,(Number(invoice.total_amount)||0)-(Number(invoice.amount_paid)||0));
+  const [payAmt,setPayAmt]=useState('');
+  const [payDate,setPayDate]=useState(todayStr());
+  const [payMethod,setPayMethod]=useState('cash');
+  const [payRef,setPayRef]=useState('');
+  const [payNotes,setPayNotes]=useState('');
+  const [payBusy,setPayBusy]=useState(false);
+
+  async function submitPayment(){
+    if(!payAmt||isNaN(Number(payAmt))||Number(payAmt)<=0){alert('Enter a valid amount.');return;}
+    setPayBusy(true);
+    try{
+      const pmt=await onRecordPayment({ amount:Number(payAmt), payment_date:payDate, payment_method:payMethod, reference_number:payRef.trim()||null, notes:payNotes.trim()||null });
+      setLastReceipt(pmt);
+      setShowPayForm(false);
+      setPayAmt(''); setPayRef(''); setPayNotes('');
+    }catch(err){alert(err.message||'Failed to record payment');}
+    finally{setPayBusy(false);}
+  }
+
+  return <div className="inv-detail">
+    {isOverdue&&<div className="inv-overdue-banner">⚠ This invoice is overdue. Due date was {invoice.due_date}.</div>}
+    <div className="inv-detail-head">
+      <div>
+        <div className="small subtle">Bill To</div>
+        <div style={{fontWeight:700}}>{invoice.account_name||'—'}</div>
+        {invoice.account_email&&<div className="small subtle">{invoice.account_email}</div>}
+        {invoice.notes&&<div className="small subtle" style={{marginTop:4,fontStyle:'italic'}}>{invoice.notes}</div>}
+      </div>
+      <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'flex-start'}}>
+        {invoice.status==='draft'&&<button className="btn btn-ghost small" onClick={()=>onUpdateStatus('sent')}>Mark Sent</button>}
+        {invoice.status==='sent'&&<button className="btn btn-ghost small" onClick={()=>onUpdateStatus('partial')}>Mark Part Paid</button>}
+        <button className="btn btn-ghost small" onClick={()=>printInvoice(invoice,lines,membersByGroup)}>🖨 Print Invoice</button>
+        {(invoice.status==='paid'||outstanding<=0)&&pmts&&pmts.length>0&&
+          <button className="btn btn-primary small" onClick={()=>{
+            const lastPmt=[...pmts].sort((a,b)=>(b.payment_date||'').localeCompare(a.payment_date||''))[0];
+            printInvoiceAndReceipt(invoice,lines,lastPmt,membersByGroup);
+          }}>🖨 Print Invoice &amp; Receipt</button>}
+        {invoice.status!=='void'&&invoice.status!=='paid'&&<button className="btn btn-danger small" onClick={onVoid}>Void</button>}
+      </div>
+    </div>
+    <div className="table-wrap" style={{margin:'10px 0'}}>
+      <table><thead><tr><th>Description &amp; Swimmers</th><th style={{width:120}}>Type</th><th style={{width:120,textAlign:'right'}}>Amount</th></tr></thead>
+        <tbody>{lines.map(l=>{
+          const swimmers=getSwimmerNames(l,membersByGroup);
+          return <tr key={l.id}>
+            <td>
+              <div>{l.description||'—'}</div>
+              {swimmers.length>0&&<div className="small subtle" style={{marginTop:2}}>{swimmers.join(' · ')}</div>}
+            </td>
+            <td className="small subtle">{l.line_type==='group_bundle'?'Group Bundle':'Individual'}</td>
+            <td style={{textAlign:'right',fontWeight:600}}>RM {Number(l.amount).toFixed(2)}</td>
+          </tr>;
+        })}</tbody>
+        <tfoot><tr>
+          <td colSpan={2} style={{textAlign:'right',fontWeight:700}}>Total</td>
+          <td style={{textAlign:'right',fontWeight:800,fontSize:15}}>RM {Number(invoice.total_amount||0).toFixed(2)}</td>
+        </tr></tfoot>
+      </table>
+    </div>
+    {pmts.length>0&&<div style={{marginBottom:10}}>
+      <div style={{fontWeight:700,marginBottom:6}}>Payments</div>
+      <div className="table-wrap">
+        <table><thead><tr><th>Date</th><th>Receipt #</th><th>Method</th><th style={{textAlign:'right'}}>Amount</th><th></th></tr></thead>
+          <tbody>{pmts.map(p=><tr key={p.id}>
+            <td>{p.payment_date||'—'}</td>
+            <td style={{fontFamily:'monospace',fontSize:11}}>{p.receipt_number||'—'}</td>
+            <td>{methodLabel(p.payment_method)}</td>
+            <td style={{textAlign:'right',fontWeight:700,color:'var(--green-tx)'}}>RM {Number(p.amount).toFixed(2)}</td>
+            <td><button className="btn btn-ghost small" title="Print receipt" onClick={()=>printReceipt(p,invoice)}>🖨 Receipt</button></td>
+          </tr>)}</tbody>
+        </table>
+      </div>
+      <div className="small subtle" style={{marginTop:4}}>Paid RM {Number(invoice.amount_paid||0).toFixed(2)} · Outstanding RM {outstanding.toFixed(2)}</div>
+    </div>}
+    {!showPayForm&&outstanding>0&&invoice.status!=='void'&&
+      <button className="btn btn-primary small" onClick={()=>{setPayAmt(outstanding.toFixed(2));setShowPayForm(true);}}>+ Record Payment</button>}
+    {showPayForm&&<div className="inv-pay-form">
+      <div style={{fontWeight:700,marginBottom:8}}>Record Payment</div>
+      <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
+        <div className="field"><label>Amount (RM)</label><input className="input" type="number" step="0.01" min="0.01" value={payAmt} onChange={e=>setPayAmt(e.target.value)} /></div>
+        <div className="field"><label>Date</label><input className="input" type="date" value={payDate} onChange={e=>setPayDate(e.target.value)} /></div>
+        <div className="field"><label>Method</label><select className="select" value={payMethod} onChange={e=>setPayMethod(e.target.value)}>
+          {[['cash','Cash'],['bank_transfer','Bank Transfer'],['duitnow','DuitNow'],['card','Card'],['cheque','Cheque'],['other','Other']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+        </select></div>
+        <div className="field"><label>Reference #</label><input className="input" value={payRef} onChange={e=>setPayRef(e.target.value)} placeholder="e.g. TXN-12345" /></div>
+        <div className="field"><label>Notes</label><input className="input" value={payNotes} onChange={e=>setPayNotes(e.target.value)} /></div>
+      </div>
+      <div style={{display:'flex',gap:8,marginTop:10}}>
+        <button className="btn btn-primary small" onClick={submitPayment} disabled={payBusy}>{payBusy?'Saving…':'Save Payment'}</button>
+        <button className="btn btn-ghost small" onClick={()=>setShowPayForm(false)}>Cancel</button>
+      </div>
+    </div>}
+  </div>;
+}
+
+function InvoiceSettingsPanel({ settings, onSave, formatInvoiceNumber, formatReceiptNumber }){
+  const [form,setForm]=useState({
+    invoice_prefix: settings.invoice_prefix||'INV',
+    receipt_prefix: settings.receipt_prefix||'RCT',
+    next_invoice_seq: String(settings.next_invoice_seq||1),
+    next_receipt_seq: String(settings.next_receipt_seq||1),
+    leading_zeros: String(settings.leading_zeros||3),
+    include_date: settings.include_date !== false,
+    date_format: settings.date_format||'YYYYMM',
+  });
+  const [saving,setSaving]=useState(false);
+  const [saved,setSaved]=useState(false);
+
+  React.useEffect(()=>{ setForm({
+    invoice_prefix: settings.invoice_prefix||'INV',
+    receipt_prefix: settings.receipt_prefix||'RCT',
+    next_invoice_seq: String(settings.next_invoice_seq||1),
+    next_receipt_seq: String(settings.next_receipt_seq||1),
+    leading_zeros: String(settings.leading_zeros||3),
+    include_date: settings.include_date !== false,
+    date_format: settings.date_format||'YYYYMM',
+  }); },[settings]);
+
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const draftSettings={...form,leading_zeros:Number(form.leading_zeros)||3,include_date:!!form.include_date};
+  const invPreview=formatInvoiceNumber?formatInvoiceNumber(draftSettings,Number(form.next_invoice_seq)||1):'—';
+  const rctPreview=formatReceiptNumber?formatReceiptNumber(draftSettings,Number(form.next_receipt_seq)||1):'—';
+
+  async function handleSave(){
+    setSaving(true); setSaved(false);
+    await onSave({
+      invoice_prefix:form.invoice_prefix.trim()||'INV',
+      receipt_prefix:form.receipt_prefix.trim()||'RCT',
+      next_invoice_seq:Math.max(1,Number(form.next_invoice_seq)||1),
+      next_receipt_seq:Math.max(1,Number(form.next_receipt_seq)||1),
+      leading_zeros:Math.min(8,Math.max(1,Number(form.leading_zeros)||3)),
+      include_date:!!form.include_date,
+      date_format:form.date_format,
+    });
+    setSaving(false); setSaved(true);
+    setTimeout(()=>setSaved(false),2000);
+  }
+
+  return <div className="inv-settings-panel" style={{background:'var(--surface-2)',border:'1px solid var(--border)',borderRadius:10,padding:14,marginBottom:14}}>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+      <div style={{fontWeight:700}}>⚙ Invoice Numbering</div>
+      <div style={{display:'flex',gap:8}}>
+        <button className="btn btn-ghost small" onClick={()=>{if(confirm('Reset both counters to 1?')){{set('next_invoice_seq','1');set('next_receipt_seq','1');}}}}>↺ Reset</button>
+        <button className="btn btn-primary small" onClick={handleSave} disabled={saving}>{saving?'Saving…':saved?'✓ Saved':'Save'}</button>
+      </div>
+    </div>
+    <div className="form-grid" style={{gridTemplateColumns:'repeat(3,1fr)'}}>
+      <div className="field"><label>Invoice Prefix</label><input className="input" value={form.invoice_prefix} onChange={e=>set('invoice_prefix',e.target.value.replace(/\s/g,''))} placeholder="INV" maxLength={12} /></div>
+      <div className="field"><label>Receipt Prefix</label><input className="input" value={form.receipt_prefix} onChange={e=>set('receipt_prefix',e.target.value.replace(/\s/g,''))} placeholder="RCT" maxLength={12} /></div>
+      <div className="field"><label>Date Segment</label><select className="select" value={form.include_date?form.date_format:'none'} onChange={e=>{ if(e.target.value==='none'){set('include_date',false);}else{set('include_date',true);set('date_format',e.target.value);} }}>
+        <option value="YYYYMM">Year + Month (202606)</option>
+        <option value="YYYY">Year only (2026)</option>
+        <option value="MM">Month only (06)</option>
+        <option value="none">None — sequence only</option>
+      </select></div>
+      <div className="field"><label>Leading Zeros</label><select className="select" value={form.leading_zeros} onChange={e=>set('leading_zeros',e.target.value)}>
+        {[1,2,3,4,5].map(n=><option key={n} value={n}>{n} — e.g. {String(1).padStart(n,'0')}</option>)}
+      </select></div>
+      <div className="field"><label>Next Invoice #</label><input className="input" type="number" min="1" value={form.next_invoice_seq} onChange={e=>set('next_invoice_seq',e.target.value)} /></div>
+      <div className="field"><label>Next Receipt #</label><input className="input" type="number" min="1" value={form.next_receipt_seq} onChange={e=>set('next_receipt_seq',e.target.value)} /></div>
+    </div>
+    <div style={{marginTop:10,padding:'8px 12px',background:'var(--surface)',borderRadius:8,border:'1px solid var(--border)'}}>
+      <div className="small subtle" style={{marginBottom:4}}>Preview</div>
+      <span style={{fontFamily:'monospace',fontWeight:700}}>Invoice: {invPreview}</span>
+      <span style={{fontFamily:'monospace',fontWeight:700,marginLeft:24}}>Receipt: {rctPreview}</span>
+    </div>
+  </div>;
+}
+
+
+function getSwimmerNames(line, membersByGroup){
+  if(!line.family_group_id || !membersByGroup) return [];
+  const members = membersByGroup[line.family_group_id] || [];
+  return members.map(m => m.name || m.student_name || '').filter(Boolean);
+}
+
+function printInvoice(invoice, lines, membersByGroup){
   const billable = (lines||[]).filter(l=>l.is_billable);
   const paidAmt = Number(invoice.amount_paid)||0;
   const total = Number(invoice.total_amount)||0;
   const outstanding = Math.max(0, total - paidAmt);
   const isPaid = outstanding <= 0 && invoice.status !== 'void';
   const logoUrl = window.location.origin + '/logo.png';
-  const linesHtml = billable.map(l=>`<tr>
-    <td class="td-desc">${l.description||''}</td>
-    <td class="td-type">${l.line_type==='group_bundle'?'Group Bundle':'Individual'}</td>
-    <td class="td-amt">RM ${Number(l.amount).toFixed(2)}</td>
-  </tr>`).join('');
+  const linesHtml = billable.map(l=>{
+    const swimmers = getSwimmerNames(l, membersByGroup);
+    const descHtml = swimmers.length
+      ? `${l.description||''}<div style="font-size:7pt;color:#777;margin-top:2pt;line-height:1.5">${swimmers.join(' &middot; ')}</div>`
+      : (l.description||'');
+    return `<tr><td class="td-desc">${descHtml}</td><td class="td-type">${l.line_type==='group_bundle'?'Group Bundle':'Individual'}</td><td class="td-amt">RM ${Number(l.amount).toFixed(2)}</td></tr>`;
+  }).join('');
   const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${invoice.invoice_number}</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:9pt;color:#1a1a1a;background:#fff}
-@page{size:A5 landscape;margin:10mm 12mm}
+body{font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:8.5pt;color:#1a1a1a;background:#fff}
+@page{size:A5 landscape;margin:6mm 9mm}
 @media print{.page{padding:0}}
-.page{width:210mm;min-height:148mm;padding:10mm 12mm;display:flex;flex-direction:column}
-.hdr{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:7pt;border-bottom:1pt solid #1a1a1a;margin-bottom:9pt}
-.brand-logo{height:36pt;width:auto;object-fit:contain;display:block}
-.brand-text{font-size:7pt;color:#555;margin-top:5pt;line-height:1.55}
-.inv-number{font-size:11pt;font-weight:400;letter-spacing:.5px;color:#1a1a1a}
-.inv-meta{font-size:7.5pt;color:#777;margin-top:3pt;line-height:1.6;text-align:right}
-.status-chip{display:inline-block;padding:1pt 6pt;border-radius:2pt;font-size:7pt;font-weight:600;letter-spacing:.3px;margin-top:3pt}
+.page{width:210mm;height:148mm;padding:5mm 7mm;display:flex;flex-direction:column;overflow:hidden}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:5pt;border-bottom:1pt solid #1a1a1a;margin-bottom:6pt}
+.brand-logo{height:28pt;width:auto;object-fit:contain;display:block}
+.brand-text{font-size:6.5pt;color:#555;margin-top:4pt;line-height:1.5}
+.inv-number{font-size:10pt;font-weight:400;letter-spacing:.5px;color:#1a1a1a}
+.inv-meta{font-size:7pt;color:#777;margin-top:2pt;line-height:1.5;text-align:right}
+.status-chip{display:inline-block;padding:1pt 5pt;border-radius:2pt;font-size:6.5pt;font-weight:600;margin-top:2pt}
 .s-draft{background:#f1f5f9;color:#475569}.s-sent{background:#dbeafe;color:#1d4ed8}
 .s-partial{background:#fef3c7;color:#92400e}.s-paid{background:#d1fae5;color:#065f46}.s-void{background:#fee2e2;color:#7f1d1d}
-.bill-row{display:flex;gap:16pt;margin-bottom:8pt}
-.bill-box{background:#f8f9fa;border-radius:3pt;padding:5pt 8pt;flex:1}
-.bill-label{font-size:6.5pt;text-transform:uppercase;letter-spacing:.5px;color:#999;margin-bottom:2pt}
-.bill-name{font-size:9pt;font-weight:600;line-height:1.3}
-.bill-contact{font-size:7.5pt;color:#666;margin-top:1pt}
-table{width:100%;border-collapse:collapse;margin-bottom:7pt}
-thead th{font-size:7pt;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600;padding:4pt 5pt;border-bottom:1pt solid #e5e5e5;text-align:left}
+.bill-row{display:flex;gap:12pt;margin-bottom:5pt}
+.bill-box{background:#f8f9fa;border-radius:2pt;padding:3pt 6pt;flex:1}
+.bill-label{font-size:6pt;text-transform:uppercase;letter-spacing:.5px;color:#999;margin-bottom:1pt}
+.bill-name{font-size:8.5pt;font-weight:600;line-height:1.3}
+.bill-contact{font-size:7pt;color:#666;margin-top:1pt}
+table{width:100%;border-collapse:collapse;margin-bottom:5pt}
+thead th{font-size:6.5pt;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600;padding:3pt 4pt;border-bottom:1pt solid #e5e5e5;text-align:left}
 thead th.td-amt{text-align:right}
-.td-desc{padding:4pt 5pt;font-size:8.5pt;border-bottom:1pt solid #f0f0f0}
-.td-type{padding:4pt 5pt;font-size:7.5pt;color:#777;border-bottom:1pt solid #f0f0f0}
-.td-amt{padding:4pt 5pt;font-size:8.5pt;font-weight:600;text-align:right;border-bottom:1pt solid #f0f0f0;white-space:nowrap}
-.totals{margin-left:auto;min-width:130pt}
-.tot-row{display:flex;justify-content:space-between;gap:12pt;padding:2.5pt 0;font-size:8.5pt;color:#555}
-.tot-row.grand{font-size:10pt;font-weight:700;color:#1a1a1a;border-top:1pt solid #1a1a1a;margin-top:4pt;padding-top:5pt}
+.td-desc{padding:3pt 4pt;font-size:8pt;border-bottom:1pt solid #f0f0f0;line-height:1.4}
+.td-type{padding:3pt 4pt;font-size:7pt;color:#777;border-bottom:1pt solid #f0f0f0;white-space:nowrap}
+.td-amt{padding:3pt 4pt;font-size:8pt;font-weight:600;text-align:right;border-bottom:1pt solid #f0f0f0;white-space:nowrap}
+.totals{margin-left:auto;min-width:120pt}
+.tot-row{display:flex;justify-content:space-between;gap:10pt;padding:2pt 0;font-size:8pt;color:#555}
+.tot-row.grand{font-size:9.5pt;font-weight:700;color:#1a1a1a;border-top:1pt solid #1a1a1a;margin-top:3pt;padding-top:4pt}
 .tot-row.paid-line{color:#059669}
-.paid-full{color:#059669;font-weight:700;font-size:8.5pt}
-.notes{font-size:7.5pt;color:#666;background:#f8f9fa;border-radius:3pt;padding:5pt 8pt;margin-bottom:7pt}
-.footer{margin-top:auto;padding-top:6pt;border-top:1pt solid #e5e5e5;font-size:6.5pt;color:#aaa;display:flex;justify-content:space-between}
+.notes{font-size:7pt;color:#666;background:#f8f9fa;border-radius:2pt;padding:3pt 6pt;margin-bottom:4pt}
+.footer{margin-top:auto;padding-top:4pt;border-top:1pt solid #e5e5e5;font-size:6pt;color:#aaa;display:flex;justify-content:space-between}
 </style>
 <script>window.onload=function(){setTimeout(function(){window.print()},350)}<\/script>
 </head><body><div class="page">
@@ -7190,7 +7497,7 @@ thead th.td-amt{text-align:right}
   </div>
   <div style="text-align:right">
     <div class="inv-number">INVOICE</div>
-    <div style="font-size:13pt;font-weight:300;letter-spacing:1px;margin-top:2pt">${invoice.invoice_number||''}</div>
+    <div style="font-size:12pt;font-weight:300;letter-spacing:1px;margin-top:1pt">${invoice.invoice_number||''}</div>
     <div class="inv-meta">Issued: ${invoice.issue_date||'—'}${invoice.due_date?`<br>Due: ${invoice.due_date}`:''}<br>
     <span class="status-chip s-${invoice.status||'draft'}">${invoiceStatusLabel(invoice.status)}</span></div>
   </div>
@@ -7204,7 +7511,7 @@ thead th.td-amt{text-align:right}
 </div>
 ${invoice.notes?`<div class="notes">${invoice.notes}</div>`:''}
 <table>
-  <thead><tr><th>Description</th><th>Type</th><th class="td-amt">Amount</th></tr></thead>
+  <thead><tr><th>Description &amp; Swimmers</th><th>Type</th><th class="td-amt">Amount</th></tr></thead>
   <tbody>${linesHtml}</tbody>
 </table>
 <div class="totals">
@@ -7226,19 +7533,19 @@ function printReceipt(pmt, invoice){
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:9pt;color:#1a1a1a;background:#fff}
-@page{size:A5 landscape;margin:10mm 12mm}
-.page{width:210mm;min-height:148mm;padding:10mm 12mm;display:flex;flex-direction:column}
-.hdr{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:7pt;border-bottom:1pt solid #1a1a1a;margin-bottom:10pt}
-.brand-logo{height:32pt;object-fit:contain;display:block}
-.brand-text{font-size:7pt;color:#555;margin-top:4pt;line-height:1.55}
-.rct-title{font-size:11pt;font-weight:300;letter-spacing:.8px;color:#1a1a1a;margin-bottom:2pt}
-.rct-num{font-size:13pt;font-weight:300;letter-spacing:1px}
-.row{display:flex;justify-content:space-between;padding:4.5pt 0;border-bottom:1pt solid #f0f0f0;font-size:8.5pt}
+@page{size:A5 landscape;margin:6mm 9mm}
+.page{width:210mm;height:148mm;padding:5mm 7mm;display:flex;flex-direction:column;overflow:hidden}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:5pt;border-bottom:1pt solid #1a1a1a;margin-bottom:8pt}
+.brand-logo{height:28pt;object-fit:contain;display:block}
+.brand-text{font-size:6.5pt;color:#555;margin-top:3pt;line-height:1.5}
+.rct-title{font-size:10pt;font-weight:300;letter-spacing:.8px;color:#1a1a1a;margin-bottom:1pt}
+.rct-num{font-size:12pt;font-weight:300;letter-spacing:1px}
+.row{display:flex;justify-content:space-between;padding:4pt 0;border-bottom:1pt solid #f0f0f0;font-size:8.5pt}
 .row-label{color:#777}
 .row-val{font-weight:500}
-.row.amount{border-bottom:none;border-top:1.5pt solid #1a1a1a;margin-top:6pt;padding-top:7pt;font-size:12pt;font-weight:700}
-.paid-stamp{display:inline-block;border:1.5pt solid #059669;color:#059669;padding:3pt 10pt;border-radius:2pt;font-size:8.5pt;font-weight:600;letter-spacing:.5px;margin-top:10pt}
-.footer{margin-top:auto;padding-top:6pt;border-top:1pt solid #e5e5e5;font-size:6.5pt;color:#aaa;display:flex;justify-content:space-between}
+.row.amount{border-bottom:none;border-top:1.5pt solid #1a1a1a;margin-top:6pt;padding-top:6pt;font-size:12pt;font-weight:700}
+.paid-stamp{display:inline-block;border:1.5pt solid #059669;color:#059669;padding:3pt 10pt;border-radius:2pt;font-size:8.5pt;font-weight:600;letter-spacing:.5px;margin-top:8pt}
+.footer{margin-top:auto;padding-top:4pt;border-top:1pt solid #e5e5e5;font-size:6pt;color:#aaa;display:flex;justify-content:space-between}
 </style>
 <script>window.onload=function(){setTimeout(function(){window.print()},350)}<\/script>
 </head><body><div class="page">
@@ -7247,10 +7554,7 @@ body{font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:9pt;color
     <img class="brand-logo" src="${logoUrl}" onerror="this.style.display='none'">
     <div class="brand-text">Star Swim Sdn Bhd (1602674-U)<br>No.137 Jalan Sultan Abdul Jalil, 30000 Ipoh, Perak<br>TIN: C59796139050</div>
   </div>
-  <div style="text-align:right">
-    <div class="rct-title">RECEIPT</div>
-    <div class="rct-num">${pmt.receipt_number||'—'}</div>
-  </div>
+  <div style="text-align:right"><div class="rct-title">RECEIPT</div><div class="rct-num">${pmt.receipt_number||'—'}</div></div>
 </div>
 <div class="row"><span class="row-label">Invoice</span><span class="row-val">${invoice.invoice_number||'—'}</span></div>
 <div class="row"><span class="row-label">Account</span><span class="row-val">${invoice.account_name||'—'}</span></div>
@@ -7265,42 +7569,47 @@ ${pmt.notes?`<div class="row"><span class="row-label">Notes</span><span class="r
   const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
 }
 
-function printInvoiceAndReceipt(invoice, lines, pmt){
-  // Prints Invoice + Receipt stacked on one A4 portrait (two A5 landscape)
+function printInvoiceAndReceipt(invoice, lines, pmt, membersByGroup){
   const logoUrl = window.location.origin + '/logo.png';
   const billable = (lines||[]).filter(l=>l.is_billable);
   const paidAmt = Number(invoice.amount_paid)||0;
   const total = Number(invoice.total_amount)||0;
-  const linesHtml = billable.map(l=>`<tr><td class="td-d">${l.description||''}</td><td class="td-t">${l.line_type==='group_bundle'?'Group':'Indiv.'}</td><td class="td-a">RM ${Number(l.amount).toFixed(2)}</td></tr>`).join('');
+  const linesHtml = billable.map(l=>{
+    const swimmers = getSwimmerNames(l, membersByGroup);
+    const descHtml = swimmers.length
+      ? `${l.description||''}<div style="font-size:6.5pt;color:#666;margin-top:1pt">${swimmers.join(' &middot; ')}</div>`
+      : (l.description||'');
+    return `<tr><td class="td-d">${descHtml}</td><td class="td-t">${l.line_type==='group_bundle'?'Group':'Indiv.'}</td><td class="td-a">RM ${Number(l.amount).toFixed(2)}</td></tr>`;
+  }).join('');
   const co = `<img class="logo" src="${logoUrl}" onerror="this.style.display='none'"><div class="co">Star Swim Sdn Bhd (1602674-U)<br>No.137 Jalan Sultan Abdul Jalil, 30000 Ipoh<br>TIN: C59796139050</div>`;
   const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invoice & Receipt</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:8.5pt;color:#1a1a1a;background:#fff}
-@page{size:A4 portrait;margin:6mm}
-.block{width:195mm;height:135mm;overflow:hidden;display:flex;flex-direction:column;padding:7mm 8mm}
-.block+.block{border-top:1pt dashed #bbb}
-.hdr{display:flex;justify-content:space-between;padding-bottom:5pt;border-bottom:1pt solid #1a1a1a;margin-bottom:6pt}
-.logo{height:26pt;object-fit:contain}
-.co{font-size:6pt;color:#666;margin-top:3pt;line-height:1.5}
-.rtitle{font-size:8.5pt;font-weight:400;letter-spacing:.5px}
-.rnum{font-size:10pt;font-weight:300;letter-spacing:.8px}
-.rmeta{font-size:6.5pt;color:#888;margin-top:2pt;text-align:right;line-height:1.5}
-.bill{background:#f8f9fa;border-radius:2pt;padding:3pt 6pt;margin-bottom:5pt;font-size:7.5pt}
-.bill strong{font-size:8pt;display:block}
-table{width:100%;border-collapse:collapse;margin-bottom:5pt}
-th{font-size:6pt;text-transform:uppercase;letter-spacing:.4px;color:#999;font-weight:600;padding:2pt 4pt;border-bottom:1pt solid #e5e5e5;text-align:left}
-.td-d,.td-t,.td-a{padding:3pt 4pt;font-size:7.5pt;border-bottom:1pt solid #f2f2f2}
+body{font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:8pt;color:#1a1a1a;background:#fff}
+@page{size:A4 portrait;margin:5mm}
+.block{width:197mm;height:141mm;overflow:hidden;display:flex;flex-direction:column;padding:5mm 7mm}
+.block+.block{border-top:1pt dashed #ccc}
+.hdr{display:flex;justify-content:space-between;padding-bottom:4pt;border-bottom:1pt solid #1a1a1a;margin-bottom:5pt}
+.logo{height:22pt;object-fit:contain}
+.co{font-size:5.5pt;color:#666;margin-top:2pt;line-height:1.5}
+.rtitle{font-size:8pt;font-weight:400;letter-spacing:.5px}
+.rnum{font-size:9.5pt;font-weight:300;letter-spacing:.8px}
+.rmeta{font-size:6pt;color:#888;margin-top:1pt;text-align:right;line-height:1.4}
+.bill{background:#f8f9fa;border-radius:2pt;padding:2.5pt 5pt;margin-bottom:4pt;font-size:7pt}
+.bill strong{font-size:7.5pt;display:block}
+table{width:100%;border-collapse:collapse;margin-bottom:4pt}
+th{font-size:5.5pt;text-transform:uppercase;letter-spacing:.4px;color:#999;font-weight:600;padding:2pt 3pt;border-bottom:1pt solid #e5e5e5;text-align:left}
+.td-d,.td-t,.td-a{padding:2.5pt 3pt;font-size:7.5pt;border-bottom:1pt solid #f2f2f2;line-height:1.4}
 .td-a{text-align:right;font-weight:600;white-space:nowrap}
-.td-t{color:#888}
-.totals{margin-left:auto;min-width:100pt}
-.tr{display:flex;justify-content:space-between;font-size:7.5pt;color:#666;padding:1.5pt 0}
-.tr.grand{font-size:9pt;font-weight:700;color:#1a1a1a;border-top:1pt solid #1a1a1a;margin-top:3pt;padding-top:3pt}
-.row{display:flex;justify-content:space-between;padding:3.5pt 0;border-bottom:1pt solid #f0f0f0;font-size:8pt}
+.td-t{color:#888;white-space:nowrap}
+.totals{margin-left:auto;min-width:90pt}
+.tr{display:flex;justify-content:space-between;font-size:7pt;color:#666;padding:1.5pt 0}
+.tr.grand{font-size:8.5pt;font-weight:700;color:#1a1a1a;border-top:1pt solid #1a1a1a;margin-top:2pt;padding-top:3pt}
+.row{display:flex;justify-content:space-between;padding:3pt 0;border-bottom:1pt solid #f0f0f0;font-size:7.5pt}
 .rl{color:#777}.rv{font-weight:500}
-.row.big{border-top:1.5pt solid #1a1a1a;border-bottom:none;margin-top:4pt;padding-top:5pt;font-size:10pt;font-weight:700}
-.stamp{display:inline-block;border:1pt solid #059669;color:#059669;padding:2pt 8pt;border-radius:2pt;font-size:7.5pt;font-weight:600;margin-top:6pt}
-.foot{margin-top:auto;padding-top:4pt;border-top:1pt solid #eee;font-size:6pt;color:#bbb;display:flex;justify-content:space-between}
+.row.big{border-top:1.5pt solid #1a1a1a;border-bottom:none;margin-top:3pt;padding-top:4pt;font-size:9.5pt;font-weight:700}
+.stamp{display:inline-block;border:1pt solid #059669;color:#059669;padding:2pt 7pt;border-radius:2pt;font-size:7pt;font-weight:600;margin-top:5pt}
+.foot{margin-top:auto;padding-top:3pt;border-top:1pt solid #eee;font-size:5.5pt;color:#bbb;display:flex;justify-content:space-between}
 </style>
 <script>window.onload=function(){setTimeout(function(){window.print()},350)}<\/script>
 </head><body>
@@ -7313,8 +7622,8 @@ th{font-size:6pt;text-transform:uppercase;letter-spacing:.4px;color:#999;font-we
       <div class="rmeta">Issued: ${invoice.issue_date||'—'}${invoice.due_date?`<br>Due: ${invoice.due_date}`:''}</div>
     </div>
   </div>
-  <div class="bill"><span style="font-size:5.5pt;text-transform:uppercase;letter-spacing:.4px;color:#999">Bill To</span><strong>${invoice.account_name||'—'}</strong>${invoice.account_email?`<span style="font-size:7pt;color:#666"> ${invoice.account_email}</span>`:''}</div>
-  <table><thead><tr><th>Description</th><th>Type</th><th style="text-align:right">Amount</th></tr></thead><tbody>${linesHtml}</tbody></table>
+  <div class="bill"><span style="font-size:5pt;text-transform:uppercase;letter-spacing:.4px;color:#999">Bill To</span><strong>${invoice.account_name||'—'}</strong>${invoice.account_email?`<span style="font-size:6.5pt;color:#666"> ${invoice.account_email}</span>`:''}</div>
+  <table><thead><tr><th>Description &amp; Swimmers</th><th>Type</th><th style="text-align:right">Amount</th></tr></thead><tbody>${linesHtml}</tbody></table>
   <div class="totals">
     <div class="tr"><span>Subtotal</span><span>RM ${total.toFixed(2)}</span></div>
     ${paidAmt>0?`<div class="tr" style="color:#059669"><span>Paid</span><span>− RM ${paidAmt.toFixed(2)}</span></div>`:''}
@@ -7339,641 +7648,3 @@ ${pmt?`<div class="block">
 </body></html>`;
   const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
 }
-
-function InvoicesView({ invoices, invoiceLines, pmts, pendingCredits, lessonTypeById, packageById, studentById, invoiceSettings, onSaveSettings, formatInvoiceNumber, formatReceiptNumber, onVoid, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
-  const [statusFilter,setStatusFilter]=useState('all');
-  const [searchQ,setSearchQ]=useState('');
-  const [expandedId,setExpandedId]=useState(null);
-  const [selectedIds,setSelectedIds]=useState(new Set());
-  const [showSettings,setShowSettings]=useState(false);
-  const today=todayStr();
-
-  function isOverdue(inv){ return inv.due_date && inv.due_date < today && inv.status !== 'paid' && inv.status !== 'void'; }
-
-  const counts=useMemo(()=>{
-    const c={all:invoices.length,draft:0,sent:0,partial:0,paid:0,void:0,overdue:0};
-    invoices.forEach(i=>{ if(c[i.status]!=null)c[i.status]++; if(isOverdue(i))c.overdue++; });
-    return c;
-  },[invoices,today]);
-
-  const outstanding=useMemo(()=>invoices.filter(i=>i.status!=='void'&&i.status!=='paid').reduce((s,i)=>s+Math.max(0,Number(i.total_amount)-Number(i.amount_paid)),0),[invoices]);
-  const collectedMonth=useMemo(()=>{const ym=new Date().toISOString().slice(0,7);return pmts.filter(p=>(p.payment_date||'').startsWith(ym)).reduce((s,p)=>s+Number(p.amount),0);},[pmts]);
-
-  const filtered=invoices.filter(i=>{
-    if(statusFilter==='overdue') return isOverdue(i);
-    if(statusFilter!=='all'&&i.status!==statusFilter)return false;
-    if(searchQ){const q=searchQ.toLowerCase();if(!i.invoice_number.toLowerCase().includes(q)&&!i.account_name.toLowerCase().includes(q))return false;}
-    return true;
-  });
-
-  // Bulk actions
-  function toggleSelect(id){ setSelectedIds(s=>{const n=new Set(s);n.has(id)?n.delete(id):n.add(id);return n;}); }
-  function toggleAll(){ setSelectedIds(selectedIds.size===filtered.length?new Set():new Set(filtered.map(i=>i.id))); }
-  async function bulkMarkSent(){
-    const targets=filtered.filter(i=>selectedIds.has(i.id)&&i.status==='draft');
-    for(const inv of targets) await onUpdateStatus(inv.id,'sent');
-    setSelectedIds(new Set());
-  }
-  function bulkPrint(){
-    const targets=filtered.filter(i=>selectedIds.has(i.id));
-    targets.forEach(inv=>{ const lines=invoiceLines.filter(l=>l.invoice_id===inv.id); printInvoice(inv,lines); });
-  }
-
-  const selCount=selectedIds.size;
-  const selDraft=filtered.filter(i=>selectedIds.has(i.id)&&i.status==='draft').length;
-
-  return <>
-    <div className="card" style={{marginBottom:12}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap',marginBottom:10}}>
-        <div><div style={{fontSize:18,fontWeight:800}}>🧾 Invoices</div><div className="small subtle">Generated invoices. Click a row to expand — edit lines, record payment, print.</div></div>
-        <div style={{display:'flex',gap:18,alignItems:'flex-end',flexWrap:'wrap'}}>
-          {counts.overdue>0&&<div><div className="small subtle">Overdue</div><div style={{fontSize:20,fontWeight:800,color:'#EF4444'}}>{counts.overdue}</div></div>}
-          <div><div className="small subtle">Outstanding</div><div style={{fontSize:20,fontWeight:800,color:'#F59E0B'}}>RM{outstanding.toFixed(2)}</div></div>
-          <div><div className="small subtle">Collected this month</div><div style={{fontSize:20,fontWeight:800,color:'#10B981'}}>RM{collectedMonth.toFixed(2)}</div></div>
-          <button className={`btn btn-ghost small ${showSettings?'active':''}`} onClick={()=>setShowSettings(v=>!v)} title="Invoice number settings">⚙ Numbering</button>
-        </div>
-      </div>
-      {showSettings && <InvoiceSettingsPanel settings={invoiceSettings} onSave={onSaveSettings} formatInvoiceNumber={formatInvoiceNumber} formatReceiptNumber={formatReceiptNumber} />}
-      <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',marginBottom:selCount>0?8:0}}>
-        <input className="input" style={{flex:1,minWidth:200,maxWidth:300}} placeholder="Search invoice # or account…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
-        <div style={{display:'flex',gap:3,flexWrap:'wrap'}}>
-          {['all','draft','sent','partial','paid','void','overdue'].map(s=><button key={s} className={`tab ${statusFilter===s?'active':''}`} style={{padding:'5px 10px',fontSize:11,borderRadius:7,background:s==='overdue'&&statusFilter!==s?'#2a0a0a':''}} onClick={()=>setStatusFilter(s)}>
-            {s==='all'?`All (${counts.all})`:s==='overdue'?`⚠ Overdue (${counts.overdue})`:invoiceStatusLabel(s)+` (${counts[s]||0})`}
-          </button>)}
-        </div>
-      </div>
-      {selCount>0&&<div className="inv-bulk-bar">
-        <span style={{fontWeight:700}}>{selCount} selected</span>
-        {selDraft>0&&<button className="btn btn-primary small" onClick={bulkMarkSent}>Mark {selDraft} Sent</button>}
-        <button className="btn btn-ghost small" onClick={bulkPrint}>🖨 Print {selCount}</button>
-        <button className="btn btn-ghost small" onClick={()=>setSelectedIds(new Set())}>Clear</button>
-      </div>}
-    </div>
-
-    {filtered.length===0&&<div className="card empty" style={{padding:28}}>No invoices match this filter.</div>}
-
-    {/* Column header */}
-    {filtered.length>0&&<div className="inv-col-head">
-      <div style={{width:36}}><input type="checkbox" checked={selCount===filtered.length&&filtered.length>0} onChange={toggleAll} /></div>
-      <div style={{width:140,fontWeight:700}}>Invoice #</div>
-      <div style={{flex:1,fontWeight:700}}>Account</div>
-      <div style={{width:90,textAlign:'right',fontWeight:700}}>Total</div>
-      <div style={{width:90,textAlign:'right',fontWeight:700}}>Paid</div>
-      <div style={{width:100,textAlign:'right',fontWeight:700}}>Outstanding</div>
-      <div style={{width:120,fontWeight:700}}>Status</div>
-    </div>}
-
-    <div style={{display:'flex',flexDirection:'column',gap:4}}>
-      {filtered.map(inv=>{
-        const invLines=invoiceLines.filter(l=>l.invoice_id===inv.id);
-        const invPmts=pmts.filter(p=>p.invoice_id===inv.id);
-        const invPcs=pendingCredits.filter(pc=>pc.invoice_id===inv.id);
-        const owed=Math.max(0,Number(inv.total_amount)-Number(inv.amount_paid));
-        const overdue=isOverdue(inv);
-        const isExpanded=expandedId===inv.id;
-        const isSelected=selectedIds.has(inv.id);
-        return <div key={inv.id} className={`inv-card${isExpanded?' is-expanded':''}${overdue?' is-overdue':''}`}>
-          <div className="inv-row" onClick={(e)=>{ if(e.target.type==='checkbox')return; setExpandedId(isExpanded?null:inv.id); }}>
-            <div style={{width:36,flexShrink:0}} onClick={e=>e.stopPropagation()}>
-              <input type="checkbox" checked={isSelected} onChange={()=>toggleSelect(inv.id)} />
-            </div>
-            <div style={{width:140,flexShrink:0}}>
-              <div style={{fontWeight:800,fontFamily:'monospace',fontSize:12}}>{inv.invoice_number}</div>
-              <div className="small subtle">{inv.issue_date}</div>
-            </div>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontWeight:700}}>{inv.account_name}</div>
-              {overdue&&<div style={{fontSize:10,color:'#EF4444',fontWeight:800}}>⚠ OVERDUE{inv.due_date?` since ${inv.due_date}`:''}</div>}
-              {!overdue&&inv.due_date&&inv.status!=='paid'&&<div className="small subtle">Due {inv.due_date}</div>}
-            </div>
-            <div style={{width:90,textAlign:'right',flexShrink:0}}>RM{Number(inv.total_amount).toFixed(2)}</div>
-            <div style={{width:90,textAlign:'right',color:'#10B981',fontWeight:700,flexShrink:0}}>RM{Number(inv.amount_paid).toFixed(2)}</div>
-            <div style={{width:100,textAlign:'right',fontWeight:800,color:owed>0?overdue?'#EF4444':'#F59E0B':'#10B981',flexShrink:0}}>{owed>0?`RM${owed.toFixed(2)}`:'✓'}</div>
-            <div style={{width:120,flexShrink:0,display:'flex',alignItems:'center',gap:5}}>
-              <span className="inv-status-chip" style={{background:invoiceStatusColor(inv.status)+'22',color:invoiceStatusColor(inv.status),borderColor:invoiceStatusColor(inv.status)+'55'}}>{invoiceStatusLabel(inv.status)}</span>
-              <span style={{fontSize:10,color:'var(--text-3)'}}>{isExpanded?'▲':'▼'}</span>
-            </div>
-          </div>
-          {isExpanded&&<InvoiceDetailPanel
-            invoice={inv} lines={invLines} pmts={invPmts} pendingCredits={invPcs}
-            isOverdue={overdue}
-            onVoid={()=>onVoid(inv.id)}
-            onUpdateStatus={(s)=>onUpdateStatus(inv.id,s)}
-            onRecordPayment={(data)=>onRecordPayment({invoiceId:inv.id,...data})}
-            onConfirmCredit={onConfirmCredit}
-            onReverseCredit={onReverseCredit}
-            onAddLine={(data)=>onAddLine(inv.id,data)}
-            onUpdateLine={onUpdateLine}
-            onDeleteLine={onDeleteLine}
-          />}
-        </div>;
-      })}
-    </div>
-  </>;
-}
-
-// ============================================================================
-// InvoiceDetailPanel — Phase 2: inline line editing + add custom line
-// ============================================================================
-function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, onVoid, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
-  const [showPayForm,setShowPayForm]=useState(false);
-  const [lastReceipt,setLastReceipt]=useState(null);
-  const [editingLineId,setEditingLineId]=useState(null);
-  const [lineEdits,setLineEdits]=useState({});
-  const [showAddLine,setShowAddLine]=useState(false);
-  const [newLine,setNewLine]=useState({description:'',amount:'',lineType:'other'});
-  const outstanding=Math.max(0,Number(invoice.total_amount)-Number(invoice.amount_paid));
-
-  function startEdit(line){ setEditingLineId(line.id); setLineEdits({description:line.description,amount:String(line.amount)}); }
-  function cancelEdit(){ setEditingLineId(null); }
-  async function saveEdit(line){
-    await onUpdateLine(line.id,{description:lineEdits.description,amount:Number(lineEdits.amount)||0});
-    setEditingLineId(null);
-  }
-  async function handleAddLine(){
-    if(!newLine.description.trim()){ alert('Enter a description.'); return; }
-    if(!Number(newLine.amount)){ alert('Enter a valid amount.'); return; }
-    await onAddLine(newLine);
-    setNewLine({description:'',amount:'',lineType:'other'}); setShowAddLine(false);
-  }
-
-  return <div className="inv-detail">
-    {isOverdue&&<div className="inv-overdue-banner">⚠ This invoice is overdue — due date {invoice.due_date} has passed. Outstanding: RM{outstanding.toFixed(2)}</div>}
-
-    {/* Metadata */}
-    <div className="inv-detail-meta">
-      <div><span className="small subtle">Invoice #</span><div style={{fontWeight:800}}>{invoice.invoice_number}</div></div>
-      <div><span className="small subtle">Account</span><div>{invoice.account_name}</div></div>
-      <div><span className="small subtle">Issued</span><div>{invoice.issue_date}</div></div>
-      {invoice.due_date&&<div><span className="small subtle">Due</span><div style={{color:isOverdue?'#EF4444':'inherit',fontWeight:isOverdue?700:400}}>{invoice.due_date}</div></div>}
-      <div><span className="small subtle">Total</span><div style={{fontWeight:800}}>RM{Number(invoice.total_amount).toFixed(2)}</div></div>
-      <div><span className="small subtle">Paid</span><div style={{color:'#10B981',fontWeight:700}}>RM{Number(invoice.amount_paid).toFixed(2)}</div></div>
-      <div><span className="small subtle">Outstanding</span><div style={{fontWeight:800,color:outstanding>0?isOverdue?'#EF4444':'#F59E0B':'#10B981'}}>{outstanding>0?`RM${outstanding.toFixed(2)}`:'✓ Settled'}</div></div>
-    </div>
-    {invoice.notes&&<div className="small subtle" style={{margin:'0 0 12px',padding:'6px 10px',background:'var(--surface-2)',borderRadius:6}}>{invoice.notes}</div>}
-
-    {/* Line Items — editable */}
-    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-      <div style={{fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'.5px',color:'var(--text-3)'}}>Line Items ({lines.length})</div>
-      <button className="btn btn-ghost small" style={{fontSize:10}} onClick={()=>setShowAddLine(v=>!v)}>{showAddLine?'Cancel':'+ Add Line'}</button>
-    </div>
-
-    <table className="billing-table" style={{marginBottom:8}}>
-      <thead><tr><th style={{width:'50%'}}>Description</th><th>Type</th><th className="num">Amount</th><th style={{width:64}}></th></tr></thead>
-      <tbody>
-        {lines.map(l=><React.Fragment key={l.id}>
-          <tr style={{opacity:l.is_billable?1:.4}}>
-            {editingLineId===l.id ? <>
-              <td><input className="input" style={{fontSize:12,padding:'4px 7px'}} value={lineEdits.description} onChange={e=>setLineEdits(x=>({...x,description:e.target.value}))} /></td>
-              <td><span className={`billing-type-chip ${l.line_type==='group_bundle'?'group':'individual'}`}>{l.line_type==='group_bundle'?'Group Bundle':l.line_type==='individual'?'Individual':'Other'}</span></td>
-              <td className="num"><input className="input" type="number" style={{width:90,fontSize:12,padding:'4px 7px',textAlign:'right'}} value={lineEdits.amount} onChange={e=>setLineEdits(x=>({...x,amount:e.target.value}))} /></td>
-              <td style={{whiteSpace:'nowrap'}}>
-                <button className="btn btn-primary small" style={{fontSize:10,padding:'3px 7px'}} onClick={()=>saveEdit(l)}>✓</button>
-                <button className="btn btn-ghost small" style={{fontSize:10,padding:'3px 7px',marginLeft:3}} onClick={cancelEdit}>✗</button>
-              </td>
-            </> : <>
-              <td><div>{l.description}</div>{l.student_names&&<div className="small subtle">{l.student_names}</div>}</td>
-              <td><span className={`billing-type-chip ${l.line_type==='group_bundle'?'group':l.line_type==='individual'?'individual':'other'}`}>{l.line_type==='group_bundle'?'Group Bundle':l.line_type==='individual'?'Individual':'Other'}</span></td>
-              <td className="num">RM{Number(l.amount).toFixed(2)}</td>
-              <td style={{whiteSpace:'nowrap'}}>
-                <button className="btn btn-ghost small" style={{fontSize:10,padding:'3px 7px'}} onClick={()=>startEdit(l)} title="Edit line">✏</button>
-                <button className="btn btn-danger small" style={{fontSize:10,padding:'3px 7px',marginLeft:3}} onClick={()=>onDeleteLine(l.id)} title="Remove line">✗</button>
-              </td>
-            </>}
-          </tr>
-        </React.Fragment>)}
-      </tbody>
-    </table>
-
-    {showAddLine&&<div className="add-line-form">
-      <div style={{fontWeight:700,marginBottom:8,fontSize:12}}>Add Custom Line</div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 130px 120px',gap:8,alignItems:'flex-end'}}>
-        <div className="field"><label>Description</label><input className="input" value={newLine.description} onChange={e=>setNewLine(x=>({...x,description:e.target.value}))} placeholder="e.g. Registration fee, late charge…" /></div>
-        <div className="field"><label>Amount (RM)</label><input className="input" type="number" min="0" step="0.01" value={newLine.amount} onChange={e=>setNewLine(x=>({...x,amount:e.target.value}))} /></div>
-        <div style={{display:'flex',gap:5}}>
-          <button className="btn btn-primary small" onClick={handleAddLine}>Add</button>
-          <button className="btn btn-ghost small" onClick={()=>setShowAddLine(false)}>Cancel</button>
-        </div>
-      </div>
-    </div>}
-
-    {/* Pending credits */}
-    {pendingCredits.length>0&&<div style={{marginBottom:12}}>
-      <div style={{fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'.5px',color:'var(--text-3)',marginBottom:5}}>Pending Credits ({pendingCredits.filter(p=>p.status==='pending').length} awaiting)</div>
-      <div style={{display:'flex',flexDirection:'column',gap:4}}>
-        {pendingCredits.map(pc=><div key={pc.id} className={`pc-row status-${pc.status}`}>
-          <div style={{flex:1}}><div style={{fontWeight:700,fontSize:12}}>{pc.description||'Credit'}</div><div className="small subtle">{pc.credits_per_swimmer} credit{pc.credits_per_swimmer===1?'':'s'} · {pc.status}</div></div>
-          {pc.status==='pending'&&<div style={{display:'flex',gap:5}}>
-            <button className="btn btn-primary small" onClick={()=>onConfirmCredit(pc)}>✓ Confirm</button>
-            <button className="btn btn-danger small" onClick={()=>onReverseCredit(pc)}>✗ Reverse</button>
-          </div>}
-          {pc.status==='confirmed'&&<span style={{color:'#10B981',fontSize:11,fontWeight:700}}>✓ Confirmed</span>}
-          {pc.status==='reversed'&&<span style={{color:'#EF4444',fontSize:11,fontWeight:700}}>✗ Reversed</span>}
-        </div>)}
-      </div>
-    </div>}
-
-    {/* Payments */}
-    {pmts.length>0&&<div style={{marginBottom:12}}>
-      <div style={{fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'.5px',color:'var(--text-3)',marginBottom:5}}>Payments Recorded</div>
-      <div style={{display:'flex',flexDirection:'column',gap:4}}>
-        {pmts.map(p=><div key={p.id} className="pmt-row">
-          <div style={{flex:1}}><div style={{fontWeight:700}}>{p.receipt_number}</div><div className="small subtle">{p.payment_date} · {methodLabel(p.payment_method)}{p.reference_number?' · Ref: '+p.reference_number:''}{p.notes?' · '+p.notes:''}</div></div>
-          <div style={{fontWeight:800,fontSize:14,marginRight:8}}>RM{Number(p.amount).toFixed(2)}</div>
-          <button className="btn btn-print small" onClick={()=>printReceipt(p,invoice)}>🖨 Receipt</button>
-        </div>)}
-      </div>
-    </div>}
-
-    {lastReceipt&&<div style={{padding:'8px 12px',background:'#D1FAE5',borderRadius:6,marginBottom:10,fontSize:12,color:'#065F46',fontWeight:700}}>
-      ✓ Payment recorded — Receipt {lastReceipt} · Go to <strong>⏳ Pending Credits</strong> to confirm credit allocation.
-    </div>}
-
-    {showPayForm&&<RecordPaymentForm outstanding={outstanding} onSubmit={async(data)=>{ const r=await onRecordPayment(data); if(r?.receiptNumber){setLastReceipt(r.receiptNumber);setShowPayForm(false);} }} onCancel={()=>setShowPayForm(false)} />}
-
-    {/* Actions */}
-    <div className="inv-actions">
-      {invoice.status==='draft'&&<button className="btn btn-primary small" onClick={()=>onUpdateStatus('sent')}>✉ Mark Sent</button>}
-      {(invoice.status==='sent'||invoice.status==='partial')&&outstanding>0&&!showPayForm&&<button className="btn btn-primary small" onClick={()=>setShowPayForm(true)}>💳 Record Payment</button>}
-      {showPayForm&&<button className="btn btn-ghost small" onClick={()=>setShowPayForm(false)}>Cancel Payment</button>}
-      <button className="btn btn-ghost small" onClick={()=>printInvoice(invoice,lines)}>🖨 Print Invoice</button>
-      {(invoice.status==='paid'||outstanding<=0) && pmts && pmts.filter(p=>p.invoice_id===invoice.id).length>0 &&
-        <button className="btn btn-primary small" onClick={()=>{
-          const lastPmt = [...pmts.filter(p=>p.invoice_id===invoice.id)].sort((a,b)=>(b.payment_date||'').localeCompare(a.payment_date||''))[0];
-          printInvoiceAndReceipt(invoice, lines, lastPmt);
-        }}>🖨 Print Invoice &amp; Receipt</button>}
-      {invoice.status!=='void'&&invoice.status!=='paid'&&<button className="btn btn-danger small" onClick={onVoid}>Void</button>}
-    </div>
-  </div>;
-}
-
-// ============================================================================
-// RecordPaymentForm
-// ============================================================================
-function RecordPaymentForm({ outstanding, onSubmit, onCancel }){
-  const [form,setForm]=useState({ amount:outstanding>0?outstanding.toFixed(2):'', paymentDate:new Date().toISOString().slice(0,10), paymentMethod:'cash', referenceNumber:'', notes:'' });
-  const [busy,setBusy]=useState(false);
-  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
-  async function handle(){
-    const amt=Number(form.amount);
-    if(!isFinite(amt)||amt<=0){alert('Enter a valid amount.');return;}
-    setBusy(true);
-    try{ const r=await onSubmit(form); }
-    catch(e){alert(e?.message||'Payment failed');}
-    finally{setBusy(false);}
-  }
-  return <div className="pay-form">
-    <div style={{fontWeight:800,marginBottom:8}}>💳 Record Payment</div>
-    <div className="pay-form-grid">
-      <div className="field"><label>Amount (RM)</label><input className="input" type="number" min="0" step="0.01" value={form.amount} onChange={e=>set('amount',e.target.value)} /></div>
-      <div className="field"><label>Date</label><input className="input" type="date" value={form.paymentDate} onChange={e=>set('paymentDate',e.target.value)} /></div>
-      <div className="field"><label>Method</label>
-        <select className="select" value={form.paymentMethod} onChange={e=>set('paymentMethod',e.target.value)}>
-          <option value="cash">Cash</option>
-          <option value="bank_transfer">Bank Transfer</option>
-          <option value="duitnow">DuitNow</option>
-          <option value="card">Card</option>
-          <option value="cheque">Cheque</option>
-          <option value="other">Other</option>
-        </select>
-      </div>
-      <div className="field"><label>Reference #</label><input className="input" value={form.referenceNumber} onChange={e=>set('referenceNumber',e.target.value)} placeholder="optional" /></div>
-    </div>
-    <div className="field" style={{marginBottom:10}}><label>Notes</label><input className="input" value={form.notes} onChange={e=>set('notes',e.target.value)} placeholder="optional" /></div>
-    <div style={{display:'flex',gap:6,justifyContent:'flex-end'}}>
-      <button className="btn btn-ghost small" onClick={onCancel} disabled={busy}>Cancel</button>
-      <button className="btn btn-primary small" onClick={handle} disabled={busy}>{busy?'Recording…':'✓ Confirm Payment'}</button>
-    </div>
-  </div>;
-}
-
-// ============================================================================
-// PendingCreditsView
-// ============================================================================
-function PendingCreditsView({ pendingCredits, invoices, studentById, familyGroups, groupById, lessonTypeById, packageById, onConfirm, onReverse }){
-  const [statusFilter,setStatusFilter]=useState('pending');
-  const pendingCount=pendingCredits.filter(p=>p.status==='pending').length;
-  const invById=useMemo(()=>Object.fromEntries((invoices||[]).map(i=>[i.id,i])),[invoices]);
-
-  const filtered=pendingCredits.filter(pc=>statusFilter==='all'||pc.status===statusFilter);
-
-  return <>
-    <div className="card" style={{marginBottom:12}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap',marginBottom:10}}>
-        <div>
-          <div style={{fontSize:18,fontWeight:800}}>⏳ Pending Credits</div>
-          <div className="small subtle">Credits held in escrow after payment is recorded. Confirm to allocate lesson credits to the account. Reverse to reject (e.g. bounced payment).</div>
-        </div>
-        {pendingCount>0&&<div style={{fontSize:20,fontWeight:800,color:'#F59E0B'}}>{pendingCount} awaiting confirmation</div>}
-      </div>
-      <div style={{display:'flex',gap:3}}>
-        {['pending','confirmed','reversed','all'].map(s=><button key={s} className={`tab ${statusFilter===s?'active':''}`} style={{padding:'5px 10px',fontSize:11,borderRadius:7}} onClick={()=>setStatusFilter(s)}>
-          {s==='all'?`All (${pendingCredits.length})`:s.charAt(0).toUpperCase()+s.slice(1)+` (${pendingCredits.filter(p=>p.status===s).length})`}
-        </button>)}
-      </div>
-    </div>
-
-    {filtered.length===0&&<div className="card empty" style={{padding:28}}>No credits in this status.</div>}
-
-    <div style={{display:'flex',flexDirection:'column',gap:6}}>
-      {filtered.map(pc=>{
-        const inv=invById[pc.invoice_id];
-        const lt=pc.lesson_type_id&&lessonTypeById?lessonTypeById(pc.lesson_type_id):null;
-        const pkg=pc.package_id&&packageById?packageById(pc.package_id):null;
-        const grp=pc.family_group_id&&groupById?groupById(pc.family_group_id):null;
-        const stu=pc.student_id&&studentById?studentById[pc.student_id]:null;
-        return <div key={pc.id} className={`pc-card status-${pc.status}`}>
-          <div className="pc-card-body">
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontWeight:700}}>{pc.description||'Credit Allocation'}</div>
-              <div className="small subtle">
-                {grp?`👪 ${grp.name}`:stu?`👤 ${stu.name}`:'Unknown recipient'}
-                {lt?` · ${lt.name}`:''}
-                {pkg?` · ${pkg.name}`:''}
-              </div>
-              <div className="small subtle">{pc.credits_per_swimmer} credit{pc.credits_per_swimmer===1?'':'s'} per swimmer{inv?` · ${inv.invoice_number}`:''}{inv?` · ${inv.account_name}`:''}</div>
-              <div className="small subtle">{new Date(pc.created_at).toLocaleDateString(undefined,{dateStyle:'medium'})}</div>
-            </div>
-            <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:5}}>
-              <span className={`pc-status-chip status-${pc.status}`}>{pc.status==='pending'?'⏳ Pending':pc.status==='confirmed'?'✓ Confirmed':'✗ Reversed'}</span>
-              {pc.status==='pending'&&<div style={{display:'flex',gap:5}}>
-                <button className="btn btn-primary small" onClick={()=>onConfirm(pc)}>✓ Confirm Credits</button>
-                <button className="btn btn-danger small" onClick={()=>onReverse(pc)}>✗ Reverse</button>
-              </div>}
-            </div>
-          </div>
-        </div>;
-      })}
-    </div>
-  </>;
-}
-
-// ============================================================================
-// InvoiceSettingsPanel — number format + sequence control
-// ============================================================================
-
-// ============================================================================
-// InvoiceSettingsPanel — number format + sequence control
-// ============================================================================
-function InvoiceSettingsPanel({ settings, onSave, formatInvoiceNumber, formatReceiptNumber }){
-  const [form,setForm]=useState({
-    invoice_prefix: settings.invoice_prefix||'INV',
-    receipt_prefix: settings.receipt_prefix||'RCT',
-    next_invoice_seq: String(settings.next_invoice_seq||1),
-    next_receipt_seq: String(settings.next_receipt_seq||1),
-    leading_zeros: String(settings.leading_zeros||3),
-    include_date: settings.include_date !== false,
-    date_format: settings.date_format||'YYYYMM',
-  });
-  const [saving,setSaving]=useState(false);
-  const [saved,setSaved]=useState(false);
-  const [showResetWarning,setShowResetWarning]=useState(false);
-
-  React.useEffect(()=>{
-    setForm({
-      invoice_prefix: settings.invoice_prefix||'INV',
-      receipt_prefix: settings.receipt_prefix||'RCT',
-      next_invoice_seq: String(settings.next_invoice_seq||1),
-      next_receipt_seq: String(settings.next_receipt_seq||1),
-      leading_zeros: String(settings.leading_zeros||3),
-      include_date: settings.include_date !== false,
-      date_format: settings.date_format||'YYYYMM',
-    });
-  },[settings]);
-
-  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
-  const draftSettings={...form,leading_zeros:Number(form.leading_zeros)||3,include_date:!!form.include_date};
-  const invPreview = formatInvoiceNumber ? formatInvoiceNumber(draftSettings, Number(form.next_invoice_seq)||1) : '—';
-  const rctPreview = formatReceiptNumber ? formatReceiptNumber(draftSettings, Number(form.next_receipt_seq)||1) : '—';
-
-  async function handleSave(){
-    setSaving(true); setSaved(false);
-    await onSave({
-      invoice_prefix: form.invoice_prefix.trim()||'INV',
-      receipt_prefix: form.receipt_prefix.trim()||'RCT',
-      next_invoice_seq: Math.max(1,Number(form.next_invoice_seq)||1),
-      next_receipt_seq: Math.max(1,Number(form.next_receipt_seq)||1),
-      leading_zeros: Math.min(8,Math.max(1,Number(form.leading_zeros)||3)),
-      include_date: !!form.include_date,
-      date_format: form.date_format,
-    });
-    setSaving(false); setSaved(true);
-    setTimeout(()=>setSaved(false),2000);
-  }
-
-  function doReset(){
-    set('next_invoice_seq','1');
-    set('next_receipt_seq','1');
-    setShowResetWarning(false);
-  }
-
-  return <div className="inv-settings-panel">
-
-    {/* Reset confirmation overlay */}
-    {showResetWarning && <div className="reset-warn-backdrop">
-      <div className="reset-warn-box">
-        <div className="reset-warn-icon">⚠</div>
-        <div className="reset-warn-title">Reset Invoice Counter?</div>
-        <div className="reset-warn-body">
-          Invoice numbers must <strong>not</strong> be reset in production — duplicate numbers cannot be issued to clients.<br /><br />
-          This should only be done during <strong>testing</strong>. Existing invoice and receipt numbers are not affected; only the next number generated will restart from 001.
-        </div>
-        <div className="reset-warn-actions">
-          <button className="btn btn-ghost" onClick={()=>setShowResetWarning(false)}>Cancel — Keep Current Numbers</button>
-          <button className="btn btn-danger" onClick={doReset}>Continue Reset</button>
-        </div>
-      </div>
-    </div>}
-
-    <div className="inv-settings-header">
-      <div className="inv-settings-title">⚙ Invoice Numbering</div>
-      <div style={{display:'flex',gap:8,alignItems:'center'}}>
-        <button className="btn btn-danger small" onClick={()=>setShowResetWarning(true)}>↺ Reset Counters</button>
-        <button className="btn btn-primary small" onClick={handleSave} disabled={saving}>
-          {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save Settings'}
-        </button>
-      </div>
-    </div>
-
-    <div className="inv-settings-grid">
-      <div className="field">
-        <label>Invoice Prefix</label>
-        <input className="input" value={form.invoice_prefix} onChange={e=>set('invoice_prefix',e.target.value.replace(/\s/g,''))} placeholder="INV" maxLength={12} />
-        <div className="hint">No spaces — e.g. INV, SSB-INV, SWIM</div>
-      </div>
-      <div className="field">
-        <label>Receipt Prefix</label>
-        <input className="input" value={form.receipt_prefix} onChange={e=>set('receipt_prefix',e.target.value.replace(/\s/g,''))} placeholder="RCT" maxLength={12} />
-        <div className="hint">No spaces — e.g. RCT, RCPT, PAY</div>
-      </div>
-      <div className="field">
-        <label>Date Segment</label>
-        <select className="select" value={form.include_date ? form.date_format : 'none'} onChange={e=>{
-          if(e.target.value==='none'){set('include_date',false);}
-          else{set('include_date',true);set('date_format',e.target.value);}
-        }}>
-          <option value="YYYYMM">Year + Month  (202606)</option>
-          <option value="MMYY">Month + Year short  (0626)</option>
-          <option value="YYYY">Year only  (2026)</option>
-          <option value="MM">Month only  (06)</option>
-          <option value="none">None — sequence only</option>
-        </select>
-      </div>
-      <div className="field">
-        <label>Leading Zeros</label>
-        <select className="select" value={form.leading_zeros} onChange={e=>set('leading_zeros',e.target.value)}>
-          {[1,2,3,4,5].map(n=><option key={n} value={n}>{n} digit{n===1?'':'s'} — {String(1).padStart(n,'0')}, {String(42).padStart(n,'0')}, {String(999).padStart(n,'0')}</option>)}
-        </select>
-      </div>
-      <div className="field">
-        <label>Next Invoice Sequence</label>
-        <input className="input" type="number" min="1" value={form.next_invoice_seq} onChange={e=>set('next_invoice_seq',e.target.value)} />
-        <div className="hint">Integer for the next invoice generated</div>
-      </div>
-      <div className="field">
-        <label>Next Receipt Sequence</label>
-        <input className="input" type="number" min="1" value={form.next_receipt_seq} onChange={e=>set('next_receipt_seq',e.target.value)} />
-        <div className="hint">Integer for the next receipt generated</div>
-      </div>
-    </div>
-
-    <div className="inv-settings-preview">
-      <div className="inv-settings-preview-label">Live Preview — next numbers generated</div>
-      <div style={{display:'flex',gap:36,flexWrap:'wrap',marginBottom:10}}>
-        <div>
-          <div style={{fontSize:10,textTransform:'uppercase',letterSpacing:'.6px',color:'#64748B',marginBottom:4,fontWeight:700}}>Invoice</div>
-          <div className="inv-settings-preview-num">{invPreview}</div>
-        </div>
-        <div>
-          <div style={{fontSize:10,textTransform:'uppercase',letterSpacing:'.6px',color:'#64748B',marginBottom:4,fontWeight:700}}>Receipt</div>
-          <div className="inv-settings-preview-num">{rctPreview}</div>
-        </div>
-      </div>
-      <div className="hint" style={{lineHeight:1.6}}>
-        Click <strong style={{color:'#CBD5E1'}}>Save Settings</strong> to apply. Existing numbers are never modified.
-      </div>
-    </div>
-  </div>;
-}
-
-// ============================================================================
-// AgingReportView — per-account outstanding balance aging
-// ============================================================================
-function AgingReportView({ invoices, pmts }){
-  const [sortBy,setSortBy]=useState('outstanding'); // outstanding | account | oldest
-  const today=todayStr();
-  const todayMs=new Date(today).getTime();
-
-  // Group by account_name
-  const accountMap={};
-  invoices.forEach(inv=>{
-    const key=inv.account_name;
-    if(!accountMap[key]) accountMap[key]={ account:key, invoices:[], totalInvoiced:0, totalPaid:0 };
-    accountMap[key].invoices.push(inv);
-    accountMap[key].totalInvoiced+=Number(inv.total_amount||0);
-    accountMap[key].totalPaid+=Number(inv.amount_paid||0);
-  });
-
-  const rows=Object.values(accountMap).map(a=>{
-    const outstanding=Math.max(0,a.totalInvoiced-a.totalPaid);
-    // Age unpaid invoices
-    let current=0,d1_30=0,d31_60=0,d60plus=0;
-    a.invoices.forEach(inv=>{
-      if(inv.status==='paid'||inv.status==='void') return;
-      const owed=Math.max(0,Number(inv.total_amount)-Number(inv.amount_paid));
-      if(!owed) return;
-      if(!inv.due_date){ current+=owed; return; }
-      const age=Math.floor((todayMs-new Date(inv.due_date).getTime())/(86400000));
-      if(age<=0) current+=owed;
-      else if(age<=30) d1_30+=owed;
-      else if(age<=60) d31_60+=owed;
-      else d60plus+=owed;
-    });
-    const openInvs=a.invoices.filter(i=>i.status!=='paid'&&i.status!=='void');
-    const oldestDue=openInvs.map(i=>i.due_date).filter(Boolean).sort()[0]||null;
-    const isOverdue=d1_30>0||d31_60>0||d60plus>0;
-    return { account:a.account, totalInvoiced:a.totalInvoiced, totalPaid:a.totalPaid, outstanding, current, d1_30, d31_60, d60plus, openCount:openInvs.length, oldestDue, isOverdue };
-  }).filter(r=>r.totalInvoiced>0);
-
-  rows.sort((a,b)=>{
-    if(sortBy==='outstanding') return b.outstanding-a.outstanding;
-    if(sortBy==='account') return a.account.localeCompare(b.account);
-    if(sortBy==='oldest') return (a.oldestDue||'9999')>(b.oldestDue||'9999')?1:-1;
-    return 0;
-  });
-
-  const totals=rows.reduce((s,r)=>({ invoiced:s.invoiced+r.totalInvoiced, paid:s.paid+r.totalPaid, outstanding:s.outstanding+r.outstanding, current:s.current+r.current, d1_30:s.d1_30+r.d1_30, d31_60:s.d31_60+r.d31_60, d60plus:s.d60plus+r.d60plus }),{ invoiced:0,paid:0,outstanding:0,current:0,d1_30:0,d31_60:0,d60plus:0 });
-
-  const rm=(v)=>`RM${v.toFixed(2)}`;
-
-  return <>
-    <div className="card" style={{marginBottom:12}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap',marginBottom:10}}>
-        <div><div style={{fontSize:18,fontWeight:800}}>📈 Aging Report</div><div className="small subtle">Outstanding balances by account with age buckets based on invoice due dates. As of {today}.</div></div>
-        <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
-          <div><div className="small subtle">Total Outstanding</div><div style={{fontSize:20,fontWeight:800,color:'#F59E0B'}}>{rm(totals.outstanding)}</div></div>
-          <div><div className="small subtle" style={{color:'#EF4444'}}>60+ Days</div><div style={{fontSize:20,fontWeight:800,color:'#EF4444'}}>{rm(totals.d60plus)}</div></div>
-        </div>
-      </div>
-      <div style={{display:'flex',gap:6}}>
-        <span className="small subtle" style={{marginRight:4}}>Sort:</span>
-        {[['outstanding','By Outstanding'],['account','By Account'],['oldest','By Oldest Due']].map(([k,l])=><button key={k} className={`tab ${sortBy===k?'active':''}`} style={{padding:'4px 10px',fontSize:11,borderRadius:6}} onClick={()=>setSortBy(k)} data-key={k}>{l}</button>)}
-      </div>
-    </div>
-
-    {rows.length===0&&<div className="card empty" style={{padding:28}}>No invoiced accounts yet.</div>}
-
-    {rows.length>0&&<div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Account</th>
-            <th className="num">Invoiced</th>
-            <th className="num">Paid</th>
-            <th className="num">Outstanding</th>
-            <th className="num" title="Not yet due">Current</th>
-            <th className="num" style={{color:'#F59E0B'}}>1–30d</th>
-            <th className="num" style={{color:'#F97316'}}>31–60d</th>
-            <th className="num" style={{color:'#EF4444'}}>60+d</th>
-            <th className="num">Open Inv.</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(r=><tr key={r.account} style={{background:r.d60plus>0?'rgba(239,68,68,.06)':r.d31_60>0?'rgba(249,115,22,.04)':''}}>
-            <td>
-              <div style={{fontWeight:700}}>{r.account}</div>
-              {r.isOverdue&&r.oldestDue&&<div style={{fontSize:10,color:'#EF4444'}}>Overdue since {r.oldestDue}</div>}
-            </td>
-            <td className="num">{rm(r.totalInvoiced)}</td>
-            <td className="num" style={{color:'#10B981'}}>{rm(r.totalPaid)}</td>
-            <td className="num" style={{fontWeight:800,color:r.outstanding>0?'#F59E0B':'#10B981'}}>{r.outstanding>0?rm(r.outstanding):'✓'}</td>
-            <td className="num">{r.current>0?rm(r.current):'-'}</td>
-            <td className="num" style={{color:r.d1_30>0?'#F59E0B':''}}>{r.d1_30>0?rm(r.d1_30):'-'}</td>
-            <td className="num" style={{color:r.d31_60>0?'#F97316':''}}>{r.d31_60>0?rm(r.d31_60):'-'}</td>
-            <td className="num" style={{fontWeight:r.d60plus>0?800:400,color:r.d60plus>0?'#EF4444':''}}>{r.d60plus>0?rm(r.d60plus):'-'}</td>
-            <td className="num">{r.openCount}</td>
-          </tr>)}
-        </tbody>
-        <tfoot>
-          <tr style={{borderTop:'2px solid var(--border)',fontWeight:800}}>
-            <td>Totals ({rows.length} accounts)</td>
-            <td className="num">{rm(totals.invoiced)}</td>
-            <td className="num" style={{color:'#10B981'}}>{rm(totals.paid)}</td>
-            <td className="num" style={{color:'#F59E0B'}}>{rm(totals.outstanding)}</td>
-            <td className="num">{totals.current>0?rm(totals.current):'-'}</td>
-            <td className="num" style={{color:totals.d1_30>0?'#F59E0B':''}}>{totals.d1_30>0?rm(totals.d1_30):'-'}</td>
-            <td className="num" style={{color:totals.d31_60>0?'#F97316':''}}>{totals.d31_60>0?rm(totals.d31_60):'-'}</td>
-            <td className="num" style={{fontWeight:800,color:totals.d60plus>0?'#EF4444':''}}>{totals.d60plus>0?rm(totals.d60plus):'-'}</td>
-            <td className="num"></td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>}
-
-    <div className="small subtle" style={{marginTop:10}}>
-      Age buckets are calculated from invoice due dates. Invoices without a due date are counted as Current. Paid and voided invoices are excluded.
-    </div>
-  </>;
-}
-
-ReactDOM.createRoot(document.getElementById('root')).render(<ErrorBoundary><App /></ErrorBoundary>);
