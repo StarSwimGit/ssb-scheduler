@@ -2748,6 +2748,8 @@ function App(){
       {!loading && view==='accounts' && accountSection==='codes' && <SettingsView
         section="codes" options={options}
         addOption={addOption} toggleOption={toggleOption} deleteOption={deleteOption}
+        codes={codes} students={students} packages={options.packages}
+        addCode={addCode} updateCode={updateCode} deleteCode={deleteCode}
         pools={activePools()} onUpdatePool={updatePool}
       />}
 
@@ -3362,8 +3364,8 @@ function MonthView({ monthCursor, setMonthCursor, selectedDate, setSelectedDate,
   const options = [];
   for(let y=2025;y<=2032;y++) for(let m=0;m<12;m++){ const d = new Date(y,m,1); options.push(<option key={`${y}-${m}`} value={monthKey(d)}>{d.toLocaleDateString(undefined,{month:'long', year:'numeric'})}</option>); }
   return <>
-    <div className="grid grid-2">
-      <div className="card">
+    <div style={{display:'flex',gap:16,width:'100%',alignItems:'flex-start'}}>
+      <div className="card" style={{flex:'1 1 0',minWidth:0}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:14}}>
           <div><div style={{fontSize:18,fontWeight:800}}>Monthly Calendar</div><div className="small subtle">Monday-first calendar. Click a day to expand the rundown below.</div></div>
           <div style={{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
@@ -3383,7 +3385,7 @@ function MonthView({ monthCursor, setMonthCursor, selectedDate, setSelectedDate,
           })}
         </div>
       </div>
-      <div className="card">
+      <div className="card" style={{flex:'0 0 320px'}}>
         <div style={{fontSize:18,fontWeight:800}}>One-off Day Remark</div>
         <div className="small subtle" style={{margin:'4px 0 12px'}}>This remark is saved only for <b>{longDate(selectedDate)}</b>. It does not recur.</div>
         <textarea className="textarea" value={remarkDraft} onChange={(e)=>setRemarkDraft(e.target.value)} placeholder="Add closure note, special arrangement, replacement note, etc." />
@@ -5006,6 +5008,7 @@ function ParentsView({ accountSection, setAccountSection, parentGroups, lessonTy
       packages={packages}
       packageById={packageById}
       deleteGroup={deleteGroup}
+      updateGroup={updateGroup}
     />}
 
     {adminView === 'accounts' && <>
@@ -5355,10 +5358,12 @@ function ParentsView({ accountSection, setAccountSection, parentGroups, lessonTy
 // context, member names, and the guardian/account each member belongs to.
 // Use to audit and clean up legacy/test data without dropping to SQL.
 // ============================================================================
-function FamilyGroupsAdminView({ familyGroups, membersByGroup, lessonTypes, lessonTypeById, packages, packageById, deleteGroup }){
+function FamilyGroupsAdminView({ familyGroups, membersByGroup, lessonTypes, lessonTypeById, packages, packageById, deleteGroup, updateGroup }){
   const [searchQ, setSearchQ] = useState('');
-  const [filter, setFilter] = useState('all'); // all | empty | configured | misconfigured
+  const [filter, setFilter] = useState('all');
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [editingNameId, setEditingNameId] = useState(null);
+  const [editingNameVal, setEditingNameVal] = useState('');
 
   // Enrich each group with derived signals: package info, member rows, account names
   const enriched = (familyGroups || []).map(g => {
@@ -5457,7 +5462,19 @@ function FamilyGroupsAdminView({ familyGroups, membersByGroup, lessonTypes, less
         return <div key={g.id} className="fga-card">
           <div className="fga-head">
             <div className="fga-head-main">
-              <div className="fga-name">{isBound ? '🔗' : '👪'} {g.name}</div>
+              <div className="fga-name">
+                {editingNameId === g.id
+                  ? <span style={{display:'inline-flex',alignItems:'center',gap:6}}>
+                      <input className="input" style={{width:180,padding:'3px 8px',fontSize:14}} value={editingNameVal} onChange={e=>setEditingNameVal(e.target.value)} onKeyDown={async e=>{ if(e.key==='Enter'&&editingNameVal.trim()){await updateGroup(g.id,{name:editingNameVal.trim()});setEditingNameId(null);} if(e.key==='Escape') setEditingNameId(null); }} autoFocus />
+                      <button className="btn btn-primary small" onClick={async()=>{ if(editingNameVal.trim()) await updateGroup(g.id,{name:editingNameVal.trim()}); setEditingNameId(null); }}>Save</button>
+                      <button className="btn btn-ghost small" onClick={()=>setEditingNameId(null)}>✕</button>
+                    </span>
+                  : <span style={{display:'inline-flex',alignItems:'center',gap:8}}>
+                      {isBound ? '🔗' : '👪'} {g.name}
+                      {updateGroup && <button className="btn btn-ghost small" title="Edit group name" style={{padding:'2px 7px',fontSize:11}} onClick={()=>{ setEditingNameId(g.id); setEditingNameVal(g.name||''); }}>✎</button>}
+                    </span>
+                }
+              </div>
               <div className="fga-meta">
                 {g.isConfigured
                   ? <span className="fga-pkg-tag">{g.ltName || '?'} · {g.pkgName}</span>
