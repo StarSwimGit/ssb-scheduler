@@ -656,6 +656,8 @@ function App(){
           guardianName: r.guardian_name || '',
           guardianEmail: r.guardian_email || '',
           guardianPhone: r.guardian_phone || '',
+          guardianIc: r.guardian_ic || '',
+          guardianTin: r.guardian_tin || '',
           emergencyPhone: r.emergency_phone || '',
           emergencyName: r.emergency_name || '',
           emergencyRelationship: r.emergency_relationship || '',
@@ -1957,7 +1959,7 @@ function App(){
   }
 
   // ───── Swimmer registry CRUD ──────────────────────────────────────────────
-  async function addStudent({ name, dateOfBirth, gender, enrollments, guardianName, guardianEmail, guardianPhone, emergencyName, emergencyPhone, emergencyRelationship, emergencySameAsGuardian, tcAcceptedAt, tcAcceptanceId }){
+  async function addStudent({ name, dateOfBirth, gender, enrollments, guardianName, guardianEmail, guardianPhone, guardianIc, guardianTin, emergencyName, emergencyPhone, emergencyRelationship, emergencySameAsGuardian, tcAcceptedAt, tcAcceptanceId }){
     try{
       setError('');
       const validEnrollments = (enrollments || []).filter(e => e.lessonTypeId);
@@ -1975,6 +1977,7 @@ function App(){
         package_id: primaryPackageId, package: primaryPkg ? primaryPkg.name : null,
         lesson_type_ids: lessonTypeIds, is_active: true,
         guardian_name: guardianName || null, guardian_email: guardianEmail || null, guardian_phone: guardianPhone || null,
+        guardian_ic: guardianIc || null, guardian_tin: guardianTin || null,
         emergency_name: sameAsG ? (guardianName || null) : (emergencyName || null),
         emergency_phone: sameAsG ? (guardianPhone || null) : (emergencyPhone || null),
         emergency_relationship: sameAsG ? 'Parent / Guardian' : (emergencyRelationship || null),
@@ -2019,6 +2022,8 @@ function App(){
       if('guardianName' in patch) body.guardian_name = patch.guardianName || null;
       if('guardianEmail' in patch) body.guardian_email = patch.guardianEmail || null;
       if('guardianPhone' in patch) body.guardian_phone = patch.guardianPhone || null;
+      if('guardianIc'    in patch) body.guardian_ic    = patch.guardianIc    || null;
+      if('guardianTin'   in patch) body.guardian_tin   = patch.guardianTin   || null;
       if('emergencySameAsGuardian' in patch) body.emergency_same_as_guardian = !!patch.emergencySameAsGuardian;
       if('emergencyPhone' in patch) body.emergency_phone = patch.emergencyPhone || null;
       if('emergencyName' in patch) body.emergency_name = patch.emergencyName || null;
@@ -2460,6 +2465,8 @@ function App(){
           name: s.guardianName || (key === '__unassigned__' ? '— Unassigned —' : '— No name —'),
           email: s.guardianEmail || '',
           phone: s.guardianPhone || '',
+          ic: s.guardianIc || '',
+          tin: s.guardianTin || '',
           // Emergency contact lives at the account level — surface it from
           // the first swimmer in this account; ParentContactEditor edits
           // propagate the new value to every child below.
@@ -5179,6 +5186,8 @@ function ParentsView({ parentGroups, lessonTypes, lessonTypeById, packages, pack
               {pg.email && pg.phone ? <span> · </span> : null}
               {pg.phone ? <span>📞 {pg.phone}</span> : null}
               {!pg.email && !pg.phone ? <span>(no contact recorded)</span> : null}
+              {pg.ic  ? <span className="parent-ic-tin"> · 🪪 {pg.ic}</span>  : null}
+              {pg.tin ? <span className="parent-ic-tin"> · 🧾 TIN {pg.tin}</span> : null}
               {(pg.emergencyName || pg.emergencyPhone) && !pg.emergencySameAsGuardian ? <span> · 🚨 {pg.emergencyName || pg.emergencyPhone}{pg.emergencyName && pg.emergencyPhone ? ` ${pg.emergencyPhone}` : ''}{pg.emergencyRelationship ? ` (${pg.emergencyRelationship})` : ''}</span> : null}
               {parentGroupsInPlay.length > 0 && <span> · {parentGroupsInPlay.map(g => {
                 const gp = g.packageId && packageById ? packageById(g.packageId) : null;
@@ -5574,6 +5583,8 @@ function ParentContactEditor({ pg, onSave, onCancel }){
   const [name, setName] = useState(pg.name === '— Unassigned —' || pg.name === '— No name —' ? '' : pg.name);
   const [email, setEmail] = useState(pg.email || '');
   const [phone, setPhone] = useState(pg.phone || '');
+  const [ic,    setIc]    = useState(pg.ic    || '');
+  const [tin,   setTin]   = useState(pg.tin   || '');
   const [emergencySame, setEmergencySame] = useState(!!pg.emergencySameAsGuardian);
   const [emergencyName, setEmergencyName] = useState(pg.emergencyName || '');
   const [emergencyPhone, setEmergencyPhone] = useState(pg.emergencyPhone || '');
@@ -5588,6 +5599,8 @@ function ParentContactEditor({ pg, onSave, onCancel }){
         <div className="field"><label>Parent Name</label><input className="input" value={name} onChange={e=>setName(e.target.value)} onBlur={e=>setName(toTitleCase(e.target.value))} placeholder="Full name" /></div>
         <div className="field"><label>Email</label><input className="input" type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="email@example.com" /></div>
         <div className="field"><label>Phone</label><input className="input" type="tel" value={phone} onChange={e=>setPhone(e.target.value)} placeholder="+60 1X-XXXXXXX" /></div>
+        <div className="field"><label>IC No. <span className="hint" style={{fontSize:9,display:'inline',color:'var(--text-3)'}}>optional</span></label><input className="input" value={ic} onChange={e=>setIc(e.target.value)} placeholder="e.g. 901231-14-5678" /></div>
+        <div className="field"><label>TIN No. <span className="hint" style={{fontSize:9,display:'inline',color:'var(--text-3)'}}>optional</span></label><input className="input" value={tin} onChange={e=>setTin(e.target.value)} placeholder="e.g. IG12345678090" /></div>
       </div>
     </div>
 
@@ -5606,6 +5619,7 @@ function ParentContactEditor({ pg, onSave, onCancel }){
       <button className="btn btn-ghost small" onClick={onCancel}>Cancel</button>
       <button className="btn btn-primary small" onClick={()=>onSave({
         guardianName:name, guardianEmail:email, guardianPhone:phone,
+        guardianIc: ic.trim() || null, guardianTin: tin.trim() || null,
         emergencySameAsGuardian: emergencySame,
         emergencyName: emergencySame ? name : emergencyName,
         emergencyPhone: emergencySame ? phone : emergencyPhone,
