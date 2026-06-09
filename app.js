@@ -208,7 +208,10 @@ function printWeeklyTable(){ const s=document.createElement('style'); s.id='wt-p
 // M2: assign _col / _total within a set of overlapping sessions. Extracted from
 // the prior inline logic so it can be reused per (day, pool) tuple.
 function packParallelColumns(items){
-  const sorted = items.slice().sort((a,b) => a.startMinute - b.startMinute || String(a.id).localeCompare(String(b.id)));
+  const sorted = items.slice().sort((a,b) =>
+    a.startMinute - b.startMinute ||
+    (a.sortOrder ?? 0) - (b.sortOrder ?? 0) ||
+    String(a.id).localeCompare(String(b.id)));
   const cols = [];
   const out = [];
   sorted.forEach(item => {
@@ -612,6 +615,7 @@ function App(){
         cancelledAt: r.cancelled_at || null,
         cancelledReason: r.cancelled_reason || null,
         cancelledTargetSessionId: r.cancelled_target_session_id || null,
+        sortOrder: Number(r.sort_order ?? 0),
         students,
         instructors: instructorsBySession[String(r.id)] || []
       };
@@ -1604,6 +1608,17 @@ function App(){
   // Called when a swimmer's scheduled session badge is clicked in the
   // Accounts panel. Switches to Weekly View, scrolls to the right week,
   // and pulses the specific session card for 10 seconds — no modal opens.
+  // ── saveDragOrder: persist slot reordering to DB ──────────────────
+  // Called after a drag-and-drop drop in WeekView or DailyView.
+  // orderedIds is the new [id, id, ...] sequence for all sessions in that slot.
+  async function saveDragOrder(orderedIds){
+    try{
+      await Promise.all(orderedIds.map((id, i) =>
+        patchRows('weekly_sessions', { id }, { sort_order: i })));
+      await loadSessions();
+    } catch(e){ console.warn('saveDragOrder failed:', e); }
+  }
+
   function jumpToSession(session){
     setSelectedDate(addDays(session.weekStartDate, session.day));
     setView('week');
@@ -2574,6 +2589,7 @@ function App(){
         trialByLessonType={trialByLessonType}
         creditByKey={creditByKey}
         highlightedSessionId={highlightedSessionId}
+        onReorderSlot={saveDragOrder}
       />}
 
       {!loading && view==='day' && <DailyView
@@ -2581,6 +2597,7 @@ function App(){
         sessionsForDate={filteredSessionsForDate} colorsFor={colorsFor}
         lessonTypeByName={lessonTypeByName} poolById={poolById}
         onAddAtTime={openAddAtTime} onEdit={openEdit}
+        onReorderSlot={saveDragOrder}
         selectedWeekStart={selectedWeekStart}
         currentWeekStart={currentWeekStart}
         onPrevWeek={()=>setSelectedDate(addDays(selectedDate,-7))}
@@ -2689,6 +2706,11 @@ function App(){
         initialWeekStart={selectedWeekStart}
         onEnroll={openEnroll}
         onCreate={openCreateFor}
+        onEdit={openEdit}
+        onAdd={(day, slot, poolId, weekStart) => {
+          setSelectedDate(addDays(weekStart, day));
+          openAdd(day, slot, poolId);
+        }}
       />}
       {/* ── Admin Hub — left sidebar + content panel ───────────────── */}
       {!loading && view==='settings' && <div className="admin-hub">
@@ -2829,7 +2851,7 @@ function WeekView(props){
           activeInstructors, isInstructorActive, onToggleInstructor, onClearInstructors, instructorFilterActive,
           weekPendingReplacements, lessonTypeById, studentById, onCancelPendingReplacement,
           pendingMove, onPlacePendingMove, onCancelPendingMove,
-          trialStudentIds, trialByLessonType, creditByKey, highlightedSessionId } = props;
+          trialStudentIds, trialByLessonType, creditByKey, highlightedSessionId, onReorderSlot } = props;
 
   const [printMenu, setPrintMenu] = useState(false);
   // ── Slot drag-to-reorder ──────────────────────────────────────────
@@ -2880,6 +2902,7 @@ function WeekView(props){
     const next = [...without]; next.splice(ti, 0, String(dragId));
     setSlotOrders(prev => ({ ...prev, [k]: next }));
     setDragId(null); setDragOverId(null);
+    if(onReorderSlot) onReorderSlot(next);
   }
 
   function onCardDragEnd(){ setDragId(null); setDragOverId(null); }
@@ -3115,7 +3138,7 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
 // DailyView (M2: pool labels on each session)
 // ============================================================================
 
-function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, lessonTypeByName, poolById, onAddAtTime, onEdit, selectedWeekStart, currentWeekStart, onPrevWeek, onNextWeek, onThisWeek, onExportExcel, activeLessonTypes, isTypeEnabled, onToggleType, onToggleAllTypes, allTypesShown, activeInstructors, isInstructorActive, onToggleInstructor, onClearInstructors, instructorFilterActive, trialStudentIds, trialByLessonType, creditByKey }){
+function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, lessonTypeByName, poolById, onAddAtTime, onEdit, selectedWeekStart, currentWeekStart, onPrevWeek, onNextWeek, onThisWeek, onExportExcel, activeLessonTypes, isTypeEnabled, onToggleType, onToggleAllTypes, allTypesShown, activeInstructors, isInstructorActive, onToggleInstructor, onClearInstructors, instructorFilterActive, trialStudentIds, trialByLessonType, creditByKey, onReorderSlot }){
   const wb = weekBounds(selectedDate);
   const weekDays = Array.from({length:7}, (_,i) => { const d = new Date(wb.start); d.setDate(wb.start.getDate()+i); return { date:d, ds:toDateStr(d), idx:i }; });
   const items = sessionsForDate(selectedDate);
@@ -3165,6 +3188,7 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
     const next = [...without]; next.splice(ti, 0, String(dailyDragId));
     setDailySlotOrders(prev => ({ ...prev, [k]: next }));
     setDailyDragId(null); setDailyDragOverId(null);
+    if(onReorderSlot) onReorderSlot(next);
   }
 
   function onDailyDragEnd(){ setDailyDragId(null); setDailyDragOverId(null); }
@@ -4231,7 +4255,7 @@ function LessonTypeEditor({ row, pools, onSave }){
 // M4: deterministic enrollment matcher. Given an age (or a registered swimmer)
 // plus availability, it filters the selected week's sessions to age-eligible
 // lesson types, ranks them by open capacity, and offers one-tap enroll/create.
-function EnrollView({ sessions, students, studentById, lessonTypes, lessonTypeById, lessonTypeByName, poolById, colorsFor, gridBounds, packages, instructors, initialWeekStart, onEnroll, onCreate }){
+function EnrollView({ sessions, students, studentById, lessonTypes, lessonTypeById, lessonTypeByName, poolById, colorsFor, gridBounds, packages, instructors, initialWeekStart, onEnroll, onCreate, onEdit, onAdd }){
   const [weekStart, setWeekStart] = useState(initialWeekStart);
 
   // ── Filter state ──────────────────────────────────────────────────
@@ -4366,11 +4390,15 @@ function EnrollView({ sessions, students, studentById, lessonTypes, lessonTypeBy
                 return <div key={info.s.id} className={`enroll-mini ${info.isFull ? 'mini-full' : 'mini-fits'}`} style={{borderLeftColor:c.bd,background:c.bg}} onClick={(e)=>{ e.stopPropagation(); onEnroll(info.s, []); }}>
                   <div className="enroll-mini-top">
                     <span className="enroll-mini-type" style={{color:c.tx}}>{info.s.type}</span>
-                    <span className="enroll-mini-cap">{capLabel}</span>
+                    <div style={{display:'flex',alignItems:'center',gap:4}}>
+                      <span className="enroll-mini-cap">{capLabel}</span>
+                      {onEdit && <span className="enroll-mini-edit" title="Edit session" onClick={e=>{ e.stopPropagation(); onEdit(info.s); }}>✎</span>}
+                    </div>
                   </div>
                   <div className="enroll-mini-meta">{minuteToTime(info.s.startMinute)}{info.instName ? ` · ${info.instName}` : ''}</div>
                 </div>;
               })}
+              {onAdd && <div className="enroll-add-btn" title="Add session" onClick={()=>{ const d = fromDateStr(weekStart); d.setDate(d.getDate()+di); onAdd(di, minuteToSlot(h), null, weekStart); }}>+</div>}
             </div>;
           })}
         </React.Fragment>)}
