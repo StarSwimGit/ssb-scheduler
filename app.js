@@ -1,3 +1,4 @@
+
 // ============================================================================
 // SSB Scheduler app.js — Module 2 build
 // ============================================================================
@@ -1536,6 +1537,13 @@ function App(){
     setModal({ mode:'add', id:null, weekStartDate: selectedWeekStart, day, startMinute, form: defaultFormForStart(startMinute, poolId) });
   }
 
+  // Same as openAdd but uses an explicit weekStartDate — used by EnrollView
+  // which may be showing a different week than the WeekView's selectedWeekStart.
+  function openAddForWeek(weekStartDate, day, slot, poolId){
+    const startMinute = slotToMinute(slot);
+    setModal({ mode:'add', id:null, weekStartDate, day, startMinute, form: defaultFormForStart(startMinute, poolId) });
+  }
+
   function openAddAtTime(day, startMinute, poolId){
     setModal({ mode:'add', id:null, weekStartDate: selectedWeekStart, day, startMinute, form: defaultFormForStart(startMinute, poolId) });
   }
@@ -2714,10 +2722,7 @@ function App(){
         onEnroll={openEnroll}
         onCreate={openCreateFor}
         onEdit={openEdit}
-        onAdd={(day, slot, poolId, weekStart) => {
-          setSelectedDate(addDays(weekStart, day));
-          openAdd(day, slot, poolId);
-        }}
+        onAdd={(day, slot, poolId, weekStart) => openAddForWeek(weekStart, day, slot, poolId)}
       />}
       {/* ── Admin Hub — left sidebar + content panel ───────────────── */}
       {!loading && view==='settings' && <div className="admin-hub">
@@ -2775,7 +2780,7 @@ function App(){
             invoices={invoices}
             studentById={studentById}
             familyGroups={familyGroups}
-            groupById={groupById}
+            groupById={id => groupById[id]}
             lessonTypeById={lessonTypeById}
             packageById={packageById}
             onConfirm={confirmCredit}
