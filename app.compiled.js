@@ -11617,34 +11617,12 @@ function StudentsView({
     }
   }
   const filtered = students.filter(s => !q || (s.name || '').toLowerCase().includes(q.toLowerCase()));
+
+  // Always flat list — no group separators. All swimmers listed individually
+  // regardless of family group membership (Groups tab handles group admin).
   const displayList = useMemo(() => {
-    if (sortBy === 'name') {
-      const byGroup = {},
-        ungrouped = [];
-      filtered.forEach(s => {
-        if (s.familyGroupId) {
-          (byGroup[s.familyGroupId] = byGroup[s.familyGroupId] || []).push(s);
-        } else ungrouped.push(s);
-      });
-      const rows = [];
-      Object.entries(byGroup).sort(([aId], [bId]) => (groupById?.[aId]?.name || '').localeCompare(groupById?.[bId]?.name || '')).forEach(([gid, members]) => {
-        rows.push({
-          kind: 'group',
-          gid,
-          label: groupById?.[gid]?.name || 'Group'
-        });
-        members.slice().sort((a, b) => a.name.localeCompare(b.name)).forEach(s => rows.push({
-          kind: 'swimmer',
-          s
-        }));
-      });
-      ungrouped.slice().sort((a, b) => a.name.localeCompare(b.name)).forEach(s => rows.push({
-        kind: 'swimmer',
-        s
-      }));
-      return rows;
-    }
-    return filtered.slice().sort((a, b) => {
+    const sorted = filtered.slice().sort((a, b) => {
+      if (sortBy === 'name') return a.name.localeCompare(b.name);
       if (sortBy === 'type') {
         const tA = (a.lessonTypeIds?.[0] ? lessonTypeById(a.lessonTypeIds[0])?.name : '') || '';
         const tB = (b.lessonTypeIds?.[0] ? lessonTypeById(b.lessonTypeIds[0])?.name : '') || '';
@@ -11655,12 +11633,14 @@ function StudentsView({
         const pB = (b.packageId ? packageById(b.packageId)?.name : '') || '';
         return pA.localeCompare(pB) || a.name.localeCompare(b.name);
       }
+      if (sortBy === 'parent') return (a.guardianName || '').localeCompare(b.guardianName || '') || a.name.localeCompare(b.name);
       return 0;
-    }).map(s => ({
+    });
+    return sorted.map(s => ({
       kind: 'swimmer',
       s
     }));
-  }, [filtered, sortBy, groupById]);
+  }, [filtered, sortBy]);
   const COLS = 9;
   function resetForm() {
     setName('');
@@ -11679,89 +11659,61 @@ function StudentsView({
     setAdultSelf(false);
   }
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "card intake-banner",
+    className: "card",
     style: {
-      marginBottom: 16
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "intake-banner-inner"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "intake-banner-icon",
-    "aria-hidden": "true"
-  }, "\uD83C\uDFCA"), /*#__PURE__*/React.createElement("div", {
-    className: "intake-banner-text"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "intake-banner-title"
-  }, "Parent Intake"), /*#__PURE__*/React.createElement("div", {
-    className: "intake-banner-sub"
-  }, "Open the digital form on this tablet for parents to self-register, or print a hard-copy form for walk-ins without a device. To add a swimmer manually or edit any details, use the \uD83D\uDC64 Accounts tab.")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 8,
-      flexShrink: 0,
-      flexWrap: 'wrap'
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    className: "btn btn-primary intake-banner-btn",
-    onClick: () => window.open('./intake.html', '_blank', 'noopener,noreferrer'),
-    title: "Opens the digital intake form in a new tab"
-  }, "Digital Form ", /*#__PURE__*/React.createElement("span", {
-    "aria-hidden": "true",
-    style: {
-      marginLeft: 6
-    }
-  }, "\u2197"))))), /*#__PURE__*/React.createElement("div", {
-    className: "card"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      gap: 12,
-      flexWrap: 'wrap',
       marginBottom: 12
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
+      gap: 8,
       alignItems: 'center',
-      gap: 10,
       flexWrap: 'wrap'
     }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 16,
-      fontWeight: 800
-    }
-  }, "Swimmer Directory ", /*#__PURE__*/React.createElement("span", {
-    className: "subtle",
-    style: {
-      fontWeight: 600,
-      fontSize: 13
-    }
-  }, "\xB7 ", students.length)), /*#__PURE__*/React.createElement("div", {
-    className: "sort-tabs"
-  }, [['name', 'Name'], ['type', 'Lesson Type'], ['package', 'Package']].map(([k, lbl]) => /*#__PURE__*/React.createElement("button", {
-    key: k,
-    className: `sort-tab ${sortBy === k ? 'active' : ''}`,
-    onClick: () => setSortBy(k),
-    "data-key": k
-  }, lbl))), /*#__PURE__*/React.createElement("span", {
-    className: "subtle small",
-    style: {
-      marginLeft: 6
-    }
-  }, "Read-only \xB7 edit details in \uD83D\uDC64 Accounts")), /*#__PURE__*/React.createElement("input", {
+  }, /*#__PURE__*/React.createElement("input", {
     className: "input",
     style: {
-      maxWidth: 220
+      flex: '1 1 240px',
+      maxWidth: 380
     },
-    placeholder: "Search swimmers\u2026",
+    placeholder: "Search swimmer name, parent, phone\u2026",
     value: q,
     onChange: e => setQ(e.target.value)
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "table-wrap"
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 4,
+      alignItems: 'center',
+      flexShrink: 0
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "small subtle"
+  }, "Sort:"), [['name', 'Name'], ['type', 'Lesson Type'], ['package', 'Package'], ['parent', 'Parent']].map(([k, lbl]) => /*#__PURE__*/React.createElement("button", {
+    key: k,
+    className: `sub-tab${sortBy === k ? ' active' : ''}`,
+    style: {
+      height: 30,
+      padding: '0 12px',
+      fontSize: 12
+    },
+    onClick: () => setSortBy(k)
+  }, lbl))), /*#__PURE__*/React.createElement("span", {
+    className: "small subtle",
+    style: {
+      marginLeft: 'auto'
+    }
+  }, displayList.length, " / ", students.length, " swimmers"))), /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      padding: 0,
+      overflow: 'hidden'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "table-wrap",
+    style: {
+      border: 'none',
+      borderRadius: 0
+    }
   }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
     style: {
       width: '14%'
@@ -11795,14 +11747,6 @@ function StudentsView({
       width: '5%'
     }
   }, "T&C"), /*#__PURE__*/React.createElement("th", null, "Schedule"))), /*#__PURE__*/React.createElement("tbody", null, displayList.length ? displayList.map((row, ri) => {
-    if (row.kind === 'group') return /*#__PURE__*/React.createElement("tr", {
-      key: `g-${row.gid}`,
-      className: "swimmer-group-header"
-    }, /*#__PURE__*/React.createElement("td", {
-      colSpan: COLS
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "group-header-label"
-    }, "\uD83D\uDC6A ", row.label)));
     const s = row.s;
     const sched = scheduleLines(s.id);
     const tcOk = !!s.tcAcceptedAt;
@@ -11828,9 +11772,7 @@ function StudentsView({
     }, "\u2014");
     return /*#__PURE__*/React.createElement(React.Fragment, {
       key: s.id
-    }, /*#__PURE__*/React.createElement("tr", {
-      className: s.familyGroupId ? 'swimmer-in-group' : ''
-    }, /*#__PURE__*/React.createElement("td", {
+    }, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
       style: {
         fontWeight: 700
       }
@@ -11951,7 +11893,7 @@ function StudentsView({
   }) : /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
     colSpan: COLS,
     className: "empty"
-  }, "No swimmers registered yet.")))))));
+  }, "No swimmers found.")))))));
 }
 
 // ============================================================================
