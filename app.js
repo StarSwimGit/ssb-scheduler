@@ -7648,3 +7648,10 @@ ${pmt?`<div class="block">
 </body></html>`;
   const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
 }
+
+
+
+// ── Bootstrap ──────────────────────────────────────────────────────────────
+ReactDOM.createRoot(document.getElementById('root')).render(
+  React.createElement(ErrorBoundary, null, React.createElement(App))
+);
