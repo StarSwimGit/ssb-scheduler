@@ -1078,7 +1078,7 @@
       @page{size:A4 portrait;margin:8mm}
       body{background:#fff !important;color:#000 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
       *{box-shadow:none !important;text-shadow:none !important}
-      .header,.wrap > .card,.legend,.small.subtle,.modal-backdrop,.btn,.tabs,.print-target,.daily-grid,.daily-day-tabs,.pill,.daily-screen-header{display:none !important}
+      .header,.sub-bar,.wrap > .card,.legend,.small.subtle,.modal-backdrop,.btn,.tabs,.print-target,.daily-grid,.daily-day-tabs,.pill,.daily-screen-header{display:none !important}
       .wrap{max-width:none !important;padding:0 !important}
       .print-rundown,.print-daily,.print-weekly-table{display:none !important}
       body[data-print-view="weekly"] .print-rundown{display:block !important;background:#fff !important;color:#000 !important}
@@ -1093,14 +1093,18 @@
 
       /* ── Weekly Daily Rundown ────────────────────────────────────── */
       .print-rundown,.print-rundown *{color:#000 !important;background:#fff !important}
-      .print-rundown table{width:100%;border-collapse:collapse;margin-top:0}
-      .print-rundown thead th{font-size:8pt;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#444 !important;border-bottom:1.5px solid #000;padding:5px 8px;background:#fff !important}
-      .print-rundown tbody td{font-size:10.5pt;padding:6px 8px;border-bottom:1px solid #e0e0e0;vertical-align:top;line-height:1.4}
+      .print-rundown table{width:100%;border-collapse:collapse;margin-top:0;table-layout:fixed}
+      .print-rundown thead{display:none}
+      .print-rundown tbody td{font-size:9.5pt;padding:4px 6px;border-bottom:1px solid #e0e0e0;vertical-align:top;line-height:1.35}
       .print-rundown tbody tr:last-child td{border-bottom:none}
-      .print-rundown .empty-row td{color:#999 !important;font-style:italic;font-size:9.5pt}
-      .print-type-cell{white-space:nowrap;font-size:10.5pt}
+      .print-rundown .empty-row td{color:#999 !important;font-style:italic;font-size:8.5pt}
+      .print-time-col{width:18%;white-space:nowrap;font-size:9.5pt;font-weight:700}
+      .print-type-col{width:20%;font-size:9.5pt}
+      .print-inst-col{width:18%;font-size:9.5pt}
+      .print-stu-col{width:44%;font-size:9.5pt}
+      .print-stu-name{display:block;line-height:1.4}
       .print-day{margin-bottom:8mm;break-inside:avoid}
-      .print-day h3{font-size:12pt;font-weight:800;color:#000 !important;margin:0 0 3mm;padding-bottom:2mm;border-bottom:1.5px solid #000}
+      .print-day h3{font-size:11pt;font-weight:800;color:#000 !important;margin:0 0 3mm;padding-bottom:2mm;border-bottom:1.5px solid #000}
 
       /* ── Daily Schedule printout ─────────────────────────────────── */
       .print-daily{background:#fff !important;color:#000 !important}
