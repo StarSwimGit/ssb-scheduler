@@ -893,6 +893,27 @@ function App() {
       alert(err.message || 'Failed to void');
     }
   }
+  async function deleteInvoice(id) {
+    if (!confirm('Permanently delete this invoice, all its lines, and all payments? This cannot be undone.')) return;
+    try {
+      await deleteRows('payments', {
+        invoice_id: id
+      });
+      await deleteRows('pending_credits', {
+        invoice_id: id
+      }).catch(() => {});
+      await deleteRows('invoice_lines', {
+        invoice_id: id
+      });
+      await deleteRows('invoices', {
+        id
+      });
+      await loadInvoiceData();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to delete invoice');
+    }
+  }
   async function updateInvoiceStatus(id, newStatus) {
     try {
       await patchRows('invoices', {
@@ -4030,6 +4051,7 @@ function App() {
     formatInvoiceNumber: formatInvoiceNumber,
     formatReceiptNumber: formatReceiptNumber,
     onVoid: voidInvoice,
+    onDelete: deleteInvoice,
     onUpdateStatus: updateInvoiceStatus,
     onRecordPayment: recordPayment,
     onConfirmCredit: confirmCredit,
@@ -13307,6 +13329,7 @@ function InvoicesView({
   formatInvoiceNumber,
   formatReceiptNumber,
   onVoid,
+  onDelete,
   onUpdateStatus,
   onRecordPayment,
   onConfirmCredit,
@@ -13556,6 +13579,7 @@ function InvoicesView({
       isOverdue: overdue,
       membersByGroup: membersByGroup,
       onVoid: () => onVoid(inv.id),
+      onDelete: onDelete ? () => onDelete(inv.id) : null,
       onUpdateStatus: s => onUpdateStatus(inv.id, s),
       onRecordPayment: data => onRecordPayment({
         invoiceId: inv.id,
@@ -13577,6 +13601,7 @@ function InvoiceDetailPanel({
   isOverdue,
   membersByGroup,
   onVoid,
+  onDelete,
   onUpdateStatus,
   onRecordPayment,
   onConfirmCredit,
@@ -13664,7 +13689,13 @@ function InvoiceDetailPanel({
   }, "\uD83D\uDDA8 Print Invoice & Receipt"), invoice.status !== 'void' && invoice.status !== 'paid' && /*#__PURE__*/React.createElement("button", {
     className: "btn btn-danger small",
     onClick: onVoid
-  }, "Void"))), /*#__PURE__*/React.createElement("div", {
+  }, "Void"), onDelete && /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-danger small",
+    onClick: onDelete,
+    style: {
+      marginLeft: 'auto'
+    }
+  }, "\uD83D\uDDD1 Delete Invoice"))), /*#__PURE__*/React.createElement("div", {
     className: "table-wrap",
     style: {
       margin: '10px 0'
