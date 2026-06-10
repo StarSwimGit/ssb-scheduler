@@ -1100,24 +1100,22 @@ function App(){
       return true;
     }
 
-    // ── Case 3: original session exists — check if date has passed ────
+    // ── Case 3: original session exists — offer restore ───────────────
     if(sessionExists){
-      // Check cap
       const lt = lessonTypeById(pending.lesson_type_id);
       const cap = sessionCapacity(originalSession, lt);
       if(cap.max > 0 && cap.current >= cap.max){
-        if(!confirm(`${pending.original_session_label} is now full (${cap.current}/${cap.max}). Restore ${swimmerName} anyway? The class will be over capacity.`)) return false;
+        if(!confirm(`${pending.original_session_label} is now full (${cap.current}/${cap.max}). Restore ${swimmerName} anyway (class will be over capacity)?`)) return false;
       }
-      // Date-passed path: alert (not blocking) then ask what to do
+      // Date-passed: show a non-blocking advisory alert, then a single confirm
       if(datePassed){
         alert(
-          `⚠️ Note: The original class week (${origWeek}) has already passed.\n\n` +
-          `You can still restore ${swimmerName} to "${pending.original_session_label}" for record-keeping purposes. ` +
-          `This is useful if attendance still needs to be marked.`
+          `⚠️ The original session week (${origWeek}) has already passed.\n\n` +
+          `${swimmerName} will be restored to "${pending.original_session_label}" for record-keeping. ` +
+          `Please manually review their attendance and credit status for that session.`
         );
       }
-      // Single confirm regardless of date
-      if(!confirm(`Restore ${swimmerName} to "${pending.original_session_label}"?`)) return false;
+      if(!confirm(`Restore ${swimmerName} to "${pending.original_session_label}"?${datePassed ? '\n\n(Past session — attendance & credits need manual review)' : ''}`)) return false;
       try{
         await insertRows('weekly_session_students', [{
           session_id: pending.original_session_id,
@@ -1129,7 +1127,7 @@ function App(){
         }]);
         await deleteRows('replacement_pending', { id: pending.id });
         await Promise.all([loadSessions(), loadReplacementPending()]);
-        setStatus(`Restored ${swimmerName} to ${pending.original_session_label}${datePassed?' (past session — mark attendance manually)':''}.`);
+        setStatus(`Restored ${swimmerName} to ${pending.original_session_label}${datePassed?' — mark attendance manually':''}.`);
         return true;
       } catch(err){ handleErr(err); alert(err.message || 'Failed to restore'); return false; }
     }
@@ -1629,7 +1627,10 @@ function App(){
       rescheduledFromDay: item.rescheduledFromDay ?? null,
       rescheduledFromStartMinute: item.rescheduledFromStartMinute ?? null,
       originalAttendance,
-      originalReplacementRows: replacementStudents.map(s => ({ studentId:s.studentId, name:s.name, replacementFrom:s.replacementFrom||'', lessonTypeId: lessonTypeByName(item.type)?.id || null })),
+      originalReplacementRows: replacementStudents.map(s => {
+        const dec = decodeReplacementFrom(s.replacementFrom||'');
+        return { studentId:s.studentId, name:s.name, replacementFrom:dec.label, originalSessionId:dec.sessionId, lessonTypeId: lessonTypeByName(item.type)?.id || null };
+      }),
       form:{
         type:item.type,
         lessonTypeId:item.lessonTypeId,
@@ -1639,7 +1640,7 @@ function App(){
         familyGroupId: item.familyGroupId || null,
         durationMinutes:item.durationMinutes,
         studentRows: buildStudentRows(regularStudents, lessonTypeByName(item.type)?.students_per_instructor),
-        replacementRows: replacementStudents.map(s => ({ studentId:s.studentId, name:s.name, age:s.age, replacementFrom:s.replacementFrom || '', attendance: s.attendance || 'pending' }))
+        replacementRows: replacementStudents.map(s => { const dec=decodeReplacementFrom(s.replacementFrom||''); return { studentId:s.studentId, name:s.name, age:s.age, replacementFrom:dec.label, originalSessionId:dec.sessionId, attendance: s.attendance || 'pending' }; })
       }
     });
   }
@@ -1763,31 +1764,31 @@ function App(){
         const newReplIds = new Set((m.form.replacementRows||[]).filter(r=>r.studentId).map(r=>r.studentId));
         const removed = (m.originalReplacementRows||[]).filter(r => r.studentId && !newReplIds.has(r.studentId));
         if(removed.length > 0){
-          const today = todayStr();
           const lines = removed.map(r => {
-            // replacementFrom may be a label like "Mon 9:00 AM" or may embed a date
-            const rawFrom = r.replacementFrom || '';
-            const dateMatch = rawFrom.match(/\d{4}-\d{2}-\d{2}/);
-            const dateStr = dateMatch ? dateMatch[0] : null;
-            const passed = dateStr && dateStr < today;
-            const fromNote = rawFrom ? `\n   Originally placed from: ${rawFrom}` : '';
-            const passedNote = passed ? `\n   ⚠️ Original class date (${dateStr}) has already passed.` : '';
-            return `• ${r.name}${fromNote}${passedNote}`;
+            const fromLabel = r.replacementFrom || '(original slot unknown)';
+            return `• ${r.name} — originally from "${fromLabel}"`;
           });
           const proceed = confirm(
-            `The following replacement student${removed.length>1?'s were':' was'} removed from this session:\n\n${lines.join('\n\n')}\n\n` +
-            `They will be returned to "pending replacement" status so they can be re-placed into another class.\n\n` +
+            `The following replacement student${removed.length>1?'s were':' was'} removed:\n\n${lines.join('\n')}\n\n` +
+            `They will return to the Pending Replacements panel.\n` +
+            `A "Cancel & restore" button will let you send them back to their original slot — even if that date has passed.\n\n` +
             `Proceed with saving?`
           );
           if(!proceed){ setSaveBusy(false); return; }
-          // Re-insert into replacement_pending for each removed student
+          // Re-insert into replacement_pending — now with original_session_id restored!
           const lt2 = lessonTypeByName(m.form.type) || lessonTypeById(m.form.lessonTypeId);
           for(const r of removed){
             if(r.studentId && lt2?.id){
               try{
                 await rest('replacement_pending?on_conflict=student_id,week_start_date,lesson_type_id',{
                   method:'POST', headers:{Prefer:'return=representation,resolution=merge-duplicates'},
-                  body:JSON.stringify([{ student_id:r.studentId, week_start_date:m.weekStartDate||selectedWeekStart, lesson_type_id:lt2.id, original_session_label:r.replacementFrom||'Removed from makeup', original_session_id:null }])
+                  body:JSON.stringify([{
+                    student_id:r.studentId,
+                    week_start_date:m.weekStartDate||selectedWeekStart,
+                    lesson_type_id:lt2.id,
+                    original_session_label:r.replacementFrom||'',
+                    original_session_id:r.originalSessionId||null   // ← preserved from encoded replacementFrom
+                  }])
                 });
               }catch(_){}
             }
@@ -3223,7 +3224,7 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
           const isTrial = !!(s.studentId && trialSet && trialSet.has(s.studentId));
           const isRepl = s.isReplacement;
           const bal = s.studentId && creditByKey ? creditByKey[`${s.studentId}:${block.lessonTypeId}`] : null;
-          return <span key={s.id || i} className={`wa-stu ${isRepl?'wa-stu-repl':''}`} title={studentLabel(s) + (isTrial?' (trial)':'') + (isRepl?` replacing from ${s.replacementFrom||'?'}`:'')}>
+          return <span key={s.id || i} className={`wa-stu ${isRepl?'wa-stu-repl':''}`} title={studentLabel(s) + (isTrial?' (trial)':'') + (isRepl?` replacing from ${replFromLabel(s.replacementFrom)||'?'}`:'')}>
             {isRepl?<span className="repl-mark">R</span>:null}
             {clip22(s.name) + ageSuffix(s)}
             {isTrial ? <span className="trial-mark"> (trial)</span> : null}
@@ -3382,7 +3383,7 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
                                 const isTrial = !!(s.studentId && trialSet && trialSet.has(s.studentId));
                                 const isRepl = s.isReplacement;
                                 const bal = s.studentId && creditByKey ? creditByKey[`${s.studentId}:${it.lessonTypeId}`] : null;
-                                return <span key={s.id || si} className={`daily-event-stu ${isRepl?'daily-stu-repl':''}`} title={isRepl?`Replacement from ${s.replacementFrom||'?'}`:undefined}>{isRepl?<span className="repl-mark-sm">R</span>:null}{s.name + ageSuffix(s)}{isTrial ? <span className="trial-mark"> (trial)</span> : null}{bal ? <span className={`credit-mark ${bal.remaining_balance<=2?'credit-low':''}`}> · {bal.remaining_balance}cr</span> : null}</span>;
+                                return <span key={s.id || si} className={`daily-event-stu ${isRepl?'daily-stu-repl':''}`} title={isRepl?`Replacement from ${replFromLabel(s.replacementFrom)||'?'}`:undefined}>{isRepl?<span className="repl-mark-sm">R</span>:null}{s.name + ageSuffix(s)}{isTrial ? <span className="trial-mark"> (trial)</span> : null}{bal ? <span className={`credit-mark ${bal.remaining_balance<=2?'credit-low':''}`}> · {bal.remaining_balance}cr</span> : null}</span>;
                               })}</div>;
                             })()
                           : <div className="daily-event-sub">No students listed</div>}
@@ -7113,7 +7114,7 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
           return <div className="repl-quickpick">
             <div className="small subtle" style={{marginBottom:6,fontWeight:700}}>Quick-pick candidates ({pendingCandidates.length + trialCandidates.length})</div>
             <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-              {pendingCandidates.map(p => { const stu = studentById[p.student_id]; if(!stu) return null; return <button key={`p-${p.id}`} type="button" className="quickpick-chip quickpick-rpending" onClick={()=>addAsReplacement(p.student_id, p.original_session_label)} title={`Pending replacement from ${p.original_session_label}`}><span className="qp-tag qp-tag-r">R-pending</span> {stu.name}{stu.age!=null?` (${stu.age})`:''} <span className="qp-meta">· from {p.original_session_label}</span></button>; })}
+              {pendingCandidates.map(p => { const stu = studentById[p.student_id]; if(!stu) return null; return <button key={`p-${p.id}`} type="button" className="quickpick-chip quickpick-rpending" onClick={()=>addAsReplacement(p.student_id, encodeReplacementFrom(p.original_session_id, p.original_session_label))} title={`Pending replacement from ${p.original_session_label}`}><span className="qp-tag qp-tag-r">R-pending</span> {stu.name}{stu.age!=null?` (${stu.age})`:''} <span className="qp-meta">· from {p.original_session_label}</span></button>; })}
               {trialCandidates.map(s => <button key={`t-${s.id}`} type="button" className="quickpick-chip quickpick-trial" onClick={()=>addAsReplacement(s.id, '(trial)')} title="Trial swimmer — one-off booking"><span className="qp-tag qp-tag-trial">trial</span> {s.name}{s.age!=null?` (${s.age})`:''}</button>)}
             </div>
           </div>;
@@ -7132,13 +7133,13 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
               <StudentSelect valueId={r.studentId} fallbackLabel={r.name||''} studentById={studentById} candidates={replCandidates} onPick={(stu)=>{
                 const rows=[...(modal.form.replacementRows||[])];
                 const pendingHit = stu && ltId && pendingByKey && pendingByKey[`${stu.id}:${ltId}:${wk}`];
-                rows[i]={ ...rows[i], studentId:stu?.id||null, name:stu?.name||'', age:stu?.age??null, replacementFrom: pendingHit ? pendingHit.original_session_label : (trialStudentIds && stu && trialStudentIds.has(stu.id) ? '(trial)' : rows[i].replacementFrom) };
+                rows[i]={ ...rows[i], studentId:stu?.id||null, name:stu?.name||'', age:stu?.age??null, replacementFrom: pendingHit ? encodeReplacementFrom(pendingHit.original_session_id, pendingHit.original_session_label) : (trialStudentIds && stu && trialStudentIds.has(stu.id) ? '(trial)' : rows[i].replacementFrom) };
                 setModal({...modal,form:{...modal.form,replacementRows:rows}});
               }} conflict={null} trialStudentIds={trialStudentIds}
         trialByLessonType={trialByLessonType} pendingByKey={pendingByKey} weekStartDate={wk} lessonTypeId={ltId} />
               {isPending ? <span className="qp-tag qp-tag-r" style={{position:'absolute',top:-8,right:6,zIndex:1}}>R-pending</span> : (isTrialRow ? <span className="qp-tag qp-tag-trial" style={{position:'absolute',top:-8,right:6,zIndex:1}}>trial</span> : null)}
             </div>
-            <input className="input" style={{flex:1}} placeholder="From class (e.g. Mon 11AM)" value={r.replacementFrom||''} onChange={(e)=>{ const rows=[...(modal.form.replacementRows||[])]; rows[i]={...rows[i],replacementFrom:e.target.value}; setModal({...modal,form:{...modal.form,replacementRows:rows}}); }} />
+            <input className="input" style={{flex:1}} placeholder="From class (e.g. Tue 10:00 AM)" value={replFromLabel(r.replacementFrom)||''} onChange={(e)=>{ const rows=[...(modal.form.replacementRows||[])]; rows[i]={...rows[i],replacementFrom:encodeReplacementFrom(rows[i].originalSessionId||null,e.target.value)}; setModal({...modal,form:{...modal.form,replacementRows:rows}}); }} />
             {(r.studentId || (r.name||'').trim()) ? <div className="att-seg" role="group" aria-label="Attendance">
               <button type="button" className={`att-btn att-pending ${(r.attendance||'pending')==='pending'?'is-on':''}`} onClick={()=>setReplAttendance(i,'pending')} title="Not yet marked — credit untouched">⏳</button>
               <button type="button" className={`att-btn att-attended ${r.attendance==='attended'?'is-on':''}`} onClick={()=>setReplAttendance(i,'attended')} title="Attended — lesson delivered (−1 credit on save)">✓</button>
@@ -7489,6 +7490,22 @@ class ErrorBoundary extends React.Component {
 // ============================================================================
 // Invoicing helpers
 // ============================================================================
+// ── Replacement-from codec ───────────────────────────────────────────────────
+// replacement_from in the DB encodes BOTH the original session UUID and the
+// human-readable label so the student can be fully restored after being
+// un-placed from a makeup slot.
+// Format: "<uuid>||<label>"  — backward compat: bare strings without || are labels only.
+function encodeReplacementFrom(sessionId, label){
+  return sessionId ? `${sessionId}||${label||''}` : (label||'');
+}
+function decodeReplacementFrom(raw){
+  if(!raw) return { sessionId: null, label: '' };
+  const sepIdx = raw.indexOf('||');
+  if(sepIdx < 0) return { sessionId: null, label: raw };
+  return { sessionId: raw.slice(0, sepIdx) || null, label: raw.slice(sepIdx + 2) };
+}
+function replFromLabel(raw){ return decodeReplacementFrom(raw).label; }
+
 function invoiceStatusLabel(s){ return({draft:'Draft',sent:'Sent',partial:'Part Paid',paid:'Paid',void:'Void'})[s]||s; }
 function invoiceStatusColor(s){ return({draft:'#94A3B8',sent:'#3B82F6',partial:'#F59E0B',paid:'#10B981',void:'#EF4444'})[s]||'#94A3B8'; }
 function methodLabel(m){ return({cash:'Cash',bank_transfer:'Bank Transfer',duitnow:'DuitNow',card:'Card',cheque:'Cheque',other:'Other'})[m]||m; }
