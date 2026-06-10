@@ -579,7 +579,8 @@ function App() {
     next_receipt_seq: 1,
     leading_zeros: 3,
     include_date: true,
-    date_format: 'YYYYMM'
+    date_format: 'YYYYMM',
+    allow_delete_invoice: false
   });
   useEffect(() => {
     boot();
@@ -3880,7 +3881,10 @@ function App() {
   }, "Instructors"), /*#__PURE__*/React.createElement("button", {
     className: `sub-tab ${adminSection === 'lessonTypes' ? 'active' : ''}`,
     onClick: () => setAdminSection('lessonTypes')
-  }, "Lesson Types"))), /*#__PURE__*/React.createElement("div", {
+  }, "Lesson Types"), /*#__PURE__*/React.createElement("button", {
+    className: `sub-tab ${adminSection === 'invoiceSettings' ? 'active' : ''}`,
+    onClick: () => setAdminSection('invoiceSettings')
+  }, "Invoice Numbering"))), /*#__PURE__*/React.createElement("div", {
     className: "wrap"
   }, loading ? /*#__PURE__*/React.createElement("div", {
     className: "card",
@@ -4051,7 +4055,7 @@ function App() {
     formatInvoiceNumber: formatInvoiceNumber,
     formatReceiptNumber: formatReceiptNumber,
     onVoid: voidInvoice,
-    onDelete: deleteInvoice,
+    onDelete: invoiceSettings.allow_delete_invoice ? deleteInvoice : null,
     onUpdateStatus: updateInvoiceStatus,
     onRecordPayment: recordPayment,
     onConfirmCredit: confirmCredit,
@@ -4138,7 +4142,25 @@ function App() {
   }), !loading && view === 'settings' && adminSection === 'summary' && /*#__PURE__*/React.createElement(SummaryView, {
     summary: summary,
     pools: activePools()
-  }), !loading && view === 'settings' && (adminSection === 'pools' || adminSection === 'instructors' || adminSection === 'lessonTypes') && /*#__PURE__*/React.createElement(SettingsView, {
+  }), !loading && view === 'settings' && adminSection === 'invoiceSettings' && /*#__PURE__*/React.createElement("div", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 800,
+      fontSize: 18,
+      marginBottom: 4
+    }
+  }, "Invoice Numbering & Permissions"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginBottom: 16
+    }
+  }, "These are sensitive settings. Invoice deletion is irreversible \u2014 enable the delete permission only for authorised users."), /*#__PURE__*/React.createElement(InvoiceSettingsPanel, {
+    settings: invoiceSettings,
+    onSave: saveInvoiceSettings,
+    formatInvoiceNumber: formatInvoiceNumber,
+    formatReceiptNumber: formatReceiptNumber
+  })), !loading && view === 'settings' && (adminSection === 'pools' || adminSection === 'instructors' || adminSection === 'lessonTypes') && /*#__PURE__*/React.createElement(SettingsView, {
     section: adminSection,
     options: options,
     addOption: addOption,
@@ -13342,7 +13364,6 @@ function InvoicesView({
   const [searchQ, setSearchQ] = useState('');
   const [expandedId, setExpandedId] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
-  const [showSettings, setShowSettings] = useState(false);
   const today = todayStr();
   function isOverdue(inv) {
     return inv.due_date && inv.due_date < today && inv.status !== 'paid' && inv.status !== 'void';
@@ -13418,21 +13439,7 @@ function InvoicesView({
     style: {
       marginTop: 3
     }
-  }, "Create and manage invoices, record payments, and issue receipts.")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 8,
-      alignItems: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-ghost small",
-    onClick: () => setShowSettings(s => !s)
-  }, "\u2699 Numbering"))), showSettings && invoiceSettings && /*#__PURE__*/React.createElement(InvoiceSettingsPanel, {
-    settings: invoiceSettings,
-    onSave: onSaveSettings,
-    formatInvoiceNumber: formatInvoiceNumber,
-    formatReceiptNumber: formatReceiptNumber
-  }), /*#__PURE__*/React.createElement("div", {
+  }, "Create and manage invoices, record payments, and issue receipts."))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 8,
@@ -13859,7 +13866,8 @@ function InvoiceSettingsPanel({
     next_receipt_seq: String(settings.next_receipt_seq || 1),
     leading_zeros: String(settings.leading_zeros || 3),
     include_date: settings.include_date !== false,
-    date_format: settings.date_format || 'YYYYMM'
+    date_format: settings.date_format || 'YYYYMM',
+    allow_delete_invoice: !!settings.allow_delete_invoice
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -13871,7 +13879,8 @@ function InvoiceSettingsPanel({
       next_receipt_seq: String(settings.next_receipt_seq || 1),
       leading_zeros: String(settings.leading_zeros || 3),
       include_date: settings.include_date !== false,
-      date_format: settings.date_format || 'YYYYMM'
+      date_format: settings.date_format || 'YYYYMM',
+      allow_delete_invoice: !!settings.allow_delete_invoice
     });
   }, [settings]);
   const set = (k, v) => setForm(f => ({
@@ -13895,7 +13904,8 @@ function InvoiceSettingsPanel({
       next_receipt_seq: Math.max(1, Number(form.next_receipt_seq) || 1),
       leading_zeros: Math.min(8, Math.max(1, Number(form.leading_zeros) || 3)),
       include_date: !!form.include_date,
-      date_format: form.date_format
+      date_format: form.date_format,
+      allow_delete_invoice: !!form.allow_delete_invoice
     });
     setSaving(false);
     setSaved(true);
@@ -14031,7 +14041,67 @@ function InvoiceSettingsPanel({
       fontWeight: 700,
       marginLeft: 24
     }
-  }, "Receipt: ", rctPreview)));
+  }, "Receipt: ", rctPreview)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 16,
+      padding: '14px 16px',
+      background: form.allow_delete_invoice ? 'linear-gradient(135deg,#FFF1F1,#FFF5F5)' : 'var(--surface-2)',
+      border: `1px solid ${form.allow_delete_invoice ? 'var(--red-bd)' : 'var(--border)'}`,
+      borderRadius: 10,
+      transition: 'background .2s,border-color .2s'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 700,
+      fontSize: 13,
+      marginBottom: 4
+    }
+  }, "\uD83D\uDD10 Invoice Permissions"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginBottom: 12
+    }
+  }, "These controls will be tied to user roles in a future login phase. Keep Delete disabled unless actively cleaning up test data."), /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 12,
+      cursor: 'pointer',
+      userSelect: 'none'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: () => set('allow_delete_invoice', !form.allow_delete_invoice),
+    style: {
+      width: 44,
+      height: 24,
+      borderRadius: 12,
+      background: form.allow_delete_invoice ? 'var(--red-tx)' : 'var(--border-2)',
+      position: 'relative',
+      cursor: 'pointer',
+      transition: 'background .2s',
+      flexShrink: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'absolute',
+      top: 3,
+      left: form.allow_delete_invoice ? 22 : 3,
+      width: 18,
+      height: 18,
+      borderRadius: '50%',
+      background: '#fff',
+      boxShadow: '0 1px 4px rgba(0,0,0,.25)',
+      transition: 'left .2s'
+    }
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 600,
+      fontSize: 13,
+      color: form.allow_delete_invoice ? 'var(--red-tx)' : 'var(--text-2)'
+    }
+  }, form.allow_delete_invoice ? '🔓 Delete Invoice — ENABLED' : '🔒 Delete Invoice — Disabled'), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle"
+  }, form.allow_delete_invoice ? 'The 🗑 Delete button is visible on all invoices. Deletions are permanent and cascade to payments and line items.' : 'The delete button is hidden on all invoices. Safe for normal operations.')))));
 }
 function getSwimmerNames(line, membersByGroup) {
   if (!line.family_group_id || !membersByGroup) return [];
