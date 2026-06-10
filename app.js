@@ -518,6 +518,17 @@ function App(){
     catch(err){ handleErr(err); alert(err.message||'Failed to void'); }
   }
 
+  async function deleteInvoice(id){
+    if(!confirm('Permanently delete this invoice, all its lines, and all payments? This cannot be undone.')) return;
+    try{
+      await deleteRows('payments',{invoice_id:id});
+      await deleteRows('pending_credits',{invoice_id:id}).catch(()=>{});
+      await deleteRows('invoice_lines',{invoice_id:id});
+      await deleteRows('invoices',{id});
+      await loadInvoiceData();
+    } catch(err){ handleErr(err); alert(err.message||'Failed to delete invoice'); }
+  }
+
   async function updateInvoiceStatus(id,newStatus){
     try{ await patchRows('invoices',{id},{status:newStatus,updated_at:new Date().toISOString()}); await loadInvoiceData(); }
     catch(err){ handleErr(err); alert(err.message||'Failed to update status'); }
@@ -2733,7 +2744,7 @@ function App(){
         membersByGroup={membersByGroup}
         invoiceSettings={invoiceSettings} onSaveSettings={saveInvoiceSettings}
         formatInvoiceNumber={formatInvoiceNumber} formatReceiptNumber={formatReceiptNumber}
-        onVoid={voidInvoice} onUpdateStatus={updateInvoiceStatus}
+        onVoid={voidInvoice} onDelete={deleteInvoice} onUpdateStatus={updateInvoiceStatus}
         onRecordPayment={recordPayment} onConfirmCredit={confirmCredit}
         onReverseCredit={reverseCredit} onAddLine={addInvoiceLine}
         onUpdateLine={updateInvoiceLine} onDeleteLine={deleteInvoiceLine}
@@ -7317,7 +7328,7 @@ function methodLabel(m){ return({cash:'Cash',bank_transfer:'Bank Transfer',duitn
 // Helper: resolve swimmer names for a group line
 
 
-function InvoicesView({ invoices, invoiceLines, pmts, pendingCredits, lessonTypeById, packageById, studentById, membersByGroup, invoiceSettings, onSaveSettings, formatInvoiceNumber, formatReceiptNumber, onVoid, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
+function InvoicesView({ invoices, invoiceLines, pmts, pendingCredits, lessonTypeById, packageById, studentById, membersByGroup, invoiceSettings, onSaveSettings, formatInvoiceNumber, formatReceiptNumber, onVoid, onDelete, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
   const [statusFilter,setStatusFilter]=useState('all');
   const [searchQ,setSearchQ]=useState('');
   const [expandedId,setExpandedId]=useState(null);
@@ -7427,6 +7438,7 @@ function InvoicesView({ invoices, invoiceLines, pmts, pendingCredits, lessonType
             invoice={inv} lines={invLines} pmts={invPmts} pendingCredits={invPcs}
             isOverdue={overdue} membersByGroup={membersByGroup}
             onVoid={()=>onVoid(inv.id)}
+            onDelete={onDelete ? ()=>onDelete(inv.id) : null}
             onUpdateStatus={(s)=>onUpdateStatus(inv.id,s)}
             onRecordPayment={(data)=>onRecordPayment({invoiceId:inv.id,...data})}
             onConfirmCredit={onConfirmCredit} onReverseCredit={onReverseCredit}
@@ -7439,7 +7451,7 @@ function InvoicesView({ invoices, invoiceLines, pmts, pendingCredits, lessonType
   </>;
 }
 
-function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, membersByGroup, onVoid, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
+function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, membersByGroup, onVoid, onDelete, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
   const [showPayForm,setShowPayForm]=useState(false);
   const [lastReceipt,setLastReceipt]=useState(null);
   const outstanding=Math.max(0,(Number(invoice.total_amount)||0)-(Number(invoice.amount_paid)||0));
@@ -7481,6 +7493,7 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
             printInvoiceAndReceipt(invoice,lines,lastPmt,membersByGroup);
           }}>🖨 Print Invoice &amp; Receipt</button>}
         {invoice.status!=='void'&&invoice.status!=='paid'&&<button className="btn btn-danger small" onClick={onVoid}>Void</button>}
+        {onDelete&&<button className="btn btn-danger small" onClick={onDelete} style={{marginLeft:'auto'}}>🗑 Delete Invoice</button>}
       </div>
     </div>
     <div className="table-wrap" style={{margin:'10px 0'}}>
