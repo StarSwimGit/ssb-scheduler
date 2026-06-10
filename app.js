@@ -6021,6 +6021,184 @@ function ParentGroupManager({ pg, familyGroups, groupById, membersByGroup, group
   </div>;
 }
 
+
+function PendingCreditsView({ pendingCredits, invoices, studentById, familyGroups, groupById, lessonTypeById, packageById, onConfirm, onReverse }){
+  const [statusFilter,setStatusFilter]=useState('pending');
+  const pendingCount=pendingCredits.filter(p=>p.status==='pending').length;
+  const invById=useMemo(()=>Object.fromEntries((invoices||[]).map(i=>[i.id,i])),[invoices]);
+
+  const filtered=pendingCredits.filter(pc=>statusFilter==='all'||pc.status===statusFilter);
+
+  return <>
+    <div className="card" style={{marginBottom:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap',marginBottom:10}}>
+        <div>
+          <div style={{fontSize:18,fontWeight:800}}>\u23f3 Pending Credits</div>
+          <div className="small subtle">Credits held in escrow after payment is recorded. Confirm to allocate lesson credits to the account. Reverse to reject (e.g. bounced payment).</div>
+        </div>
+        {pendingCount>0&&<div style={{fontSize:20,fontWeight:800,color:'#F59E0B'}}>{pendingCount} awaiting confirmation</div>}
+      </div>
+      <div style={{display:'flex',gap:3}}>
+        {['pending','confirmed','reversed','all'].map(s=><button key={s} className={`tab ${statusFilter===s?'active':''}`} style={{padding:'5px 10px',fontSize:11,borderRadius:7}} onClick={()=>setStatusFilter(s)}>
+          {s==='all'?`All (${pendingCredits.length})`:s.charAt(0).toUpperCase()+s.slice(1)+` (${pendingCredits.filter(p=>p.status===s).length})`}
+        </button>)}
+      </div>
+    </div>
+
+    {filtered.length===0&&<div className="card empty" style={{padding:28}}>No credits in this status.</div>}
+
+    <div style={{display:'flex',flexDirection:'column',gap:6}}>
+      {filtered.map(pc=>{
+        const inv=invById[pc.invoice_id];
+        const lt=pc.lesson_type_id&&lessonTypeById?lessonTypeById(pc.lesson_type_id):null;
+        const pkg=pc.package_id&&packageById?packageById(pc.package_id):null;
+        const grp=pc.family_group_id&&groupById?groupById(pc.family_group_id):null;
+        const stu=pc.student_id&&studentById?studentById[pc.student_id]:null;
+        return <div key={pc.id} className={`pc-card status-${pc.status}`}>
+          <div className="pc-card-body">
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:700}}>{pc.description||'Credit Allocation'}</div>
+              <div className="small subtle">
+                {grp?`\ud83d\udc6a ${grp.name}`:stu?`\ud83d\udc64 ${stu.name}`:'Unknown recipient'}
+                {lt?` \u00b7 ${lt.name}`:''}
+                {pkg?` \u00b7 ${pkg.name}`:''}
+              </div>
+              <div className="small subtle">{pc.credits_per_swimmer} credit{pc.credits_per_swimmer===1?'':'s'} per swimmer{inv?` \u00b7 ${inv.invoice_number}`:''}{inv?` \u00b7 ${inv.account_name}`:''}</div>
+              <div className="small subtle">{new Date(pc.created_at).toLocaleDateString(undefined,{dateStyle:'medium'})}</div>
+            </div>
+            <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:5}}>
+              <span className={`pc-status-chip status-${pc.status}`}>{pc.status==='pending'?'\u23f3 Pending':pc.status==='confirmed'?'\u2713 Confirmed':'\u2717 Reversed'}</span>
+              {pc.status==='pending'&&<div style={{display:'flex',gap:5}}>
+                <button className="btn btn-primary small" onClick={()=>onConfirm(pc)}>\u2713 Confirm Credits</button>
+                <button className="btn btn-danger small" onClick={()=>onReverse(pc)}>\u2717 Reverse</button>
+              </div>}
+            </div>
+          </div>
+        </div>;
+      })}
+    </div>
+  </>;
+}
+
+
+function AgingReportView({ invoices, pmts }){
+  const [sortBy,setSortBy]=useState('outstanding'); // outstanding | account | oldest
+  const today=todayStr();
+  const todayMs=new Date(today).getTime();
+
+  // Group by account_name
+  const accountMap={};
+  invoices.forEach(inv=>{
+    const key=inv.account_name;
+    if(!accountMap[key]) accountMap[key]={ account:key, invoices:[], totalInvoiced:0, totalPaid:0 };
+    accountMap[key].invoices.push(inv);
+    accountMap[key].totalInvoiced+=Number(inv.total_amount||0);
+    accountMap[key].totalPaid+=Number(inv.amount_paid||0);
+  });
+
+  const rows=Object.values(accountMap).map(a=>{
+    const outstanding=Math.max(0,a.totalInvoiced-a.totalPaid);
+    // Age unpaid invoices
+    let current=0,d1_30=0,d31_60=0,d60plus=0;
+    a.invoices.forEach(inv=>{
+      if(inv.status==='paid'||inv.status==='void') return;
+      const owed=Math.max(0,Number(inv.total_amount)-Number(inv.amount_paid));
+      if(!owed) return;
+      if(!inv.due_date){ current+=owed; return; }
+      const age=Math.floor((todayMs-new Date(inv.due_date).getTime())/(86400000));
+      if(age<=0) current+=owed;
+      else if(age<=30) d1_30+=owed;
+      else if(age<=60) d31_60+=owed;
+      else d60plus+=owed;
+    });
+    const openInvs=a.invoices.filter(i=>i.status!=='paid'&&i.status!=='void');
+    const oldestDue=openInvs.map(i=>i.due_date).filter(Boolean).sort()[0]||null;
+    const isOverdue=d1_30>0||d31_60>0||d60plus>0;
+    return { account:a.account, totalInvoiced:a.totalInvoiced, totalPaid:a.totalPaid, outstanding, current, d1_30, d31_60, d60plus, openCount:openInvs.length, oldestDue, isOverdue };
+  }).filter(r=>r.totalInvoiced>0);
+
+  rows.sort((a,b)=>{
+    if(sortBy==='outstanding') return b.outstanding-a.outstanding;
+    if(sortBy==='account') return a.account.localeCompare(b.account);
+    if(sortBy==='oldest') return (a.oldestDue||'9999')>(b.oldestDue||'9999')?1:-1;
+    return 0;
+  });
+
+  const totals=rows.reduce((s,r)=>({ invoiced:s.invoiced+r.totalInvoiced, paid:s.paid+r.totalPaid, outstanding:s.outstanding+r.outstanding, current:s.current+r.current, d1_30:s.d1_30+r.d1_30, d31_60:s.d31_60+r.d31_60, d60plus:s.d60plus+r.d60plus }),{ invoiced:0,paid:0,outstanding:0,current:0,d1_30:0,d31_60:0,d60plus:0 });
+
+  const rm=(v)=>`RM${v.toFixed(2)}`;
+
+  return <>
+    <div className="card" style={{marginBottom:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap',marginBottom:10}}>
+        <div><div style={{fontSize:18,fontWeight:800}}>\ud83d\udcc8 Aging Report</div><div className="small subtle">Outstanding balances by account with age buckets based on invoice due dates. As of {today}.</div></div>
+        <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
+          <div><div className="small subtle">Total Outstanding</div><div style={{fontSize:20,fontWeight:800,color:'#F59E0B'}}>{rm(totals.outstanding)}</div></div>
+          <div><div className="small subtle" style={{color:'#EF4444'}}>60+ Days</div><div style={{fontSize:20,fontWeight:800,color:'#EF4444'}}>{rm(totals.d60plus)}</div></div>
+        </div>
+      </div>
+      <div style={{display:'flex',gap:6}}>
+        <span className="small subtle" style={{marginRight:4}}>Sort:</span>
+        {[['outstanding','By Outstanding'],['account','By Account'],['oldest','By Oldest Due']].map(([k,l])=><button key={k} className={`tab ${sortBy===k?'active':''}`} style={{padding:'4px 10px',fontSize:11,borderRadius:6}} onClick={()=>setSortBy(k)}>{l}</button>)}
+      </div>
+    </div>
+
+    {rows.length===0&&<div className="card empty" style={{padding:28}}>No invoiced accounts yet.</div>}
+
+    {rows.length>0&&<div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Account</th>
+            <th className="num">Invoiced</th>
+            <th className="num">Paid</th>
+            <th className="num">Outstanding</th>
+            <th className="num" title="Not yet due">Current</th>
+            <th className="num" style={{color:'#F59E0B'}}>1\u201330d</th>
+            <th className="num" style={{color:'#F97316'}}>31\u201360d</th>
+            <th className="num" style={{color:'#EF4444'}}>60+d</th>
+            <th className="num">Open Inv.</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r=><tr key={r.account} style={{background:r.d60plus>0?'rgba(239,68,68,.06)':r.d31_60>0?'rgba(249,115,22,.04)':''}}>
+            <td>
+              <div style={{fontWeight:700}}>{r.account}</div>
+              {r.isOverdue&&r.oldestDue&&<div style={{fontSize:10,color:'#EF4444'}}>Overdue since {r.oldestDue}</div>}
+            </td>
+            <td className="num">{rm(r.totalInvoiced)}</td>
+            <td className="num" style={{color:'#10B981'}}>{rm(r.totalPaid)}</td>
+            <td className="num" style={{fontWeight:800,color:r.outstanding>0?'#F59E0B':'#10B981'}}>{r.outstanding>0?rm(r.outstanding):'\u2713'}</td>
+            <td className="num">{r.current>0?rm(r.current):'-'}</td>
+            <td className="num" style={{color:r.d1_30>0?'#F59E0B':''}}>{r.d1_30>0?rm(r.d1_30):'-'}</td>
+            <td className="num" style={{color:r.d31_60>0?'#F97316':''}}>{r.d31_60>0?rm(r.d31_60):'-'}</td>
+            <td className="num" style={{fontWeight:r.d60plus>0?800:400,color:r.d60plus>0?'#EF4444':''}}>{r.d60plus>0?rm(r.d60plus):'-'}</td>
+            <td className="num">{r.openCount}</td>
+          </tr>)}
+        </tbody>
+        <tfoot>
+          <tr style={{borderTop:'2px solid var(--border)',fontWeight:800}}>
+            <td>Totals ({rows.length} accounts)</td>
+            <td className="num">{rm(totals.invoiced)}</td>
+            <td className="num" style={{color:'#10B981'}}>{rm(totals.paid)}</td>
+            <td className="num" style={{color:'#F59E0B'}}>{rm(totals.outstanding)}</td>
+            <td className="num">{totals.current>0?rm(totals.current):'-'}</td>
+            <td className="num" style={{color:totals.d1_30>0?'#F59E0B':''}}>{totals.d1_30>0?rm(totals.d1_30):'-'}</td>
+            <td className="num" style={{color:totals.d31_60>0?'#F97316':''}}>{totals.d31_60>0?rm(totals.d31_60):'-'}</td>
+            <td className="num" style={{fontWeight:800,color:totals.d60plus>0?'#EF4444':''}}>{totals.d60plus>0?rm(totals.d60plus):'-'}</td>
+            <td className="num"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>}
+
+    <div className="small subtle" style={{marginTop:10}}>
+      Age buckets are calculated from invoice due dates. Invoices without a due date are counted as Current. Paid and voided invoices are excluded.
+    </div>
+  </>;
+}
+
+
 function ReceiptsView({ pmts, invoices }){
   const [searchQ, setSearchQ] = useState('');
   const invoiceById = {};
