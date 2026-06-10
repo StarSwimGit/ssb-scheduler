@@ -430,7 +430,7 @@ function App(){
     await patchRows('invoice_settings',{id:1},{next_receipt_seq: seq+1}).catch(()=>{});
     const inserted = await insertRows('payments',{
       invoice_id:invoiceId, receipt_number:receiptNumber,
-      amount:Number(amount), payment_date:paymentDate||toDateStr(now),
+      amount:Number(amount), payment_date:paymentDate||todayStr(),
       payment_method:paymentMethod||'cash',
       reference_number:referenceNumber||null, notes:pNotes||null
     });
