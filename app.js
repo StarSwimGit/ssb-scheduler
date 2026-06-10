@@ -6520,55 +6520,50 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
 
   const filtered = students.filter(s => !q || (s.name || '').toLowerCase().includes(q.toLowerCase()));
 
+  // Always flat list — no group separators. All swimmers listed individually
+  // regardless of family group membership (Groups tab handles group admin).
   const displayList = useMemo(() => {
-    if(sortBy === 'name'){
-      const byGroup = {}, ungrouped = [];
-      filtered.forEach(s => { if(s.familyGroupId){ (byGroup[s.familyGroupId]=byGroup[s.familyGroupId]||[]).push(s); } else ungrouped.push(s); });
-      const rows = [];
-      Object.entries(byGroup).sort(([aId],[bId])=>(groupById?.[aId]?.name||'').localeCompare(groupById?.[bId]?.name||'')).forEach(([gid,members])=>{
-        rows.push({ kind:'group', gid, label:groupById?.[gid]?.name||'Group' });
-        members.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(s=>rows.push({kind:'swimmer',s}));
-      });
-      ungrouped.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(s=>rows.push({kind:'swimmer',s}));
-      return rows;
-    }
-    return filtered.slice().sort((a,b)=>{
-      if(sortBy==='type'){ const tA=(a.lessonTypeIds?.[0]?lessonTypeById(a.lessonTypeIds[0])?.name:'')||''; const tB=(b.lessonTypeIds?.[0]?lessonTypeById(b.lessonTypeIds[0])?.name:'')||''; return tA.localeCompare(tB)||a.name.localeCompare(b.name); }
-      if(sortBy==='package'){ const pA=(a.packageId?packageById(a.packageId)?.name:'')||''; const pB=(b.packageId?packageById(b.packageId)?.name:'')||''; return pA.localeCompare(pB)||a.name.localeCompare(b.name); }
+    const sorted = filtered.slice().sort((a, b) => {
+      if(sortBy === 'name')    return a.name.localeCompare(b.name);
+      if(sortBy === 'type'){
+        const tA = (a.lessonTypeIds?.[0] ? lessonTypeById(a.lessonTypeIds[0])?.name : '') || '';
+        const tB = (b.lessonTypeIds?.[0] ? lessonTypeById(b.lessonTypeIds[0])?.name : '') || '';
+        return tA.localeCompare(tB) || a.name.localeCompare(b.name);
+      }
+      if(sortBy === 'package'){
+        const pA = (a.packageId ? packageById(a.packageId)?.name : '') || '';
+        const pB = (b.packageId ? packageById(b.packageId)?.name : '') || '';
+        return pA.localeCompare(pB) || a.name.localeCompare(b.name);
+      }
+      if(sortBy === 'parent') return (a.guardianName||'').localeCompare(b.guardianName||'') || a.name.localeCompare(b.name);
       return 0;
-    }).map(s=>({kind:'swimmer',s}));
-  }, [filtered, sortBy, groupById]);
+    });
+    return sorted.map(s => ({ kind: 'swimmer', s }));
+  }, [filtered, sortBy]);
 
   const COLS = 9;
 
   function resetForm(){ setName(''); setDob(''); setGender(null); setEnrollments([{ lessonTypeId: '', packageId: '' }]); setGuardianName(''); setGuardianEmail(''); setGuardianPhone(''); setSameAsGuardian(false); setEmergencyPhone(''); setEmergencyRel(''); setAdultSelf(false); }
 
   return <>
-    <div className="card intake-banner" style={{marginBottom:16}}>
-      <div className="intake-banner-inner">
-        <div className="intake-banner-icon" aria-hidden="true">🏊</div>
-        <div className="intake-banner-text">
-          <div className="intake-banner-title">Parent Intake</div>
-          <div className="intake-banner-sub">Open the digital form on this tablet for parents to self-register, or print a hard-copy form for walk-ins without a device. To add a swimmer manually or edit any details, use the 👤 Accounts tab.</div>
+    <div className="card" style={{marginBottom:12}}>
+      <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+        <input className="input" style={{flex:'1 1 240px',maxWidth:380}} placeholder="Search swimmer name, parent, phone…"
+          value={q} onChange={e=>setQ(e.target.value)} />
+        <div style={{display:'flex',gap:4,alignItems:'center',flexShrink:0}}>
+          <span className="small subtle">Sort:</span>
+          {[['name','Name'],['type','Lesson Type'],['package','Package'],['parent','Parent']].map(([k,lbl])=>(
+            <button key={k}
+              className={`sub-tab${sortBy===k?' active':''}`}
+              style={{height:30,padding:'0 12px',fontSize:12}}
+              onClick={()=>setSortBy(k)}>{lbl}</button>
+          ))}
         </div>
-        <div style={{display:'flex',gap:8,flexShrink:0,flexWrap:'wrap'}}>
-          <button type="button" className="btn btn-primary intake-banner-btn" onClick={()=>window.open('./intake.html', '_blank', 'noopener,noreferrer')} title="Opens the digital intake form in a new tab">
-            Digital Form <span aria-hidden="true" style={{marginLeft:6}}>↗</span>
-          </button>
-        </div>
+        <span className="small subtle" style={{marginLeft:'auto'}}>{displayList.length} / {students.length} swimmers</span>
       </div>
     </div>
-
-    <div className="card">
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:12}}>
-        <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
-          <div style={{fontSize:16,fontWeight:800}}>Swimmer Directory <span className="subtle" style={{fontWeight:600,fontSize:13}}>· {students.length}</span></div>
-          <div className="sort-tabs">{[['name','Name'],['type','Lesson Type'],['package','Package']].map(([k,lbl])=><button key={k} className={`sort-tab ${sortBy===k?'active':''}`} onClick={()=>setSortBy(k)} data-key={k}>{lbl}</button>)}</div>
-          <span className="subtle small" style={{marginLeft:6}}>Read-only · edit details in 👤 Accounts</span>
-        </div>
-        <input className="input" style={{maxWidth:220}} placeholder="Search swimmers…" value={q} onChange={e=>setQ(e.target.value)} />
-      </div>
-      <div className="table-wrap">
+    <div className="card" style={{padding:0,overflow:'hidden'}}>
+      <div className="table-wrap" style={{border:'none',borderRadius:0}}>
         <table><thead><tr>
           <th style={{width:'14%'}}>Name</th>
           <th style={{width:32}}>Age</th>
@@ -6581,7 +6576,6 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
           <th>Schedule</th>
         </tr></thead>
         <tbody>{displayList.length ? displayList.map((row,ri)=>{
-          if(row.kind==='group') return <tr key={`g-${row.gid}`} className="swimmer-group-header"><td colSpan={COLS}><span className="group-header-label">👪 {row.label}</span></td></tr>;
           const s=row.s; const sched=scheduleLines(s.id);
           const tcOk = !!s.tcAcceptedAt;
           // Per-LT credit summary — show each LT's remaining balance as a chip
@@ -6597,7 +6591,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
             ? <span className="subtle small" title="Same as guardian">↗ as guardian</span>
             : (s.emergencyPhone ? <><span>{s.emergencyPhone}</span>{s.emergencyRelationship ? <><br/><span className="subtle small">{s.emergencyRelationship}</span></> : null}</> : <span className="subtle">—</span>);
           return <React.Fragment key={s.id}>
-            <tr className={s.familyGroupId?'swimmer-in-group':''}>
+            <tr>
               <td style={{fontWeight:700}}>{s.name}{s.gender?<span style={{marginLeft:4,fontSize:10,color:'var(--text-3)'}}>{s.gender==='female'?'♀':'♂'}</span>:null}</td>
               <td>{s.age!=null?s.age:'—'}</td>
               <td style={{fontSize:11}}>{parentBits.length
@@ -6622,7 +6616,7 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
               }):<span className="subtle">Not scheduled</span>}</td>
             </tr>
           </React.Fragment>;
-        }):<tr><td colSpan={COLS} className="empty">No swimmers registered yet.</td></tr>}
+        }):<tr><td colSpan={COLS} className="empty">No swimmers found.</td></tr>}
         </tbody></table>
       </div>
     </div>
