@@ -760,7 +760,7 @@ function App() {
       invoice_id: invoiceId,
       receipt_number: receiptNumber,
       amount: Number(amount),
-      payment_date: paymentDate || toDateStr(now),
+      payment_date: paymentDate || todayStr(),
       payment_method: paymentMethod || 'cash',
       reference_number: referenceNumber || null,
       notes: pNotes || null
