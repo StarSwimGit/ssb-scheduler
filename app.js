@@ -300,7 +300,7 @@ function App(){
   const [invoiceLines,setInvoiceLines] = useState([]);
   const [pmts,setPmts] = useState([]);
   const [pendingCredits,setPendingCredits] = useState([]);
-  const [invoiceSettings,setInvoiceSettings] = useState({ invoice_prefix:'INV', receipt_prefix:'RCT', next_invoice_seq:1, next_receipt_seq:1, leading_zeros:3, include_date:true, date_format:'YYYYMM' });
+  const [invoiceSettings,setInvoiceSettings] = useState({ invoice_prefix:'INV', receipt_prefix:'RCT', next_invoice_seq:1, next_receipt_seq:1, leading_zeros:3, include_date:true, date_format:'YYYYMM', allow_delete_invoice:false });
 
   useEffect(() => { boot(); }, []);
   useEffect(() => { if(cfg.supabaseUrl && cfg.supabaseAnonKey) loadRemarks(monthCursor).catch(handleErr); }, [monthCursor]);
@@ -2608,6 +2608,7 @@ function App(){
       <button className={`sub-tab ${adminSection==='pools'?'active':''}`} onClick={()=>setAdminSection('pools')}>Pools & Hours</button>
       <button className={`sub-tab ${adminSection==='instructors'?'active':''}`} onClick={()=>setAdminSection('instructors')}>Instructors</button>
       <button className={`sub-tab ${adminSection==='lessonTypes'?'active':''}`} onClick={()=>setAdminSection('lessonTypes')}>Lesson Types</button>
+      <button className={`sub-tab ${adminSection==='invoiceSettings'?'active':''}`} onClick={()=>setAdminSection('invoiceSettings')}>Invoice Numbering</button>
     </div></div>}
 
     <div className="wrap">
@@ -2744,7 +2745,7 @@ function App(){
         membersByGroup={membersByGroup}
         invoiceSettings={invoiceSettings} onSaveSettings={saveInvoiceSettings}
         formatInvoiceNumber={formatInvoiceNumber} formatReceiptNumber={formatReceiptNumber}
-        onVoid={voidInvoice} onDelete={deleteInvoice} onUpdateStatus={updateInvoiceStatus}
+        onVoid={voidInvoice} onDelete={invoiceSettings.allow_delete_invoice ? deleteInvoice : null} onUpdateStatus={updateInvoiceStatus}
         onRecordPayment={recordPayment} onConfirmCredit={confirmCredit}
         onReverseCredit={reverseCredit} onAddLine={addInvoiceLine}
         onUpdateLine={updateInvoiceLine} onDeleteLine={deleteInvoiceLine}
@@ -2794,6 +2795,11 @@ function App(){
       {/* ── Admin (side-nav + content) ── */}
       {/* ── Admin views (no side column — sub-bar handles navigation) ── */}
       {!loading && view==='settings' && adminSection==='summary' && <SummaryView summary={summary} pools={activePools()} />}
+      {!loading && view==='settings' && adminSection==='invoiceSettings' && <div className="card">
+        <div style={{fontWeight:800,fontSize:18,marginBottom:4}}>Invoice Numbering &amp; Permissions</div>
+        <div className="small subtle" style={{marginBottom:16}}>These are sensitive settings. Invoice deletion is irreversible — enable the delete permission only for authorised users.</div>
+        <InvoiceSettingsPanel settings={invoiceSettings} onSave={saveInvoiceSettings} formatInvoiceNumber={formatInvoiceNumber} formatReceiptNumber={formatReceiptNumber} />
+      </div>}
       {!loading && view==='settings' && (adminSection==='pools'||adminSection==='instructors'||adminSection==='lessonTypes') && <SettingsView
         section={adminSection}
         options={options}
@@ -7333,7 +7339,6 @@ function InvoicesView({ invoices, invoiceLines, pmts, pendingCredits, lessonType
   const [searchQ,setSearchQ]=useState('');
   const [expandedId,setExpandedId]=useState(null);
   const [selectedIds,setSelectedIds]=useState(new Set());
-  const [showSettings,setShowSettings]=useState(false);
   const today=todayStr();
 
   function isOverdue(inv){ return inv.due_date && inv.due_date < today && inv.status !== 'paid' && inv.status !== 'void'; }
@@ -7376,11 +7381,7 @@ function InvoicesView({ invoices, invoiceLines, pmts, pendingCredits, lessonType
           <div style={{fontSize:18,fontWeight:800}}>🧾 Invoices</div>
           <div className="small subtle" style={{marginTop:3}}>Create and manage invoices, record payments, and issue receipts.</div>
         </div>
-        <div style={{display:'flex',gap:8,alignItems:'center'}}>
-          <button className="btn btn-ghost small" onClick={()=>setShowSettings(s=>!s)}>⚙ Numbering</button>
-        </div>
       </div>
-      {showSettings && invoiceSettings && <InvoiceSettingsPanel settings={invoiceSettings} onSave={onSaveSettings} formatInvoiceNumber={formatInvoiceNumber} formatReceiptNumber={formatReceiptNumber} />}
       <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',marginBottom:8}}>
         {[['all','All'],['draft','Draft'],['sent','Sent'],['partial','Part Paid'],['paid','Paid'],['void','Void'],['overdue','Overdue']].map(([k,l])=>
           <button key={k} className={`tab ${statusFilter===k?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setStatusFilter(k)}>
@@ -7560,6 +7561,7 @@ function InvoiceSettingsPanel({ settings, onSave, formatInvoiceNumber, formatRec
     leading_zeros: String(settings.leading_zeros||3),
     include_date: settings.include_date !== false,
     date_format: settings.date_format||'YYYYMM',
+    allow_delete_invoice: !!settings.allow_delete_invoice,
   });
   const [saving,setSaving]=useState(false);
   const [saved,setSaved]=useState(false);
@@ -7572,6 +7574,7 @@ function InvoiceSettingsPanel({ settings, onSave, formatInvoiceNumber, formatRec
     leading_zeros: String(settings.leading_zeros||3),
     include_date: settings.include_date !== false,
     date_format: settings.date_format||'YYYYMM',
+    allow_delete_invoice: !!settings.allow_delete_invoice,
   }); },[settings]);
 
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
@@ -7589,6 +7592,7 @@ function InvoiceSettingsPanel({ settings, onSave, formatInvoiceNumber, formatRec
       leading_zeros:Math.min(8,Math.max(1,Number(form.leading_zeros)||3)),
       include_date:!!form.include_date,
       date_format:form.date_format,
+      allow_delete_invoice:!!form.allow_delete_invoice,
     });
     setSaving(false); setSaved(true);
     setTimeout(()=>setSaved(false),2000);
@@ -7621,6 +7625,24 @@ function InvoiceSettingsPanel({ settings, onSave, formatInvoiceNumber, formatRec
       <div className="small subtle" style={{marginBottom:4}}>Preview</div>
       <span style={{fontFamily:'monospace',fontWeight:700}}>Invoice: {invPreview}</span>
       <span style={{fontFamily:'monospace',fontWeight:700,marginLeft:24}}>Receipt: {rctPreview}</span>
+    </div>
+    {/* ── Permissions ── */}
+    <div style={{marginTop:16,padding:'14px 16px',background:form.allow_delete_invoice?'linear-gradient(135deg,#FFF1F1,#FFF5F5)':'var(--surface-2)',border:`1px solid ${form.allow_delete_invoice?'var(--red-bd)':'var(--border)'}`,borderRadius:10,transition:'background .2s,border-color .2s'}}>
+      <div style={{fontWeight:700,fontSize:13,marginBottom:4}}>🔐 Invoice Permissions</div>
+      <div className="small subtle" style={{marginBottom:12}}>These controls will be tied to user roles in a future login phase. Keep Delete disabled unless actively cleaning up test data.</div>
+      <label style={{display:'flex',alignItems:'center',gap:12,cursor:'pointer',userSelect:'none'}}>
+        <div
+          onClick={()=>set('allow_delete_invoice',!form.allow_delete_invoice)}
+          style={{width:44,height:24,borderRadius:12,background:form.allow_delete_invoice?'var(--red-tx)':'var(--border-2)',position:'relative',cursor:'pointer',transition:'background .2s',flexShrink:0}}>
+          <div style={{position:'absolute',top:3,left:form.allow_delete_invoice?22:3,width:18,height:18,borderRadius:'50%',background:'#fff',boxShadow:'0 1px 4px rgba(0,0,0,.25)',transition:'left .2s'}} />
+        </div>
+        <div>
+          <div style={{fontWeight:600,fontSize:13,color:form.allow_delete_invoice?'var(--red-tx)':'var(--text-2)'}}>
+            {form.allow_delete_invoice ? '🔓 Delete Invoice — ENABLED' : '🔒 Delete Invoice — Disabled'}
+          </div>
+          <div className="small subtle">{form.allow_delete_invoice ? 'The 🗑 Delete button is visible on all invoices. Deletions are permanent and cascade to payments and line items.' : 'The delete button is hidden on all invoices. Safe for normal operations.'}</div>
+        </div>
+      </label>
     </div>
   </div>;
 }
