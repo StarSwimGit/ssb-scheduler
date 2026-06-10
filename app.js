@@ -1076,38 +1076,49 @@ function App(){
     const student = studentById[pending.student_id];
     const swimmerName = student?.name || 'this swimmer';
     const originalSession = sessions.find(s => s.id === pending.original_session_id);
-    const willRestore = !!opts.restore && pending.original_session_id && !!originalSession;
+    const sessionExists = !!pending.original_session_id && !!originalSession;
     const today = todayStr();
-    // Detect if the original session's week has already passed
     const origWeek = pending.week_start_date || '';
     const datePassed = origWeek && origWeek < today;
-    // If the spot has been filled and at cap, warn before pushing back in.
-    if(willRestore){
+
+    // ── Case 1: original session was deleted or moved ─────────────────
+    if(!sessionExists && pending.original_session_id){
+      alert(
+        `Original slot no longer available.\n\n` +
+        `${swimmerName}'s original class "${pending.original_session_label}" has been deleted or moved.\n\n` +
+        `${swimmerName} will remain in the pending replacement queue. You must place them in an active session to resolve this.`
+      );
+      return false; // stay in limbo — no action taken
+    }
+
+    // ── Case 2: no original session ID at all (can only clear limbo) ──
+    if(!sessionExists){
+      if(!confirm(`Remove ${swimmerName} from the pending-replacement queue?\n\nNo original session is recorded. They will be cleared from limbo.`)) return false;
+      await deleteRows('replacement_pending', { id: pending.id });
+      await Promise.all([loadSessions(), loadReplacementPending()]);
+      setStatus(`Cleared limbo entry for ${swimmerName}.`);
+      return true;
+    }
+
+    // ── Case 3: original session exists — check if date has passed ────
+    if(sessionExists){
+      // Check cap
       const lt = lessonTypeById(pending.lesson_type_id);
       const cap = sessionCapacity(originalSession, lt);
       if(cap.max > 0 && cap.current >= cap.max){
-        if(!confirm(`${pending.original_session_label} is now full (${cap.current}/${cap.max}). Add ${swimmerName} back anyway? The class will be over capacity.`)) return false;
+        if(!confirm(`${pending.original_session_label} is now full (${cap.current}/${cap.max}). Restore ${swimmerName} anyway? The class will be over capacity.`)) return false;
       }
-    }
-    // Build confirmation message — two-choice path if original date passed
-    let proceedWithRestore = willRestore;
-    if(datePassed && willRestore){
-      const passedMsg =
-        `The original class week (${origWeek}) has already passed.\n\n` +
-        `What would you like to do with ${swimmerName}?\n\n` +
-        `• OK → Restore to "${pending.original_session_label}" anyway (this will add them to a past session for record-keeping).\n\n` +
-        `• Cancel → Keep them in the pending replacement (limbo) state — remove the limbo entry without restoring.`;
-      proceedWithRestore = confirm(passedMsg);
-      // Either way we proceed — OK = restore to original, Cancel = clear limbo only
-      if(!confirm(`${proceedWithRestore ? 'Restore' : 'Clear limbo for'} ${swimmerName}?`)) return false;
-    } else {
-      const msg = willRestore
-        ? `Cancel pending replacement for ${swimmerName} and put them back in ${pending.original_session_label}?`
-        : `Remove ${swimmerName} from the pending-replacement bucket?\n\n(Their original class no longer exists, so they won't be auto-restored. You can re-add them manually if needed.)`;
-      if(!confirm(msg)) return false;
-    }
-    try{
-      if(proceedWithRestore && willRestore){
+      // Date-passed path: alert (not blocking) then ask what to do
+      if(datePassed){
+        alert(
+          `⚠️ Note: The original class week (${origWeek}) has already passed.\n\n` +
+          `You can still restore ${swimmerName} to "${pending.original_session_label}" for record-keeping purposes. ` +
+          `This is useful if attendance still needs to be marked.`
+        );
+      }
+      // Single confirm regardless of date
+      if(!confirm(`Restore ${swimmerName} to "${pending.original_session_label}"?`)) return false;
+      try{
         await insertRows('weekly_session_students', [{
           session_id: pending.original_session_id,
           student_id: pending.student_id,
@@ -1116,15 +1127,12 @@ function App(){
           is_replacement: false,
           attendance_status: 'pending'
         }]);
-      }
-      await deleteRows('replacement_pending', { id: pending.id });
-      await Promise.all([loadSessions(), loadReplacementPending()]);
-      const result = proceedWithRestore && willRestore
-        ? `Restored ${swimmerName} to ${pending.original_session_label}${datePassed?' (past session)':''}.`
-        : `Cleared limbo entry for ${swimmerName}. They can be re-placed manually.`;
-      setStatus(result);
-      return true;
-    } catch(err){ handleErr(err); alert(err.message || 'Failed to cancel pending replacement'); return false; }
+        await deleteRows('replacement_pending', { id: pending.id });
+        await Promise.all([loadSessions(), loadReplacementPending()]);
+        setStatus(`Restored ${swimmerName} to ${pending.original_session_label}${datePassed?' (past session — mark attendance manually)':''}.`);
+        return true;
+      } catch(err){ handleErr(err); alert(err.message || 'Failed to restore'); return false; }
+    }
   }
 
   // ── Full Class Replacement module ────────────────────────────────────
@@ -5137,13 +5145,19 @@ function ParentsView({ accountSection, setAccountSection, parentGroups, lessonTy
       {selectedAccountKeys.size > 0 && <div className="inv-bulk-bar" style={{marginTop:8}}>
         <span style={{fontWeight:700,fontSize:13}}>{selectedAccountKeys.size} account{selectedAccountKeys.size>1?'s':''} selected</span>
         <button className="btn btn-primary small" disabled={batchBusy} onClick={async ()=>{
-          if(!confirm(`Generate a draft invoice for each of the ${selectedAccountKeys.size} selected account(s)?\n\nNote: This creates one invoice per account. Lines must be added manually to each invoice.`)) return;
+          if(!confirm(`Generate invoices for the ${selectedAccountKeys.size} selected account(s)?\n\nEach invoice will be pre-populated with the same line items shown in Billing Preview. Accounts with no billable items will produce a RM 0.00 draft.`)) return;
           setBatchBusy(true);
           let created=0;
           for(const key of selectedAccountKeys){
             const pg = (parentGroups||[]).find(p=>p.key===key);
             if(!pg) continue;
-            await createInvoice({ accountName:pg.name, accountEmail:pg.email, accountPhone:pg.phone, lines:[], notes:'Batch generated', dueDate:null });
+            // Compute billing lines via the same helper BillingPreviewPanel uses
+            const { allItems } = computeBillingLines(pg, groupById, packageById, lessonTypeById, lessonTypes);
+            await createInvoice({
+              accountName:pg.name, accountEmail:pg.email, accountPhone:pg.phone,
+              lines:allItems,
+              notes:'Batch generated', dueDate:null
+            });
             created++;
           }
           setBatchBusy(false);
@@ -5244,7 +5258,7 @@ function ParentsView({ accountSection, setAccountSection, parentGroups, lessonTy
         {isExpanded && <div className="parent-body">
           {/* Parent-level admin toolbar */}
           {pg.key !== '__unassigned__' && <div className="parent-admin-toolbar">
-            <button className="btn btn-ghost small" onClick={()=>setContactEditKey(isEditingContact?null:pg.key)}>{isEditingContact?'Close':'✎ Edit Contact'}</button>
+            <button className="btn btn-ghost small" onClick={()=>setContactEditKey(isEditingContact?null:pg.key)} style={isEditingContact?{background:'#EAB308',color:'#000',border:'1px solid #CA8A04'}:{}}>{isEditingContact?'✕ Close Edit':'✎ Edit Contact'}</button>
             <button className="btn btn-ghost small" onClick={()=>setAddingSwimmerFor(isAddingSwimmer?null:pg.key)}>{isAddingSwimmer?'Close':'+ Add Swimmer'}</button>
             {swimmerCount >= 2 && <button className="btn btn-ghost small" onClick={()=>setGroupPanelKey(isManagingGroup?null:pg.key)}>{isManagingGroup?'Close':'👪 Manage Group'}</button>}
             {/* 💳 Record Purchase removed — billing is now driven from
@@ -5253,7 +5267,7 @@ function ParentsView({ accountSection, setAccountSection, parentGroups, lessonTy
                 Record Purchase form was free-form and let staff record
                 purchases that didn't match the swimmers' actual
                 enrolments, leading to inconsistencies. */}
-            <button className="btn btn-ghost small" onClick={()=>setBillingKey(billingKey===pg.key?null:pg.key)} title="Preview what this account would be billed based on current enrolments + family groups">{billingKey===pg.key?'Close':'🧾 Billing Preview'}</button>
+            <button className="btn btn-ghost small" onClick={()=>setBillingKey(billingKey===pg.key?null:pg.key)} title="Preview what this account would be billed based on current enrolments + family groups" style={billingKey===pg.key?{background:'#F97316',color:'#fff',border:'1px solid #EA580C'}:{}}>{billingKey===pg.key?'✕ Close Preview':'🧾 Billing Preview'}</button>
             <button className="btn btn-print small" onClick={()=>printAccountSummary(pg)} title="Print account summary with groups, enrolments, and class schedule">🖨 Print</button>
             <div style={{marginLeft:'auto'}}>
               <button className={`btn small ${pg.isActive?'btn-ghost':'btn-primary'}`} onClick={()=>setParentArchived(pg, pg.isActive)} title={pg.isActive ? 'Archive this parent and all their swimmers' : 'Restore this parent and all their swimmers'}>
@@ -5368,7 +5382,7 @@ function ParentsView({ accountSection, setAccountSection, parentGroups, lessonTy
                   {grp ? <span className="subtle"> · {isBound ? '🔗' : '👪'} {grp.name}</span> : null}
                 </div>
                 <div className="parent-swimmer-actions">
-                  <button className="btn btn-ghost small" onClick={()=>setEditingSwimmerId(isEditingSwimmer?null:sw.id)}>{isEditingSwimmer?'Close':'✎ Edit'}</button>
+                  <button className="btn btn-ghost small" onClick={()=>setEditingSwimmerId(isEditingSwimmer?null:sw.id)} style={isEditingSwimmer?{background:'#EAB308',color:'#000',border:'1px solid #CA8A04'}:{}}>{isEditingSwimmer?'✕ Close':'✎ Edit'}</button>
                   <button className="btn btn-danger small" onClick={()=>deleteStudent(sw)}>Del</button>
                 </div>
               </div>
@@ -5680,6 +5694,68 @@ function ParentContactEditor({ pg, onSave, onCancel }){
 // Family group management for a parent — pick existing group or create new
 // from this parent's children, toggle membership per child, switch type.
 // ============================================================================
+// ── Shared billing-line computation ─────────────────────────────────────────
+// Used by both BillingPreviewPanel (interactive preview) and the batch invoice
+// generator so both produce identical line amounts.
+function computeBillingLines(pg, groupById, packageById, lessonTypeById, lessonTypes){
+  function ltName(id){
+    const lt = typeof lessonTypeById === 'function' ? lessonTypeById(id) : null;
+    return lt?.name || (lessonTypes||[]).find(x=>x.id===id)?.name || 'Lesson';
+  }
+  function pkgById2(id){ return typeof packageById === 'function' ? packageById(id) : null; }
+  const groupItems = [];
+  const individualItems = [];
+  const unconfiguredGroups = [];
+  const accountGroupIds = [...new Set((pg.swimmers||[]).flatMap(s => s.familyGroupIds || []))];
+  accountGroupIds.forEach(gid => {
+    const g = groupById?.[gid];
+    if(!g) return;
+    const pkg = g.packageId ? pkgById2(g.packageId) : null;
+    if(!pkg){ const mems=(pg.swimmers||[]).filter(s=>(s.familyGroupIds||[]).includes(gid)); unconfiguredGroups.push({id:gid,name:g.name,groupType:g.groupType,memberCount:mems.length,memberNames:mems.map(m=>m.name).join(', ')}); return; }
+    const members=(pg.swimmers||[]).filter(s=>(s.familyGroupIds||[]).includes(gid));
+    const memberCount=members.length;
+    const required=pkg.pax!=null?Number(pkg.pax):null;
+    const bundle=pkg.amount!=null?Number(pkg.amount):0;
+    const fb=pkg.fallback_per_pax!=null?Number(pkg.fallback_per_pax):null;
+    let amount=bundle;
+    if(required!=null&&memberCount>required&&fb!=null) amount=bundle+(memberCount-required)*fb;
+    groupItems.push({
+      key:`group:${gid}`,groupId:gid,groupName:g.name,groupType:g.groupType,
+      lessonTypeId:pkg.lesson_type_id,packageId:pkg.id,
+      lessonTypeName:ltName(pkg.lesson_type_id),packageName:pkg.name,
+      familyGroupId:gid,familyGroupName:g.name,
+      memberCount,memberIds:members.map(m=>m.id),
+      memberNames:members.map(m=>m.name).join(', '),
+      studentIds:members.map(m=>m.id).join(','),studentNames:members.map(m=>m.name).join(', '),
+      bundle,amount,lineType:'group_bundle',
+      billingMode:pkg.billing_mode||'monthly',billingCount:pkg.billing_count,
+      creditsPerSwimmer:pkg.billing_count||4,
+      description:`${g.groupType==='bound'?'🔗':'👪'} ${g.name} — ${ltName(pkg.lesson_type_id)} · ${pkg.name}`,
+    });
+  });
+  (pg.swimmers||[]).forEach(sw=>{
+    const coveredPkgIds=new Set();
+    (sw.familyGroupIds||[]).forEach(gid=>{const grp=groupById?.[gid];if(grp?.packageId)coveredPkgIds.add(grp.packageId);});
+    (sw.enrollments||[]).forEach(e=>{
+      if(!e.lessonTypeId||!e.packageId||coveredPkgIds.has(e.packageId)) return;
+      const pkg=pkgById2(e.packageId);
+      if(!pkg) return;
+      individualItems.push({
+        key:`ind:${sw.id}:${e.lessonTypeId}:${e.packageId}`,
+        swimmerId:sw.id,swimmerName:sw.name,
+        lessonTypeId:e.lessonTypeId,packageId:e.packageId,
+        lessonTypeName:ltName(e.lessonTypeId),packageName:pkg.name,
+        studentIds:sw.id,studentNames:sw.name,
+        amount:pkg.amount!=null?Number(pkg.amount):0,
+        lineType:'individual',billingMode:pkg.billing_mode||'monthly',
+        billingCount:pkg.billing_count,creditsPerSwimmer:pkg.billing_count||4,
+        description:`${sw.name} — ${ltName(e.lessonTypeId)} · ${pkg.name}`,
+      });
+    });
+  });
+  return { groupItems, individualItems, allItems:[...groupItems,...individualItems], unconfiguredGroups };
+}
+
 // BillingPreviewPanel — invoice generator for an account.
 // Detects billable items (group bundles + individual lessons).
 // Per-line checkboxes let staff exclude any item before generating.
@@ -5696,61 +5772,10 @@ function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packag
   const [checked, setChecked] = useState(new Set());    // initialised after items computed
   const [generating, setGenerating] = useState(false);
 
-  // ── Compute line items ──────────────────────────────────────────────
-  const groupItems = [];
-  const individualItems = [];
-  const unconfiguredGroups = [];
-
-  const accountGroupIds = [...new Set(pg.swimmers.flatMap(s => s.familyGroupIds || []))];
-  accountGroupIds.forEach(gid => {
-    const g = groupById?.[gid];
-    if(!g) return;
-    const pkg = g.packageId ? (typeof pkgById === 'function' ? pkgById(g.packageId) : pkgById?.[g.packageId]) : null;
-    if(!pkg){ const mems = pg.swimmers.filter(s=>(s.familyGroupIds||[]).includes(gid)); unconfiguredGroups.push({id:gid,name:g.name,groupType:g.groupType,memberCount:mems.length,memberNames:mems.map(m=>m.name).join(', ')}); return; }
-    const members = pg.swimmers.filter(s=>(s.familyGroupIds||[]).includes(gid));
-    const memberCount = members.length;
-    const required = pkg.pax != null ? Number(pkg.pax) : null;
-    const bundle = pkg.amount != null ? Number(pkg.amount) : 0;
-    const fb = pkg.fallback_per_pax != null ? Number(pkg.fallback_per_pax) : null;
-    let amount = bundle;
-    if(required != null && memberCount > required && fb != null) amount = bundle + (memberCount-required)*fb;
-    groupItems.push({
-      key:`group:${gid}`, groupId:gid, groupName:g.name, groupType:g.groupType,
-      lessonTypeId:pkg.lesson_type_id, packageId:pkg.id,
-      lessonTypeName:ltName(pkg.lesson_type_id), packageName:pkg.name,
-      familyGroupId:gid, familyGroupName:g.name,
-      memberCount, memberIds:members.map(m=>m.id),
-      memberNames:members.map(m=>m.name).join(', '),
-      studentIds:members.map(m=>m.id).join(','),
-      studentNames:members.map(m=>m.name).join(', '),
-      bundle, amount, lineType:'group_bundle',
-      billingMode:pkg.billing_mode||'monthly', billingCount:pkg.billing_count,
-      creditsPerSwimmer:pkg.billing_count||4,
-      description:`${g.groupType==='bound'?'🔗':'👪'} ${g.name} — ${ltName(pkg.lesson_type_id)} · ${pkg.name}`,
-    });
-  });
-  pg.swimmers.forEach(sw => {
-    const coveredPkgIds = new Set();
-    (sw.familyGroupIds||[]).forEach(gid=>{ const grp=groupById?.[gid]; if(grp?.packageId) coveredPkgIds.add(grp.packageId); });
-    (sw.enrollments||[]).forEach(e => {
-      if(!e.lessonTypeId || !e.packageId || coveredPkgIds.has(e.packageId)) return;
-      const pkg = typeof pkgById === 'function' ? pkgById(e.packageId) : pkgById?.[e.packageId];
-      if(!pkg) return;
-      individualItems.push({
-        key:`ind:${sw.id}:${e.lessonTypeId}:${e.packageId}`,
-        swimmerId:sw.id, swimmerName:sw.name,
-        lessonTypeId:e.lessonTypeId, packageId:e.packageId,
-        lessonTypeName:ltName(e.lessonTypeId), packageName:pkg.name,
-        studentIds:sw.id, studentNames:sw.name,
-        amount:pkg.amount != null ? Number(pkg.amount) : 0,
-        lineType:'individual', billingMode:pkg.billing_mode||'monthly',
-        billingCount:pkg.billing_count, creditsPerSwimmer:pkg.billing_count||4,
-        description:`${sw.name} — ${ltName(e.lessonTypeId)} · ${pkg.name}`,
-      });
-    });
-  });
-
-  const allItems = [...groupItems, ...individualItems];
+  // ── Compute line items via shared helper ────────────────────────────
+  const { groupItems, individualItems, allItems, unconfiguredGroups } =
+    React.useMemo(() => computeBillingLines(pg, groupById, packageById, lessonTypeById, lessonTypes),
+    [pg.key, pg.swimmers?.length]);
   const allKeys = allItems.map(it=>it.key);
 
   // Initialise checked set when items first load
