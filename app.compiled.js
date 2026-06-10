@@ -3935,6 +3935,9 @@ function App() {
     className: `sub-tab ${accountSection === 'familyGroups' ? 'active' : ''}`,
     onClick: () => setAccountSection('familyGroups')
   }, "Groups"), /*#__PURE__*/React.createElement("button", {
+    className: `sub-tab ${accountSection === 'swimmers' ? 'active' : ''}`,
+    onClick: () => setAccountSection('swimmers')
+  }, "Swimmers"), /*#__PURE__*/React.createElement("button", {
     className: `sub-tab ${accountSection === 'invoices' ? 'active' : ''}`,
     onClick: () => setAccountSection('invoices')
   }, "Invoices"), /*#__PURE__*/React.createElement("button", {
@@ -4125,6 +4128,35 @@ function App() {
     setAdminSection: setAdminSection,
     onJumpToSession: jumpToSession,
     setView: setView
+  }), !loading && view === 'accounts' && accountSection === 'swimmers' && /*#__PURE__*/React.createElement(StudentsView, {
+    students: students,
+    lessonTypes: activeLessonTypes(),
+    lessonTypeById: lessonTypeById,
+    packages: activePackages(),
+    packageById: packageById,
+    groupById: groupById,
+    familyGroups: familyGroups,
+    membersByGroup: membersByGroup,
+    scheduleByStudent: scheduleByStudent,
+    sessions: sessions,
+    jumpToWeek: (weekStartDate, dayIndex) => {
+      const d = fromDateStr(weekStartDate);
+      d.setDate(d.getDate() + (dayIndex || 0));
+      setSelectedDate(toDateStr(d));
+      setView('schedule');
+      setScheduleSection('week');
+    },
+    creditByKey: creditByKey,
+    purchasesByStudent: purchasesByStudent,
+    subscriptions: subscriptions,
+    addCreditPurchase: addCreditPurchase,
+    deleteCreditPurchase: deleteCreditPurchase,
+    addSubscription: addSubscription,
+    cancelSubscription: cancelSubscription,
+    adjustBalanceTo: adjustBalanceTo,
+    addStudent: addStudent,
+    updateStudent: updateStudent,
+    deleteStudent: deleteStudent
   }), !loading && view === 'accounts' && accountSection === 'invoices' && /*#__PURE__*/React.createElement(InvoicesView, {
     invoices: invoices,
     invoiceLines: invoiceLines,
@@ -4710,36 +4742,30 @@ function WeekView(props) {
     year: 'numeric',
     month: 'long',
     day: 'numeric'
-  })), /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
-    style: {
-      width: '18%'
-    }
-  }, "Time"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      width: '17%'
-    }
-  }, "Lesson Type"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      width: '12%'
-    }
-  }, "Pool"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      width: '18%'
-    }
-  }, "Instructor"), /*#__PURE__*/React.createElement("th", null, "Students"))), /*#__PURE__*/React.createElement("tbody", null, items.length ? items.map(it => {
-    const p = poolById(it.poolId);
+  })), /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("tbody", null, items.length ? items.map(it => {
     const instLabel = it.instructors.map(i => i.name).join(', ') || it.legacyInstructor || '-';
     return /*#__PURE__*/React.createElement("tr", {
       key: it.id
     }, /*#__PURE__*/React.createElement("td", {
-      className: "print-time-cell"
+      className: "print-time-col"
     }, formatRange(it.startMinute, it.durationMinutes)), /*#__PURE__*/React.createElement("td", {
-      className: "print-type-cell"
-    }, it.type), /*#__PURE__*/React.createElement("td", null, p ? p.name : '-'), /*#__PURE__*/React.createElement("td", null, instLabel), /*#__PURE__*/React.createElement("td", null, it.students.map(studentLabel).join(', ') || '-'));
+      className: "print-type-col"
+    }, it.type), /*#__PURE__*/React.createElement("td", {
+      className: "print-inst-col"
+    }, instLabel), /*#__PURE__*/React.createElement("td", {
+      className: "print-stu-col"
+    }, it.students.length ? it.students.map(s => /*#__PURE__*/React.createElement("div", {
+      key: s.id || s.name,
+      className: "print-stu-name"
+    }, studentLabel(s))) : /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: '#aaa'
+      }
+    }, "-")));
   }) : /*#__PURE__*/React.createElement("tr", {
     className: "empty-row"
   }, /*#__PURE__*/React.createElement("td", {
-    colSpan: "5"
+    colSpan: "4"
   }, "No sessions"))))))), /*#__PURE__*/React.createElement(PrintWeeklyTableSection, {
     weekBlocksAllPools: weekBlocksAllPools,
     wb: wb,
