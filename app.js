@@ -696,6 +696,7 @@ function App(){
           guardianPhone: r.guardian_phone || '',
           guardianIc: r.guardian_ic || '',
           guardianTin: r.guardian_tin || '',
+          accountId: r.account_id || null,
           emergencyPhone: r.emergency_phone || '',
           emergencyName: r.emergency_name || '',
           emergencyRelationship: r.emergency_relationship || '',
@@ -1601,6 +1602,7 @@ function App(){
       rescheduledFromDay: item.rescheduledFromDay ?? null,
       rescheduledFromStartMinute: item.rescheduledFromStartMinute ?? null,
       originalAttendance,
+      originalReplacementRows: replacementStudents.map(s => ({ studentId:s.studentId, name:s.name, replacementFrom:s.replacementFrom||'', lessonTypeId: lessonTypeByName(item.type)?.id || null })),
       form:{
         type:item.type,
         lessonTypeId:item.lessonTypeId,
@@ -1724,6 +1726,48 @@ function App(){
         rescheduled_from_start_minute: m.rescheduledFromStartMinute ?? null
       };
       let sessionId = m.id;
+      // ── Replacement undo check ──────────────────────────────────────
+      // If editing an existing session, detect replacement students who were
+      // present in the original (originalReplacementRows) but are now absent
+      // from replacementRows. Warn the user and offer to restore them to
+      // replacement_pending so the slot isn't silently lost.
+      if(m.id && (m.originalReplacementRows||[]).length > 0){
+        const newReplIds = new Set((m.form.replacementRows||[]).filter(r=>r.studentId).map(r=>r.studentId));
+        const removed = (m.originalReplacementRows||[]).filter(r => r.studentId && !newReplIds.has(r.studentId));
+        if(removed.length > 0){
+          const today = todayStr();
+          const lines = removed.map(r => {
+            // replacementFrom may be a label like "Mon 9:00 AM" or may embed a date
+            const rawFrom = r.replacementFrom || '';
+            const dateMatch = rawFrom.match(/\d{4}-\d{2}-\d{2}/);
+            const dateStr = dateMatch ? dateMatch[0] : null;
+            const passed = dateStr && dateStr < today;
+            const fromNote = rawFrom ? `\n   Originally placed from: ${rawFrom}` : '';
+            const passedNote = passed ? `\n   ⚠️ Original class date (${dateStr}) has already passed.` : '';
+            return `• ${r.name}${fromNote}${passedNote}`;
+          });
+          const proceed = confirm(
+            `The following replacement student${removed.length>1?'s were':' was'} removed from this session:\n\n${lines.join('\n\n')}\n\n` +
+            `They will be returned to "pending replacement" status so they can be re-placed into another class.\n\n` +
+            `Proceed with saving?`
+          );
+          if(!proceed){ setSaveBusy(false); return; }
+          // Re-insert into replacement_pending for each removed student
+          const lt2 = lessonTypeByName(m.form.type) || lessonTypeById(m.form.lessonTypeId);
+          for(const r of removed){
+            if(r.studentId && lt2?.id){
+              try{
+                await rest('replacement_pending?on_conflict=student_id,week_start_date,lesson_type_id',{
+                  method:'POST', headers:{Prefer:'return=representation,resolution=merge-duplicates'},
+                  body:JSON.stringify([{ student_id:r.studentId, week_start_date:m.weekStartDate||selectedWeekStart, lesson_type_id:lt2.id, original_session_label:r.replacementFrom||'Removed from makeup', original_session_id:null }])
+                });
+              }catch(_){}
+            }
+          }
+          await loadReplacementPending();
+        }
+      }
+      // ────────────────────────────────────────────────────────────────
       if(m.id){
         const updated = await patchRows('weekly_sessions', { id: m.id }, payload);
         sessionId = updated?.[0]?.id || m.id;
@@ -2491,28 +2535,36 @@ function App(){
   const studentById = useMemo(() => { const m = {}; (studentsWithGroups || []).forEach(s => m[s.id] = s); return m; }, [studentsWithGroups]);
 
   // parentGroups: nest swimmers under their guardian (parent) account.
-  // No explicit parents table — we cluster on guardian_email (most
-  // unique), falling back to guardian_phone, then guardian_name. A
-  // swimmer with no guardian info at all lands in a single "Unassigned"
-  // pseudo-parent so they're still findable.
+  // When account_id is populated (post-migration) each account is truly
+  // isolated — two guardians sharing an email are separate accounts.
+  // Pre-migration fallback: cluster on email → phone → name as before.
   const parentGroups = useMemo(() => {
     const m = {};
     (studentsWithGroups || []).forEach(s => {
-      const emailKey = (s.guardianEmail || '').toLowerCase().trim();
-      const phoneKey = (s.guardianPhone || '').replace(/\s+/g,'').trim();
-      const nameKey = (s.guardianName || '').toLowerCase().trim();
-      const key = emailKey ? `e:${emailKey}` : phoneKey ? `p:${phoneKey}` : nameKey ? `n:${nameKey}` : '__unassigned__';
+      // Prefer the stable account_id once the migration has run
+      let key;
+      if(s.accountId){
+        key = `id:${s.accountId}`;
+      } else {
+        const emailKey = (s.guardianEmail || '').toLowerCase().trim();
+        const phoneKey = (s.guardianPhone || '').replace(/\s+/g,'').trim();
+        const nameKey  = (s.guardianName  || '').toLowerCase().trim();
+        key = emailKey ? `e:${emailKey}` : phoneKey ? `p:${phoneKey}` : nameKey ? `n:${nameKey}` : '__unassigned__';
+      }
       if(!m[key]){
+        // Human-readable display code derived from account_id UUID
+        // e.g. 550e8400-... → "AC·550E84"
+        const rawId = s.accountId || '';
+        const displayCode = rawId ? 'AC·' + rawId.replace(/-/g,'').slice(0,6).toUpperCase() : '';
         m[key] = {
           key,
+          displayCode,
+          accountId: s.accountId || null,
           name: s.guardianName || (key === '__unassigned__' ? '— Unassigned —' : '— No name —'),
           email: s.guardianEmail || '',
           phone: s.guardianPhone || '',
           ic: s.guardianIc || '',
           tin: s.guardianTin || '',
-          // Emergency contact lives at the account level — surface it from
-          // the first swimmer in this account; ParentContactEditor edits
-          // propagate the new value to every child below.
           emergencyPhone: s.emergencyPhone || '',
           emergencyName: s.emergencyName || '',
           emergencyRelationship: s.emergencyRelationship || '',
@@ -2522,10 +2574,6 @@ function App(){
       }
       m[key].swimmers.push(s);
     });
-    // Parent status is derived from swimmer-level is_active: a parent is
-    // "Active" if any of their swimmers is active, "Archived" only when
-    // every swimmer is inactive. Toggling at parent level propagates to
-    // all children so the state is always coherent.
     Object.values(m).forEach(pg => {
       pg.isActive = pg.swimmers.some(s => s.isActive !== false);
     });
@@ -5108,6 +5156,7 @@ function ParentsView({ accountSection, setAccountSection, parentGroups, lessonTy
             <div className="parent-name">
               {hasActiveSessions && <span className="acct-session-dot" title={`One or more swimmers in this account have sessions scheduled in the week of ${selectedWeekStart}`} />}
               {pg.name}
+              {pg.displayCode && <span className="acct-display-code" title="Unique account ID">{pg.displayCode}</span>}
               {!pg.isActive && <span className="parent-archived-badge" title="All swimmers under this parent are archived">📦 Archived</span>}
             </div>
             <div className="parent-contact subtle small">
@@ -7498,15 +7547,17 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
       </div>
     </div>
     <div className="table-wrap" style={{margin:'10px 0'}}>
-      <table><thead><tr><th>Description &amp; Swimmers</th><th style={{width:120}}>Type</th><th style={{width:120,textAlign:'right'}}>Amount</th></tr></thead>
+      <table><thead><tr><th>Lesson Type &amp; Package</th><th style={{width:120}}>Swimmers</th><th style={{width:120,textAlign:'right'}}>Amount</th></tr></thead>
         <tbody>{lines.map(l=>{
           const swimmers=getSwimmerNames(l,membersByGroup);
+          const ltName  = l.lesson_type_name || l.description || '—';
+          const pkgName = l.package_name || (l.line_type==='group_bundle' ? 'Group Bundle' : 'Individual');
           return <tr key={l.id}>
             <td>
-              <div>{l.description||'—'}</div>
-              {swimmers.length>0&&<div className="small subtle" style={{marginTop:2}}>{swimmers.join(' · ')}</div>}
+              <div style={{fontWeight:600}}>{ltName}</div>
+              <div className="small subtle">{pkgName}</div>
             </td>
-            <td className="small subtle">{l.line_type==='group_bundle'?'Group Bundle':'Individual'}</td>
+            <td className="small subtle">{swimmers.length>0 ? swimmers.join(', ') : '—'}</td>
             <td style={{textAlign:'right',fontWeight:600}}>RM {Number(l.amount).toFixed(2)}</td>
           </tr>;
         })}</tbody>
@@ -7663,10 +7714,14 @@ function printInvoice(invoice, lines, membersByGroup){
   const logoUrl = window.location.origin + '/logo.png';
   const linesHtml = billable.map(l=>{
     const swimmers = getSwimmerNames(l, membersByGroup);
+    // Description = Lesson Type · Package (never the group name)
+    const ltName  = l.lesson_type_name || l.description || '';
+    const pkgName = l.package_name || (l.line_type==='group_bundle' ? 'Group Bundle' : 'Individual');
+    const descText = [ltName, pkgName].filter(Boolean).join(' · ');
     const descHtml = swimmers.length
-      ? `${l.description||''}<div style="font-size:7pt;color:#777;margin-top:2pt;line-height:1.5">${swimmers.join(' &middot; ')}</div>`
-      : (l.description||'');
-    return `<tr><td class="td-desc">${descHtml}</td><td class="td-type">${l.line_type==='group_bundle'?'Group Bundle':'Individual'}</td><td class="td-amt">RM ${Number(l.amount).toFixed(2)}</td></tr>`;
+      ? `${descText}<div style="font-size:7pt;color:#777;margin-top:2pt;line-height:1.5">${swimmers.join(' &middot; ')}</div>`
+      : descText;
+    return `<tr><td class="td-desc">${descHtml}</td><td class="td-type">${pkgName}</td><td class="td-amt">RM ${Number(l.amount).toFixed(2)}</td></tr>`;
   }).join('');
   const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${invoice.invoice_number}</title>
 <style>
@@ -7789,10 +7844,13 @@ function printInvoiceAndReceipt(invoice, lines, pmt, membersByGroup){
   const total = Number(invoice.total_amount)||0;
   const linesHtml = billable.map(l=>{
     const swimmers = getSwimmerNames(l, membersByGroup);
+    const ltName  = l.lesson_type_name || l.description || '';
+    const pkgName = l.package_name || (l.line_type==='group_bundle' ? 'Group Bundle' : 'Individual');
+    const descText = [ltName, pkgName].filter(Boolean).join(' · ');
     const descHtml = swimmers.length
-      ? `${l.description||''}<div style="font-size:6.5pt;color:#666;margin-top:1pt">${swimmers.join(' &middot; ')}</div>`
-      : (l.description||'');
-    return `<tr><td class="td-d">${descHtml}</td><td class="td-t">${l.line_type==='group_bundle'?'Group':'Indiv.'}</td><td class="td-a">RM ${Number(l.amount).toFixed(2)}</td></tr>`;
+      ? `${descText}<div style="font-size:6.5pt;color:#666;margin-top:1pt">${swimmers.join(' &middot; ')}</div>`
+      : descText;
+    return `<tr><td class="td-d">${descHtml}</td><td class="td-t">${pkgName}</td><td class="td-a">RM ${Number(l.amount).toFixed(2)}</td></tr>`;
   }).join('');
   const co = `<img class="logo" src="${logoUrl}" onerror="this.style.display='none'"><div class="co">Star Swim Sdn Bhd (1602674-U)<br>No.137 Jalan Sultan Abdul Jalil, 30000 Ipoh<br>TIN: C59796139050</div>`;
   const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invoice & Receipt</title>
