@@ -1664,8 +1664,11 @@ function App() {
     const swimmerName = student?.name || 'this swimmer';
     const originalSession = sessions.find(s => s.id === pending.original_session_id);
     const willRestore = !!opts.restore && pending.original_session_id && !!originalSession;
-    // If the spot has been filled while the swimmer was in limbo and the
-    // class is now at/over cap, ask before pushing them back in.
+    const today = todayStr();
+    // Detect if the original session's week has already passed
+    const origWeek = pending.week_start_date || '';
+    const datePassed = origWeek && origWeek < today;
+    // If the spot has been filled and at cap, warn before pushing back in.
     if (willRestore) {
       const lt = lessonTypeById(pending.lesson_type_id);
       const cap = sessionCapacity(originalSession, lt);
@@ -1673,10 +1676,19 @@ function App() {
         if (!confirm(`${pending.original_session_label} is now full (${cap.current}/${cap.max}). Add ${swimmerName} back anyway? The class will be over capacity.`)) return false;
       }
     }
-    const msg = willRestore ? `Cancel pending replacement for ${swimmerName} and put them back in ${pending.original_session_label}?` : `Remove ${swimmerName} from the pending-replacement bucket?\n\n(Their original class no longer exists, so they won't be auto-restored. You can re-add them manually if needed.)`;
-    if (!confirm(msg)) return false;
+    // Build confirmation message — two-choice path if original date passed
+    let proceedWithRestore = willRestore;
+    if (datePassed && willRestore) {
+      const passedMsg = `The original class week (${origWeek}) has already passed.\n\n` + `What would you like to do with ${swimmerName}?\n\n` + `• OK → Restore to "${pending.original_session_label}" anyway (this will add them to a past session for record-keeping).\n\n` + `• Cancel → Keep them in the pending replacement (limbo) state — remove the limbo entry without restoring.`;
+      proceedWithRestore = confirm(passedMsg);
+      // Either way we proceed — OK = restore to original, Cancel = clear limbo only
+      if (!confirm(`${proceedWithRestore ? 'Restore' : 'Clear limbo for'} ${swimmerName}?`)) return false;
+    } else {
+      const msg = willRestore ? `Cancel pending replacement for ${swimmerName} and put them back in ${pending.original_session_label}?` : `Remove ${swimmerName} from the pending-replacement bucket?\n\n(Their original class no longer exists, so they won't be auto-restored. You can re-add them manually if needed.)`;
+      if (!confirm(msg)) return false;
+    }
     try {
-      if (willRestore) {
+      if (proceedWithRestore && willRestore) {
         await insertRows('weekly_session_students', [{
           session_id: pending.original_session_id,
           student_id: pending.student_id,
@@ -1690,7 +1702,8 @@ function App() {
         id: pending.id
       });
       await Promise.all([loadSessions(), loadReplacementPending()]);
-      setStatus(willRestore ? `Restored ${swimmerName} to ${pending.original_session_label}.` : `Cancelled pending replacement for ${swimmerName}.`);
+      const result = proceedWithRestore && willRestore ? `Restored ${swimmerName} to ${pending.original_session_label}${datePassed ? ' (past session)' : ''}.` : `Cleared limbo entry for ${swimmerName}. They can be re-placed manually.`;
+      setStatus(result);
       return true;
     } catch (err) {
       handleErr(err);
@@ -2427,7 +2440,8 @@ function App() {
   }
   function jumpToSession(session) {
     setSelectedDate(addDays(session.weekStartDate, session.day));
-    setView('week');
+    setView('schedule');
+    setScheduleSection('week');
     setTimeout(() => {
       setHighlightedSessionId(session.id);
       // After React renders the highlighted card, scroll it to centre of viewport
@@ -4645,6 +4659,7 @@ function WeekView(props) {
     const stu = studentById ? studentById[p.student_id] : null;
     const lt = lessonTypeById ? lessonTypeById(p.lesson_type_id) : null;
     const stillExists = (props.weekBlocks || []).some(day => (day.packed || []).some(b => b.id === p.original_session_id));
+    const datePassed = p.week_start_date && p.week_start_date < new Date().toISOString().slice(0, 10);
     return /*#__PURE__*/React.createElement("div", {
       key: p.id,
       className: "pending-repl-row"
@@ -4654,7 +4669,13 @@ function WeekView(props) {
       className: "pending-repl-name"
     }, stu ? `${stu.name}${stu.age != null ? ` (${stu.age})` : ''}` : '(unknown swimmer)'), /*#__PURE__*/React.createElement("span", {
       className: "pending-repl-meta"
-    }, lt ? lt.name : p.lesson_type_id, " \xB7 from ", p.original_session_label, !stillExists ? ' · original class deleted' : '')), /*#__PURE__*/React.createElement("button", {
+    }, lt ? lt.name : p.lesson_type_id, " \xB7 from ", p.original_session_label, !stillExists ? ' · original class deleted' : ''), p.notes && /*#__PURE__*/React.createElement("span", {
+      className: "pending-repl-remark"
+    }, "\uD83D\uDCDD ", p.notes), stu?.remark && /*#__PURE__*/React.createElement("span", {
+      className: "pending-repl-remark"
+    }, "\uD83D\uDCAC ", stu.remark), datePassed && /*#__PURE__*/React.createElement("span", {
+      className: "pending-repl-passed"
+    }, "\u26A0\uFE0F Original week (", p.week_start_date, ") has passed")), /*#__PURE__*/React.createElement("button", {
       type: "button",
       className: "btn btn-ghost small",
       onClick: () => onCancelPendingReplacement && onCancelPendingReplacement(p, {
@@ -8878,6 +8899,8 @@ function ParentsView({
   const [editingSwimmerId, setEditingSwimmerId] = useState(null);
   const [groupPanelKey, setGroupPanelKey] = useState(null);
   const [billingKey, setBillingKey] = useState(null);
+  const [selectedAccountKeys, setSelectedAccountKeys] = useState(new Set());
+  const [batchBusy, setBatchBusy] = useState(false);
 
   // ── Account printout ────────────────────────────────────────────────
   // Opens a popup with a clean, parent-friendly summary: account holder,
@@ -9066,7 +9089,26 @@ function ParentsView({
       alignItems: 'center',
       flexWrap: 'wrap'
     }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6,
+      cursor: 'pointer',
+      fontSize: 12,
+      color: 'var(--text-2)',
+      userSelect: 'none'
+    }
   }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: selectedAccountKeys.size === filtered.length && filtered.length > 0,
+    ref: el => {
+      if (el) el.indeterminate = selectedAccountKeys.size > 0 && selectedAccountKeys.size < filtered.length;
+    },
+    onChange: () => {
+      if (selectedAccountKeys.size === filtered.length) setSelectedAccountKeys(new Set());else setSelectedAccountKeys(new Set(filtered.map(p => p.key)));
+    }
+  }), " Select all"), /*#__PURE__*/React.createElement("input", {
     className: "input",
     style: {
       flex: 1,
@@ -9103,7 +9145,45 @@ function ParentsView({
       fontSize: 11
     },
     onClick: () => setStatusFilter('all')
-  }, "All")))), archiveHits.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "All"))), selectedAccountKeys.size > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "inv-bulk-bar",
+    style: {
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontWeight: 700,
+      fontSize: 13
+    }
+  }, selectedAccountKeys.size, " account", selectedAccountKeys.size > 1 ? 's' : '', " selected"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary small",
+    disabled: batchBusy,
+    onClick: async () => {
+      if (!confirm(`Generate a draft invoice for each of the ${selectedAccountKeys.size} selected account(s)?\n\nNote: This creates one invoice per account. Lines must be added manually to each invoice.`)) return;
+      setBatchBusy(true);
+      let created = 0;
+      for (const key of selectedAccountKeys) {
+        const pg = (parentGroups || []).find(p => p.key === key);
+        if (!pg) continue;
+        await createInvoice({
+          accountName: pg.name,
+          accountEmail: pg.email,
+          accountPhone: pg.phone,
+          lines: [],
+          notes: 'Batch generated',
+          dueDate: null
+        });
+        created++;
+      }
+      setBatchBusy(false);
+      setSelectedAccountKeys(new Set());
+      setAccountSection('invoices');
+      setView('accounts');
+    }
+  }, batchBusy ? 'Generating…' : `🧾 Generate ${selectedAccountKeys.size} Invoice${selectedAccountKeys.size > 1 ? 's' : ''}`), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => setSelectedAccountKeys(new Set())
+  }, "Clear"))), archiveHits.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "cross-filter-notice"
   }, /*#__PURE__*/React.createElement("span", null, "\uD83D\uDDC4 ", archiveHits.length, " ", archiveHits.length === 1 ? 'result' : 'results', " found in ", /*#__PURE__*/React.createElement("strong", null, "Archives"), archiveHits.length === 1 ? `: ${archiveHits[0].name}` : ': ' + archiveHits.map(p => p.name).join(', ')), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
@@ -9157,7 +9237,22 @@ function ParentsView({
         if (e.target.closest('button,input,select')) return;
         setExpandedKey(isExpanded ? null : pg.key);
       }
-    }, /*#__PURE__*/React.createElement("div", {
+    }, /*#__PURE__*/React.createElement("label", {
+      style: {
+        flexShrink: 0,
+        display: 'flex',
+        alignItems: 'center'
+      },
+      onClick: e => e.stopPropagation()
+    }, /*#__PURE__*/React.createElement("input", {
+      type: "checkbox",
+      checked: selectedAccountKeys.has(pg.key),
+      onChange: () => {
+        const s = new Set(selectedAccountKeys);
+        s.has(pg.key) ? s.delete(pg.key) : s.add(pg.key);
+        setSelectedAccountKeys(s);
+      }
+    })), /*#__PURE__*/React.createElement("div", {
       className: "parent-head-main"
     }, /*#__PURE__*/React.createElement("div", {
       className: "parent-name"
@@ -9267,8 +9362,8 @@ function ParentsView({
         });
         if (id) {
           setBillingKey(null);
-          setAdminSection('invoices');
-          setView('settings');
+          setAccountSection('invoices');
+          setView('accounts');
         }
       }
     }), isEditingContact && /*#__PURE__*/React.createElement(ParentContactEditor, {
@@ -9353,7 +9448,9 @@ function ParentsView({
         style: {
           color: acc.text
         }
-      }, sw.name), sw.age != null ? /*#__PURE__*/React.createElement("span", {
+      }, sw.name), pg.displayCode && /*#__PURE__*/React.createElement("span", {
+        className: "swimmer-display-code"
+      }, pg.displayCode, "-", pg.swimmers.indexOf(sw) + 1), sw.age != null ? /*#__PURE__*/React.createElement("span", {
         className: "subtle"
       }, " \xB7 ", sw.age, "y") : null, sw.gender ? /*#__PURE__*/React.createElement("span", {
         className: "subtle"
@@ -10746,9 +10843,25 @@ function PendingCreditsView({
   onReverse
 }) {
   const [statusFilter, setStatusFilter] = useState('pending');
+  const [confirmingAll, setConfirmingAll] = useState(false);
   const pendingCount = pendingCredits.filter(p => p.status === 'pending').length;
   const invById = useMemo(() => Object.fromEntries((invoices || []).map(i => [i.id, i])), [invoices]);
   const filtered = pendingCredits.filter(pc => statusFilter === 'all' || pc.status === statusFilter);
+  async function confirmAll() {
+    const targets = pendingCredits.filter(p => p.status === 'pending');
+    if (!targets.length) {
+      alert('No pending credits to confirm.');
+      return;
+    }
+    if (!confirm(`Confirm all ${targets.length} pending credit${targets.length > 1 ? 's' : ''}? This will allocate lesson credits to each swimmer immediately. This action cannot be undone.`)) return;
+    setConfirmingAll(true);
+    for (const pc of targets) {
+      try {
+        await onConfirm(pc);
+      } catch (_) {}
+    }
+    setConfirmingAll(false);
+  }
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
@@ -10768,15 +10881,25 @@ function PendingCreditsView({
       fontSize: 18,
       fontWeight: 800
     }
-  }, "\\u23f3 Pending Credits"), /*#__PURE__*/React.createElement("div", {
+  }, "\u23F3 Pending Credits"), /*#__PURE__*/React.createElement("div", {
     className: "small subtle"
-  }, "Credits held in escrow after payment is recorded. Confirm to allocate lesson credits to the account. Reverse to reject (e.g. bounced payment).")), pendingCount > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "Credits held in escrow after payment is recorded. Confirm to allocate lesson credits to the account. Reverse to reject (e.g. bounced payment).")), /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 20,
-      fontWeight: 800,
-      color: '#F59E0B'
+      display: 'flex',
+      gap: 8,
+      alignItems: 'center'
     }
-  }, pendingCount, " awaiting confirmation")), /*#__PURE__*/React.createElement("div", {
+  }, pendingCount > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 18,
+      fontWeight: 800,
+      color: 'var(--amber-tx)'
+    }
+  }, pendingCount, " awaiting"), pendingCount > 0 && /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary small",
+    disabled: confirmingAll,
+    onClick: confirmAll
+  }, confirmingAll ? 'Confirming…' : `✓ Confirm All (${pendingCount})`))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 3
@@ -12861,7 +12984,19 @@ function SessionModal({
       style: {
         flexShrink: 0
       },
-      onClick: () => {
+      onClick: async () => {
+        // If this is a real placed-replacement student, check whether
+        // the session week has already passed before silently removing them.
+        if (r.studentId) {
+          const sessionWeek = modal.weekStartDate || selectedWeekStart;
+          const datePassed = sessionWeek < todayStr();
+          const fromLabel = r.replacementFrom ? ` (placed from: ${r.replacementFrom})` : '';
+          const passedNote = datePassed ? `\n\n⚠️ Note: The session week (${sessionWeek}) has already passed. The student can still be restored to their original slot — it will be recorded in a past week.` : '';
+          const choice = datePassed ? window.confirm(`Remove ${r.name} from this replacement slot${fromLabel}?\n\nThey will be returned to the pending replacement (limbo) state.${passedNote}\n\nClick OK to restore to limbo. Click Cancel to leave them in this session.`) : true;
+          if (!choice) {
+            return;
+          }
+        }
         const rows = (modal.form.replacementRows || []).filter((_, ri) => ri !== i);
         setModal({
           ...modal,
