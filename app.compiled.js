@@ -8739,29 +8739,7 @@ function CreditHistoryPanel({
     }, " \xB7 ", totalPurchased > 0 ? '+' : '', totalPurchased, " credits across ", list.length, " record", list.length === 1 ? '' : 's')), adjustBalanceTo && !isBoundMember && /*#__PURE__*/React.createElement(BalanceAdjuster, {
       currentBalance: bal ? Number(bal.remaining_balance) || 0 : 0,
       onApply: (target, notes) => adjustBalanceTo(swimmer.id, lt.id, target, notes)
-    })), canQuickSub && /*#__PURE__*/React.createElement("div", {
-      className: "credit-sub-quick"
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "credit-sub-quick-label"
-    }, "Quick subscription:"), [1, 2, 3].map(qty => /*#__PURE__*/React.createElement("button", {
-      key: qty,
-      className: "btn btn-ghost small",
-      title: `Add ${qty}× ${credits || 4}-credit subscription${isUnboundGroupMember ? ` to every member of ${group.name}` : ''}`,
-      onClick: () => addSubscription({
-        subjectType: isUnboundGroupMember ? 'family_group' : 'student',
-        subjectId: isUnboundGroupMember ? swimmer.familyGroupId : swimmer.id,
-        lessonTypeId: lt.id,
-        creditsPerSwimmer: 4,
-        quantity: qty,
-        source: 'subscription',
-        notes: `Quick add (${qty}× 4-credit subscription)`
-      })
-    }, "+", qty * 4)), isUnboundGroupMember && /*#__PURE__*/React.createElement("span", {
-      className: "subtle small",
-      style: {
-        fontSize: 10
-      }
-    }, "\xB7 applies to whole group")), subs.length > 0 && /*#__PURE__*/React.createElement("div", {
+    })), canQuickSub && null /* Quick subscription buttons removed — use Adjust or record via Pending Credits */, subs.length > 0 && /*#__PURE__*/React.createElement("div", {
       className: "credit-sub-list"
     }, /*#__PURE__*/React.createElement("div", {
       className: "credit-sub-list-title"
@@ -9590,22 +9568,10 @@ function ParentsView({
           className: "subtle"
         }, "\u2014")), /*#__PURE__*/React.createElement("td", {
           className: "col-actions"
-        }, !isBound && addSubscription ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
-          className: "btn btn-ghost small",
-          title: "Quick add 4 credits",
-          onClick: () => quickAddSub(4)
-        }, "+4"), /*#__PURE__*/React.createElement("button", {
-          className: "btn btn-ghost small",
-          title: "Quick add 6 credits",
-          onClick: () => quickAddSub(6)
-        }, "+6"), /*#__PURE__*/React.createElement("button", {
-          className: "btn btn-ghost small",
-          title: "Quick add 8 credits",
-          onClick: () => quickAddSub(8)
-        }, "+8"), adjustBalanceTo && /*#__PURE__*/React.createElement(BalanceAdjuster, {
+        }, !isBound && adjustBalanceTo ? /*#__PURE__*/React.createElement(BalanceAdjuster, {
           currentBalance: remaining,
           onApply: (target, notes) => adjustBalanceTo(sw.id, ltId, target, notes)
-        })) : isBound ? /*#__PURE__*/React.createElement("span", {
+        }) : isBound ? /*#__PURE__*/React.createElement("span", {
           className: "subtle small"
         }, "\uD83D\uDD17 group") : null));
       }))));
