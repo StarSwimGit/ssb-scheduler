@@ -2169,6 +2169,29 @@ function App(){
     } catch(err){ handleErr(err); alert(err.message || 'Failed to delete swimmer'); }
   }
 
+  async function deleteAccount(pg){
+    if(!pg?.swimmers?.length){ alert('No swimmers found on this account.'); return; }
+    const swimmerList = pg.swimmers.map(s => `• ${s.name}`).join('\n');
+    if(!confirm(
+      `PERMANENTLY DELETE account "${pg.name}" and all ${pg.swimmers.length} swimmer${pg.swimmers.length===1?'':'s'}?\n\n${swimmerList}\n\n` +
+      `This removes their enrollments, credit balances, and pending replacement entries.\n\n` +
+      `⚠️ This cannot be undone. Session names on the timetable remain but become unlinked.`
+    )) return;
+    try{
+      setError('');
+      for(const s of pg.swimmers){
+        await deleteRows('student_credit_balances', { student_id: s.id }).catch(()=>{});
+        await deleteRows('student_enrollments',     { student_id: s.id }).catch(()=>{});
+        await deleteRows('replacement_pending',     { student_id: s.id }).catch(()=>{});
+        await deleteRows('pending_credits',         { student_id: s.id }).catch(()=>{});
+        await deleteRows('students',                { id: s.id });
+      }
+      await loadStudents();
+      await loadSessions();
+      setStatus(`Deleted account "${pg.name}" — ${pg.swimmers.length} swimmer${pg.swimmers.length===1?'':'s'} removed.`);
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to delete account'); }
+  }
+
   // ───── Family groups (single-payer bundles) ──────────────────────────────
   async function addGroup({ name, packageId, groupType }){
     try{
@@ -2768,7 +2791,7 @@ function App(){
         subscriptions={subscriptions}
         addStudent={addStudent}
         updateStudent={updateStudent}
-        deleteStudent={deleteStudent}
+        deleteStudent={deleteStudent} deleteAccount={deleteAccount}
         addGroup={addGroup}
         updateGroup={updateGroup}
         deleteGroup={deleteGroup}
@@ -2798,7 +2821,7 @@ function App(){
         subscriptions={subscriptions} addCreditPurchase={addCreditPurchase}
         deleteCreditPurchase={deleteCreditPurchase} addSubscription={addSubscription}
         cancelSubscription={cancelSubscription} adjustBalanceTo={adjustBalanceTo}
-        addStudent={addStudent} updateStudent={updateStudent} deleteStudent={deleteStudent}
+        addStudent={addStudent} updateStudent={updateStudent} deleteStudent={deleteStudent} deleteAccount={deleteAccount}
       />}
       {!loading && view==='accounts' && accountSection==='invoices' && <InvoicesView
         invoices={invoices} invoiceLines={invoiceLines} pmts={pmts}
@@ -2850,7 +2873,7 @@ function App(){
         subscriptions={subscriptions} addCreditPurchase={addCreditPurchase}
         deleteCreditPurchase={deleteCreditPurchase} addSubscription={addSubscription}
         cancelSubscription={cancelSubscription} adjustBalanceTo={adjustBalanceTo}
-        addStudent={addStudent} updateStudent={updateStudent} deleteStudent={deleteStudent}
+        addStudent={addStudent} updateStudent={updateStudent} deleteStudent={deleteStudent} deleteAccount={deleteAccount}
       />}
 
       {/* ── Admin (pools / instructors / lesson types / summary) ── */}
@@ -4940,7 +4963,7 @@ function swimmerAccent(idx){ return SWIMMER_ACCENTS[idx % SWIMMER_ACCENTS.length
 //     subscription log, ledger
 // The Swimmers page is intentionally read-only — use this page to admin.
 // ============================================================================
-function ParentsView({ accountSection, setAccountSection, parentGroups, lessonTypes, lessonTypeById, packages, packageById, familyGroups, groupById, membersByGroup, creditByKey, subscriptions, addStudent, updateStudent, deleteStudent, addGroup, updateGroup, deleteGroup, setStudentGroup, addStudentToGroup, removeStudentFromGroup, groupIdsByStudent, addSubscription, cancelSubscription, adjustBalanceTo, scheduleByStudent, sessions, poolById, selectedWeekStart, createInvoice, setAdminSection, onJumpToSession, setView }){
+function ParentsView({ accountSection, setAccountSection, parentGroups, lessonTypes, lessonTypeById, packages, packageById, familyGroups, groupById, membersByGroup, creditByKey, subscriptions, addStudent, updateStudent, deleteStudent, deleteAccount, addGroup, updateGroup, deleteGroup, setStudentGroup, addStudentToGroup, removeStudentFromGroup, groupIdsByStudent, addSubscription, cancelSubscription, adjustBalanceTo, scheduleByStudent, sessions, poolById, selectedWeekStart, createInvoice, setAdminSection, onJumpToSession, setView }){
   // ── Sub-view driven by external accountSection prop (from nav dropdown) ──
   const adminView = accountSection || 'accounts';
   const setAdminView = (v) => { if(setAccountSection) setAccountSection(v); };
@@ -5089,26 +5112,7 @@ function ParentsView({ accountSection, setAccountSection, parentGroups, lessonTy
     }
   }
 
-  async function deleteAccount(pg){
-    const swimmerList = pg.swimmers.map(s => `• ${s.name}`).join('\n');
-    if(!confirm(
-      `PERMANENTLY DELETE account "${pg.name}" and all ${pg.swimmers.length} swimmer${pg.swimmers.length===1?'':'s'}?\n\n${swimmerList}\n\n` +
-      `This also removes their enrollments, credit balances, and pending replacement entries.\n\n` +
-      `⚠️ This cannot be undone. Scheduled session names remain on the timetable but become unlinked.`
-    )) return;
-    try{
-      for(const s of pg.swimmers){
-        await deleteRows('student_credit_balances', { student_id: s.id }).catch(()=>{});
-        await deleteRows('student_enrollments',     { student_id: s.id }).catch(()=>{});
-        await deleteRows('replacement_pending',     { student_id: s.id }).catch(()=>{});
-        await deleteRows('pending_credits',         { student_id: s.id }).catch(()=>{});
-        await deleteRows('students',                { id: s.id });
-      }
-      await loadStudents();
-      await loadSessions();
-      setStatus(`Deleted account "${pg.name}" (${pg.swimmers.length} swimmer${pg.swimmers.length===1?'':'s'} removed).`);
-    } catch(err){ handleErr(err); alert(err.message || 'Failed to delete account'); }
-  }
+  // deleteAccount is passed as a prop from App scope
 
   return <>
     {adminView === 'familyGroups' && <FamilyGroupsAdminView
