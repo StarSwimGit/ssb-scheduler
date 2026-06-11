@@ -1865,16 +1865,8 @@ function App(){
         await insertRows('session_instructors', [{ session_id: sessionId, instructor_id: inst.id }]);
       }
       if(lt && lt.id && sessionId){
-        const pkg = (options.packages || []).find(p => p.lesson_type_id === lt.id && (p.name || '').toLowerCase() === 'normal' && p.is_active !== false);
-        const initCredits = pkg?.billing_count ? Number(pkg.billing_count) : 4;
-        for(const r of rows){
-          if(!r.studentId) continue;
-          const key = creditKey(r.studentId, lt.id);
-          if(!creditByKey[key] && initCredits > 0){
-            try{ await insertRows('student_credit_balances', [{ student_id: r.studentId, lesson_type_id: lt.id, initial_balance: initCredits, remaining_balance: initCredits }]); }
-            catch(_){}
-          }
-        }
+        // Credits are never auto-seeded when creating/saving sessions.
+        // All credits flow from Pending Credits → payment receipt only.
         await loadCreditBalances();
       }
       if(sessionId && lt?.id){
@@ -2075,7 +2067,7 @@ function App(){
   }
 
   // ───── Swimmer registry CRUD ──────────────────────────────────────────────
-  async function addStudent({ name, dateOfBirth, gender, enrollments, guardianName, guardianEmail, guardianPhone, guardianIc, guardianTin, emergencyName, emergencyPhone, emergencyRelationship, emergencySameAsGuardian, tcAcceptedAt, tcAcceptanceId }){
+  async function addStudent({ name, dateOfBirth, gender, enrollments, guardianName, guardianEmail, guardianPhone, guardianIc, guardianTin, emergencyName, emergencyPhone, emergencyRelationship, emergencySameAsGuardian, tcAcceptedAt, tcAcceptanceId, accountId }){
     try{
       setError('');
       const validEnrollments = (enrollments || []).filter(e => e.lessonTypeId);
@@ -2092,6 +2084,7 @@ function App(){
         gender: gender || null,
         package_id: primaryPackageId, package: primaryPkg ? primaryPkg.name : null,
         lesson_type_ids: lessonTypeIds, is_active: true,
+        account_id: accountId || null,   // inherit account group from parent account
         guardian_name: guardianName || null, guardian_email: guardianEmail || null, guardian_phone: guardianPhone || null,
         guardian_ic: guardianIc || null, guardian_tin: guardianTin || null,
         emergency_name: sameAsG ? (guardianName || null) : (emergencyName || null),
@@ -2108,18 +2101,8 @@ function App(){
       if(studentId && validEnrollments.length){
         try{ await insertRows('student_enrollments', validEnrollments.map(e => ({ student_id: studentId, lesson_type_id: e.lessonTypeId, package_id: e.packageId || null }))); }
         catch(err){ console.warn('Could not insert enrollments (table may not exist yet):', err?.message || err); }
-        // Credit-based for every lesson type now — seed 4 credits (or
-        // package.billing_count if set) per (student, lesson_type) the
-        // moment they sign up. Silent on duplicate-key races.
-        for(const e of validEnrollments){
-          const pkg = e.packageId ? (options.packages || []).find(p => p.id === e.packageId) : null;
-          const init = pkg?.billing_count ? Number(pkg.billing_count) : 4;
-          if(init > 0){
-            try{ await insertRows('student_credit_balances', [{ student_id: studentId, lesson_type_id: e.lessonTypeId, initial_balance: init, remaining_balance: init }]); }
-            catch(_){}
-          }
-        }
-        await loadCreditBalances();
+        // Credits are NOT auto-seeded here. They must flow through the
+        // Pending Credits → payment receipt → Confirm workflow only.
       }
       await loadStudents();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to add swimmer'); }
@@ -2165,19 +2148,8 @@ function App(){
             await insertRows('student_enrollments', validEnrollments.map(e => ({ student_id: id, lesson_type_id: e.lessonTypeId, package_id: e.packageId || null })));
           }
         } catch(err){ console.warn('Could not sync enrollments (table may not exist yet):', err?.message || err); }
-        // Credit-based for every lesson type — make sure each enrollment
-        // has a balance. Skips lesson types where the swimmer already has
-        // one (avoids resetting an in-progress month back to 4).
-        for(const e of validEnrollments){
-          const key = creditKey(id, e.lessonTypeId);
-          if(creditByKey[key]) continue;
-          const pkg = e.packageId ? (options.packages || []).find(p => p.id === e.packageId) : null;
-          const init = pkg?.billing_count ? Number(pkg.billing_count) : 4;
-          if(init > 0){
-            try{ await insertRows('student_credit_balances', [{ student_id: id, lesson_type_id: e.lessonTypeId, initial_balance: init, remaining_balance: init }]); }
-            catch(_){}
-          }
-        }
+        // Credits are NOT auto-seeded when enrollments change.
+        // They flow from Pending Credits → payment confirmation only.
         await loadCreditBalances();
       }
       await loadStudents();
@@ -4871,7 +4843,7 @@ function CreditHistoryPanel({ swimmer, lessonTypes, lessonTypeById, purchases, s
           <span className="credit-lt-totals">
             {bal
               ? <>
-                  <strong className={bal.remaining_balance<=2?'credit-low':''}>{bal.remaining_balance}</strong> remaining of <strong>{bal.initial_balance}</strong> total
+                  <strong className={bal.remaining_balance<=2?'credit-low':''}>{bal.remaining_balance}</strong> credits
                 </>
               : <em className="subtle">No balance row yet</em>}
             {list.length > 0 && <span className="credit-lt-aggregate"> · {totalPurchased > 0 ? '+' : ''}{totalPurchased} credits across {list.length} record{list.length===1?'':'s'}</span>}
@@ -5117,6 +5089,27 @@ function ParentsView({ accountSection, setAccountSection, parentGroups, lessonTy
     }
   }
 
+  async function deleteAccount(pg){
+    const swimmerList = pg.swimmers.map(s => `• ${s.name}`).join('\n');
+    if(!confirm(
+      `PERMANENTLY DELETE account "${pg.name}" and all ${pg.swimmers.length} swimmer${pg.swimmers.length===1?'':'s'}?\n\n${swimmerList}\n\n` +
+      `This also removes their enrollments, credit balances, and pending replacement entries.\n\n` +
+      `⚠️ This cannot be undone. Scheduled session names remain on the timetable but become unlinked.`
+    )) return;
+    try{
+      for(const s of pg.swimmers){
+        await deleteRows('student_credit_balances', { student_id: s.id }).catch(()=>{});
+        await deleteRows('student_enrollments',     { student_id: s.id }).catch(()=>{});
+        await deleteRows('replacement_pending',     { student_id: s.id }).catch(()=>{});
+        await deleteRows('pending_credits',         { student_id: s.id }).catch(()=>{});
+        await deleteRows('students',                { id: s.id });
+      }
+      await loadStudents();
+      await loadSessions();
+      setStatus(`Deleted account "${pg.name}" (${pg.swimmers.length} swimmer${pg.swimmers.length===1?'':'s'} removed).`);
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to delete account'); }
+  }
+
   return <>
     {adminView === 'familyGroups' && <FamilyGroupsAdminView
       familyGroups={familyGroups}
@@ -5287,9 +5280,12 @@ function ParentsView({ accountSection, setAccountSection, parentGroups, lessonTy
                 enrolments, leading to inconsistencies. */}
             <button className="btn btn-ghost small" onClick={()=>setBillingKey(billingKey===pg.key?null:pg.key)} title="Preview what this account would be billed based on current enrolments + family groups" style={billingKey===pg.key?{background:'#F97316',color:'#fff',border:'1px solid #EA580C'}:{}}>{billingKey===pg.key?'✕ Close Preview':'🧾 Billing Preview'}</button>
             <button className="btn btn-print small" onClick={()=>printAccountSummary(pg)} title="Print account summary with groups, enrolments, and class schedule">🖨 Print</button>
-            <div style={{marginLeft:'auto'}}>
+            <div style={{marginLeft:'auto',display:'flex',gap:6}}>
               <button className={`btn small ${pg.isActive?'btn-ghost':'btn-primary'}`} onClick={()=>setParentArchived(pg, pg.isActive)} title={pg.isActive ? 'Archive this parent and all their swimmers' : 'Restore this parent and all their swimmers'}>
                 {pg.isActive ? '📦 Archive' : '✓ Restore'}
+              </button>
+              <button className="btn btn-danger small" onClick={(e)=>{ e.stopPropagation(); deleteAccount(pg); }} title="Permanently delete this account and all its swimmers from the database">
+                🗑 Delete Account
               </button>
             </div>
           </div>}
@@ -5356,6 +5352,8 @@ function ParentsView({ accountSection, setAccountSection, parentGroups, lessonTy
                   emergencyPhone: pg.emergencyPhone,
                   emergencyRelationship: pg.emergencyRelationship,
                   emergencySameAsGuardian: pg.emergencySameAsGuardian,
+                  // Inherit account_id so the new swimmer stays in this account
+                  accountId: pg.accountId || pg.swimmers[0]?.accountId || null,
                   // Inherit T&C from the account so the new swimmer is covered immediately
                   tcAcceptedAt: accountTcSwimmer?.tcAcceptedAt || null,
                   tcAcceptanceId: accountTcSwimmer?.tcAcceptanceId || null
@@ -5464,7 +5462,7 @@ function ParentsView({ accountSection, setAccountSection, parentGroups, lessonTy
                           </td>
                           <td className="col-credits">
                             {bal
-                              ? <><strong className={remaining<=2?'credit-low':''}>{remaining}</strong><span className="subtle"> / {initial} cr</span></>
+                              ? <strong className={remaining<=2?'credit-low':''}>{remaining} cr</strong>
                               : <em className="subtle">—</em>}
                           </td>
                           <td className="col-actions">
@@ -7234,7 +7232,7 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
             <span className="credit-row-name">{r.name || 'Student'}{lastPurchaseLabel ? <span className="credit-row-last"> · last {lastPurchaseLabel}</span> : null}</span>
             {bal
               ? <div className="credit-controls">
-                  <span className={`credit-count ${bal.remaining_balance<=2?'credit-low':''}`}>{bal.remaining_balance} / {bal.initial_balance} credits</span>
+                  <span className={`credit-count ${bal.remaining_balance<=2?'credit-low':''}`}>{bal.remaining_balance} credits</span>
                   <button className="credit-btn" title="Deduct 1 credit (class attended)" onClick={()=>adjustCredit(r.studentId,currentLt.id,-1)}>−</button>
                   <button className="credit-btn" title="Add 1 credit (credit returned)" onClick={()=>adjustCredit(r.studentId,currentLt.id,+1)}>+</button>
                 </div>
