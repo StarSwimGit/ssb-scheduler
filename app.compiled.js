@@ -2657,22 +2657,8 @@ function App() {
         }]);
       }
       if (lt && lt.id && sessionId) {
-        const pkg = (options.packages || []).find(p => p.lesson_type_id === lt.id && (p.name || '').toLowerCase() === 'normal' && p.is_active !== false);
-        const initCredits = pkg?.billing_count ? Number(pkg.billing_count) : 4;
-        for (const r of rows) {
-          if (!r.studentId) continue;
-          const key = creditKey(r.studentId, lt.id);
-          if (!creditByKey[key] && initCredits > 0) {
-            try {
-              await insertRows('student_credit_balances', [{
-                student_id: r.studentId,
-                lesson_type_id: lt.id,
-                initial_balance: initCredits,
-                remaining_balance: initCredits
-              }]);
-            } catch (_) {}
-          }
-        }
+        // Credits are never auto-seeded when creating/saving sessions.
+        // All credits flow from Pending Credits → payment receipt only.
         await loadCreditBalances();
       }
       if (sessionId && lt?.id) {
@@ -3053,7 +3039,8 @@ function App() {
     emergencyRelationship,
     emergencySameAsGuardian,
     tcAcceptedAt,
-    tcAcceptanceId
+    tcAcceptanceId,
+    accountId
   }) {
     try {
       setError('');
@@ -3073,6 +3060,8 @@ function App() {
         package: primaryPkg ? primaryPkg.name : null,
         lesson_type_ids: lessonTypeIds,
         is_active: true,
+        account_id: accountId || null,
+        // inherit account group from parent account
         guardian_name: guardianName || null,
         guardian_email: guardianEmail || null,
         guardian_phone: guardianPhone || null,
@@ -3099,24 +3088,8 @@ function App() {
         } catch (err) {
           console.warn('Could not insert enrollments (table may not exist yet):', err?.message || err);
         }
-        // Credit-based for every lesson type now — seed 4 credits (or
-        // package.billing_count if set) per (student, lesson_type) the
-        // moment they sign up. Silent on duplicate-key races.
-        for (const e of validEnrollments) {
-          const pkg = e.packageId ? (options.packages || []).find(p => p.id === e.packageId) : null;
-          const init = pkg?.billing_count ? Number(pkg.billing_count) : 4;
-          if (init > 0) {
-            try {
-              await insertRows('student_credit_balances', [{
-                student_id: studentId,
-                lesson_type_id: e.lessonTypeId,
-                initial_balance: init,
-                remaining_balance: init
-              }]);
-            } catch (_) {}
-          }
-        }
-        await loadCreditBalances();
+        // Credits are NOT auto-seeded here. They must flow through the
+        // Pending Credits → payment receipt → Confirm workflow only.
       }
       await loadStudents();
     } catch (err) {
@@ -3175,25 +3148,8 @@ function App() {
         } catch (err) {
           console.warn('Could not sync enrollments (table may not exist yet):', err?.message || err);
         }
-        // Credit-based for every lesson type — make sure each enrollment
-        // has a balance. Skips lesson types where the swimmer already has
-        // one (avoids resetting an in-progress month back to 4).
-        for (const e of validEnrollments) {
-          const key = creditKey(id, e.lessonTypeId);
-          if (creditByKey[key]) continue;
-          const pkg = e.packageId ? (options.packages || []).find(p => p.id === e.packageId) : null;
-          const init = pkg?.billing_count ? Number(pkg.billing_count) : 4;
-          if (init > 0) {
-            try {
-              await insertRows('student_credit_balances', [{
-                student_id: id,
-                lesson_type_id: e.lessonTypeId,
-                initial_balance: init,
-                remaining_balance: init
-              }]);
-            } catch (_) {}
-          }
-        }
+        // Credits are NOT auto-seeded when enrollments change.
+        // They flow from Pending Credits → payment confirmation only.
         await loadCreditBalances();
       }
       await loadStudents();
@@ -8739,7 +8695,7 @@ function CreditHistoryPanel({
       className: "credit-lt-totals"
     }, bal ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("strong", {
       className: bal.remaining_balance <= 2 ? 'credit-low' : ''
-    }, bal.remaining_balance), " remaining of ", /*#__PURE__*/React.createElement("strong", null, bal.initial_balance), " total") : /*#__PURE__*/React.createElement("em", {
+    }, bal.remaining_balance), " credits") : /*#__PURE__*/React.createElement("em", {
       className: "subtle"
     }, "No balance row yet"), list.length > 0 && /*#__PURE__*/React.createElement("span", {
       className: "credit-lt-aggregate"
@@ -9051,6 +9007,35 @@ function ParentsView({
       await updateStudent(s.id, {
         isActive: !archived
       });
+    }
+  }
+  async function deleteAccount(pg) {
+    const swimmerList = pg.swimmers.map(s => `• ${s.name}`).join('\n');
+    if (!confirm(`PERMANENTLY DELETE account "${pg.name}" and all ${pg.swimmers.length} swimmer${pg.swimmers.length === 1 ? '' : 's'}?\n\n${swimmerList}\n\n` + `This also removes their enrollments, credit balances, and pending replacement entries.\n\n` + `⚠️ This cannot be undone. Scheduled session names remain on the timetable but become unlinked.`)) return;
+    try {
+      for (const s of pg.swimmers) {
+        await deleteRows('student_credit_balances', {
+          student_id: s.id
+        }).catch(() => {});
+        await deleteRows('student_enrollments', {
+          student_id: s.id
+        }).catch(() => {});
+        await deleteRows('replacement_pending', {
+          student_id: s.id
+        }).catch(() => {});
+        await deleteRows('pending_credits', {
+          student_id: s.id
+        }).catch(() => {});
+        await deleteRows('students', {
+          id: s.id
+        });
+      }
+      await loadStudents();
+      await loadSessions();
+      setStatus(`Deleted account "${pg.name}" (${pg.swimmers.length} swimmer${pg.swimmers.length === 1 ? '' : 's'} removed).`);
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to delete account');
     }
   }
   return /*#__PURE__*/React.createElement(React.Fragment, null, adminView === 'familyGroups' && /*#__PURE__*/React.createElement(FamilyGroupsAdminView, {
@@ -9369,13 +9354,22 @@ function ParentsView({
       title: "Print account summary with groups, enrolments, and class schedule"
     }, "\uD83D\uDDA8 Print"), /*#__PURE__*/React.createElement("div", {
       style: {
-        marginLeft: 'auto'
+        marginLeft: 'auto',
+        display: 'flex',
+        gap: 6
       }
     }, /*#__PURE__*/React.createElement("button", {
       className: `btn small ${pg.isActive ? 'btn-ghost' : 'btn-primary'}`,
       onClick: () => setParentArchived(pg, pg.isActive),
       title: pg.isActive ? 'Archive this parent and all their swimmers' : 'Restore this parent and all their swimmers'
-    }, pg.isActive ? '📦 Archive' : '✓ Restore'))), pg.key !== '__unassigned__' && (() => {
+    }, pg.isActive ? '📦 Archive' : '✓ Restore'), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-danger small",
+      onClick: e => {
+        e.stopPropagation();
+        deleteAccount(pg);
+      },
+      title: "Permanently delete this account and all its swimmers from the database"
+    }, "\uD83D\uDDD1 Delete Account"))), pg.key !== '__unassigned__' && (() => {
       const accepted = pg.swimmers.find(sw => sw.tcAcceptedAt);
       return /*#__PURE__*/React.createElement("div", {
         className: "account-tc-summary"
@@ -9451,6 +9445,8 @@ function ParentsView({
           emergencyPhone: pg.emergencyPhone,
           emergencyRelationship: pg.emergencyRelationship,
           emergencySameAsGuardian: pg.emergencySameAsGuardian,
+          // Inherit account_id so the new swimmer stays in this account
+          accountId: pg.accountId || pg.swimmers[0]?.accountId || null,
           // Inherit T&C from the account so the new swimmer is covered immediately
           tcAcceptedAt: accountTcSwimmer?.tcAcceptedAt || null,
           tcAcceptanceId: accountTcSwimmer?.tcAcceptanceId || null
@@ -9576,11 +9572,9 @@ function ParentsView({
           onClick: () => onJumpToSession && onJumpToSession(s)
         }, si > 0 ? ', ' : '', DAYS_F[s.day].slice(0, 3), " ", shortTime(s.startMinute))) : 'Not scheduled'), /*#__PURE__*/React.createElement("td", {
           className: "col-credits"
-        }, bal ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("strong", {
+        }, bal ? /*#__PURE__*/React.createElement("strong", {
           className: remaining <= 2 ? 'credit-low' : ''
-        }, remaining), /*#__PURE__*/React.createElement("span", {
-          className: "subtle"
-        }, " / ", initial, " cr")) : /*#__PURE__*/React.createElement("em", {
+        }, remaining, " cr") : /*#__PURE__*/React.createElement("em", {
           className: "subtle"
         }, "\u2014")), /*#__PURE__*/React.createElement("td", {
           className: "col-actions"
@@ -13128,7 +13122,7 @@ function SessionModal({
       className: "credit-controls"
     }, /*#__PURE__*/React.createElement("span", {
       className: `credit-count ${bal.remaining_balance <= 2 ? 'credit-low' : ''}`
-    }, bal.remaining_balance, " / ", bal.initial_balance, " credits"), /*#__PURE__*/React.createElement("button", {
+    }, bal.remaining_balance, " credits"), /*#__PURE__*/React.createElement("button", {
       className: "credit-btn",
       title: "Deduct 1 credit (class attended)",
       onClick: () => adjustCredit(r.studentId, currentLt.id, -1)
