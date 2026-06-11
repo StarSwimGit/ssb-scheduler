@@ -3174,6 +3174,40 @@ function App() {
       alert(err.message || 'Failed to delete swimmer');
     }
   }
+  async function deleteAccount(pg) {
+    if (!pg?.swimmers?.length) {
+      alert('No swimmers found on this account.');
+      return;
+    }
+    const swimmerList = pg.swimmers.map(s => `• ${s.name}`).join('\n');
+    if (!confirm(`PERMANENTLY DELETE account "${pg.name}" and all ${pg.swimmers.length} swimmer${pg.swimmers.length === 1 ? '' : 's'}?\n\n${swimmerList}\n\n` + `This removes their enrollments, credit balances, and pending replacement entries.\n\n` + `⚠️ This cannot be undone. Session names on the timetable remain but become unlinked.`)) return;
+    try {
+      setError('');
+      for (const s of pg.swimmers) {
+        await deleteRows('student_credit_balances', {
+          student_id: s.id
+        }).catch(() => {});
+        await deleteRows('student_enrollments', {
+          student_id: s.id
+        }).catch(() => {});
+        await deleteRows('replacement_pending', {
+          student_id: s.id
+        }).catch(() => {});
+        await deleteRows('pending_credits', {
+          student_id: s.id
+        }).catch(() => {});
+        await deleteRows('students', {
+          id: s.id
+        });
+      }
+      await loadStudents();
+      await loadSessions();
+      setStatus(`Deleted account "${pg.name}" — ${pg.swimmers.length} swimmer${pg.swimmers.length === 1 ? '' : 's'} removed.`);
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to delete account');
+    }
+  }
 
   // ───── Family groups (single-payer bundles) ──────────────────────────────
   async function addGroup({
@@ -4066,6 +4100,7 @@ function App() {
     addStudent: addStudent,
     updateStudent: updateStudent,
     deleteStudent: deleteStudent,
+    deleteAccount: deleteAccount,
     addGroup: addGroup,
     updateGroup: updateGroup,
     deleteGroup: deleteGroup,
@@ -4112,7 +4147,8 @@ function App() {
     adjustBalanceTo: adjustBalanceTo,
     addStudent: addStudent,
     updateStudent: updateStudent,
-    deleteStudent: deleteStudent
+    deleteStudent: deleteStudent,
+    deleteAccount: deleteAccount
   }), !loading && view === 'accounts' && accountSection === 'invoices' && /*#__PURE__*/React.createElement(InvoicesView, {
     invoices: invoices,
     invoiceLines: invoiceLines,
@@ -4210,7 +4246,8 @@ function App() {
     adjustBalanceTo: adjustBalanceTo,
     addStudent: addStudent,
     updateStudent: updateStudent,
-    deleteStudent: deleteStudent
+    deleteStudent: deleteStudent,
+    deleteAccount: deleteAccount
   }), !loading && view === 'settings' && adminSection === 'summary' && /*#__PURE__*/React.createElement(SummaryView, {
     summary: summary,
     pools: activePools()
@@ -8858,6 +8895,7 @@ function ParentsView({
   addStudent,
   updateStudent,
   deleteStudent,
+  deleteAccount,
   addGroup,
   updateGroup,
   deleteGroup,
@@ -9009,35 +9047,9 @@ function ParentsView({
       });
     }
   }
-  async function deleteAccount(pg) {
-    const swimmerList = pg.swimmers.map(s => `• ${s.name}`).join('\n');
-    if (!confirm(`PERMANENTLY DELETE account "${pg.name}" and all ${pg.swimmers.length} swimmer${pg.swimmers.length === 1 ? '' : 's'}?\n\n${swimmerList}\n\n` + `This also removes their enrollments, credit balances, and pending replacement entries.\n\n` + `⚠️ This cannot be undone. Scheduled session names remain on the timetable but become unlinked.`)) return;
-    try {
-      for (const s of pg.swimmers) {
-        await deleteRows('student_credit_balances', {
-          student_id: s.id
-        }).catch(() => {});
-        await deleteRows('student_enrollments', {
-          student_id: s.id
-        }).catch(() => {});
-        await deleteRows('replacement_pending', {
-          student_id: s.id
-        }).catch(() => {});
-        await deleteRows('pending_credits', {
-          student_id: s.id
-        }).catch(() => {});
-        await deleteRows('students', {
-          id: s.id
-        });
-      }
-      await loadStudents();
-      await loadSessions();
-      setStatus(`Deleted account "${pg.name}" (${pg.swimmers.length} swimmer${pg.swimmers.length === 1 ? '' : 's'} removed).`);
-    } catch (err) {
-      handleErr(err);
-      alert(err.message || 'Failed to delete account');
-    }
-  }
+
+  // deleteAccount is passed as a prop from App scope
+
   return /*#__PURE__*/React.createElement(React.Fragment, null, adminView === 'familyGroups' && /*#__PURE__*/React.createElement(FamilyGroupsAdminView, {
     familyGroups: familyGroups,
     membersByGroup: membersByGroup,
