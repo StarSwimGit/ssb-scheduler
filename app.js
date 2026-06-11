@@ -4879,22 +4879,7 @@ function CreditHistoryPanel({ swimmer, lessonTypes, lessonTypeById, purchases, s
             onApply={(target, notes) => adjustBalanceTo(swimmer.id, lt.id, target, notes)} />}
         </div>
 
-        {canQuickSub && <div className="credit-sub-quick">
-          <span className="credit-sub-quick-label">Quick subscription:</span>
-          {[1, 2, 3].map(qty => <button key={qty} className="btn btn-ghost small" title={`Add ${qty}× ${credits || 4}-credit subscription${isUnboundGroupMember ? ` to every member of ${group.name}` : ''}`}
-            onClick={()=>addSubscription({
-              subjectType: isUnboundGroupMember ? 'family_group' : 'student',
-              subjectId: isUnboundGroupMember ? swimmer.familyGroupId : swimmer.id,
-              lessonTypeId: lt.id,
-              creditsPerSwimmer: 4,
-              quantity: qty,
-              source: 'subscription',
-              notes: `Quick add (${qty}× 4-credit subscription)`
-            })}>
-            +{qty * 4}
-          </button>)}
-          {isUnboundGroupMember && <span className="subtle small" style={{fontSize:10}}>· applies to whole group</span>}
-        </div>}
+        {canQuickSub && null /* Quick subscription buttons removed — use Adjust or record via Pending Credits */}
 
         {subs.length > 0 && <div className="credit-sub-list">
           <div className="credit-sub-list-title">Subscription log</div>
@@ -5470,12 +5455,9 @@ function ParentsView({ accountSection, setAccountSection, parentGroups, lessonTy
                               : <em className="subtle">—</em>}
                           </td>
                           <td className="col-actions">
-                            {!isBound && addSubscription ? <>
-                              <button className="btn btn-ghost small" title="Quick add 4 credits" onClick={()=>quickAddSub(4)}>+4</button>
-                              <button className="btn btn-ghost small" title="Quick add 6 credits" onClick={()=>quickAddSub(6)}>+6</button>
-                              <button className="btn btn-ghost small" title="Quick add 8 credits" onClick={()=>quickAddSub(8)}>+8</button>
-                              {adjustBalanceTo && <BalanceAdjuster currentBalance={remaining} onApply={(target, notes) => adjustBalanceTo(sw.id, ltId, target, notes)} />}
-                            </> : isBound ? <span className="subtle small">🔗 group</span> : null}
+                            {!isBound && adjustBalanceTo
+                              ? <BalanceAdjuster currentBalance={remaining} onApply={(target, notes) => adjustBalanceTo(sw.id, ltId, target, notes)} />
+                              : isBound ? <span className="subtle small">🔗 group</span> : null}
                           </td>
                         </tr>;
                       })}
