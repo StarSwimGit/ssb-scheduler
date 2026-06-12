@@ -3386,20 +3386,10 @@ function App() {
     const n = Math.max(1, Math.min(52, Number(weekCount) || 1));
     const enrolledRegular = (src.students || []).filter(s => !s.isReplacement);
     if (!confirm(`Duplicate "${src.type}" on ${DAYS_F[src.day]} ${minuteToTime(src.startMinute)} to the next ${n} week${n === 1 ? '' : 's'}?\n\n${enrolledRegular.length} swimmer${enrolledRegular.length === 1 ? '' : 's'} will be cloned. Attendance resets to pending each week. Weeks that already have a matching session at the same slot will be skipped.`)) return;
-    let created = 0,
-      skipped = 0;
+    let created = 0;
     try {
       for (let w = 1; w <= n; w++) {
         const targetWeekStart = addDays(src.weekStartDate, 7 * w);
-        // Skip if an identical session already exists in that week.
-        // Use lesson type NAME (always populated) rather than lessonTypeId
-        // (nullable UUID) to avoid null === null false-positives that would
-        // skip every target week when the source session has no lessonTypeId.
-        const exists = sessions.find(s => s.weekStartDate === targetWeekStart && s.day === src.day && s.startMinute === src.startMinute && s.type === src.type && (s.poolId || null) === (src.poolId || null) && !s.cancelledAt);
-        if (exists) {
-          skipped++;
-          continue;
-        }
         const inserted = await insertRows('weekly_sessions', [{
           week_start_date: targetWeekStart,
           weekday: src.day + 1,
@@ -3437,7 +3427,7 @@ function App() {
       }
       await loadSessions();
       setModal(null);
-      setStatus(`Duplicated forward: ${created} week${created === 1 ? '' : 's'} created${skipped ? `, ${skipped} skipped (already had a session at that slot)` : ''}.`);
+      setStatus(`Duplicated: ${created} session${created === 1 ? '' : 's'} created for the next ${n} week${n === 1 ? '' : 's'}.`);
     } catch (err) {
       handleErr(err);
       alert(err.message || 'Failed to duplicate session forward');
