@@ -2313,11 +2313,15 @@ function App(){
     try{
       for(let w = 1; w <= n; w++){
         const targetWeekStart = addDays(src.weekStartDate, 7 * w);
+        // Skip if an identical session already exists in that week.
+        // Use lesson type NAME (always populated) rather than lessonTypeId
+        // (nullable UUID) to avoid null === null false-positives that would
+        // skip every target week when the source session has no lessonTypeId.
         const exists = sessions.find(s =>
           s.weekStartDate === targetWeekStart &&
           s.day === src.day &&
           s.startMinute === src.startMinute &&
-          s.lessonTypeId === src.lessonTypeId &&
+          s.type === src.type &&
           (s.poolId || null) === (src.poolId || null) &&
           !s.cancelledAt
         );
