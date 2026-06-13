@@ -1152,7 +1152,13 @@
     }
 
     @media (max-width:1024px){.grid-2,.grid-3,.settings-cols,.form-grid{grid-template-columns:1fr}.header{padding:10px 16px}.header-inner{height:auto;align-items:flex-start;flex-direction:column}.wrap{padding:16px}.month-grid{grid-template-columns:repeat(2,1fr)}.time-col,.week-corner{width:72px;flex-basis:72px}.time-cell{font-size:13px}.daily-row{grid-template-columns:108px 1fr}.daily-time{font-size:14px;padding:10px 10px}.wagenda{grid-template-columns:46px repeat(7,minmax(0,1fr))}.wa-time{font-size:11px;padding-right:5px}.wa-card-title{font-size:11px}.wa-card-line{font-size:10px}}
-  </style>
+  
+    .branch-selector{display:flex;align-items:center;gap:6px;background:var(--surface-2);padding:4px 8px 4px 10px;border-radius:8px;border:1px solid var(--border)}
+    .branch-label{font-size:10px;text-transform:uppercase;letter-spacing:.8px;font-weight:700;color:var(--text-3)}
+    .branch-select{background:transparent;border:none;outline:none;font-size:13px;font-weight:600;color:var(--text);cursor:pointer;padding:2px 4px;font-family:inherit}
+    .branch-select:hover{color:var(--primary)}
+    .branch-pill{font-size:10px;font-weight:700;font-family:'Courier New',monospace;background:var(--primary-soft);color:var(--primary);border:1px solid var(--primary-soft);border-radius:5px;padding:2px 6px;letter-spacing:.5px}
+</style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
