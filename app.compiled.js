@@ -542,11 +542,26 @@ function App() {
     lessonTypes: [],
     pools: [],
     operatingHours: [],
-    packages: []
+    packages: [],
+    branches: []
   });
   const [monthCursor, setMonthCursor] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [selectedPoolId, setSelectedPoolId] = useState(null);
+  // Branch filter — remembered across sessions; defaults to last selection or HQ.
+  const [currentBranchId, setCurrentBranchIdRaw] = useState(() => {
+    try {
+      return window.localStorage.getItem('ssb.currentBranchId') || null;
+    } catch (_) {
+      return null;
+    }
+  });
+  function setCurrentBranchId(id) {
+    setCurrentBranchIdRaw(id);
+    try {
+      if (id) window.localStorage.setItem('ssb.currentBranchId', id);else window.localStorage.removeItem('ssb.currentBranchId');
+    } catch (_) {}
+  }
   const [enabledTypes, setEnabledTypes] = useState(null);
   const [selectedInstructors, setSelectedInstructors] = useState(new Set());
   const [modal, _setModal] = useState(null);
@@ -585,6 +600,13 @@ function App() {
   useEffect(() => {
     boot();
   }, []);
+  // Default branch on first load: prefer SSGT (HQ), else first active branch.
+  useEffect(() => {
+    if (currentBranchId) return;
+    if (!options.branches?.length) return;
+    const hq = options.branches.find(b => (b.code || '').toUpperCase() === 'SSGT') || options.branches.find(b => b.is_active !== false) || options.branches[0];
+    if (hq) setCurrentBranchId(hq.id);
+  }, [options.branches]);
   useEffect(() => {
     if (cfg.supabaseUrl && cfg.supabaseAnonKey) loadRemarks(monthCursor).catch(handleErr);
   }, [monthCursor]);
@@ -712,7 +734,8 @@ function App() {
       due_date: dueDate || null,
       notes: notes || null,
       total_amount: totalAmount,
-      amount_paid: 0
+      amount_paid: 0,
+      branch_id: currentBranchId && currentBranchId !== 'all' ? currentBranchId : null
     });
     const invoiceId = inserted?.[0]?.id;
     if (invoiceId && lines.length) {
@@ -1023,14 +1046,15 @@ function App() {
 
   // M2: also loads pools and operating_hours.
   async function loadOptions() {
-    const [instructors, durations, lessonTypes, pools, operatingHours, packages] = await Promise.all([selectRows('scheduler_instructors', '*', '&order=sort_order.asc,name.asc'), selectRows('scheduler_durations', '*', '&order=sort_order.asc,slots.asc'), selectRows('scheduler_lesson_types', '*', '&order=sort_order.asc,name.asc'), selectRows('pools', '*', '&order=sort_order.asc,name.asc'), selectRows('operating_hours', '*', '&order=weekday.asc'), selectRows('packages', '*', '&order=sort_order.asc,name.asc').catch(() => [])]);
+    const [instructors, durations, lessonTypes, pools, operatingHours, packages, branches] = await Promise.all([selectRows('scheduler_instructors', '*', '&order=sort_order.asc,name.asc'), selectRows('scheduler_durations', '*', '&order=sort_order.asc,slots.asc'), selectRows('scheduler_lesson_types', '*', '&order=sort_order.asc,name.asc'), selectRows('pools', '*', '&order=sort_order.asc,name.asc'), selectRows('operating_hours', '*', '&order=weekday.asc'), selectRows('packages', '*', '&order=sort_order.asc,name.asc').catch(() => []), selectRows('branches', '*', '&order=sort_order.asc,name.asc').catch(() => [])]);
     setOptions({
       instructors: instructors || [],
       durations: durations || [],
       lessonTypes: lessonTypes || [],
       pools: pools || [],
       operatingHours: operatingHours || [],
-      packages: packages || []
+      packages: packages || [],
+      branches: branches || []
     });
   }
 
@@ -1126,6 +1150,7 @@ function App() {
           guardianIc: r.guardian_ic || '',
           guardianTin: r.guardian_tin || '',
           accountId: r.account_id || null,
+          branchId: r.branch_id || null,
           emergencyPhone: r.emergency_phone || '',
           emergencyName: r.emergency_name || '',
           emergencyRelationship: r.emergency_relationship || '',
@@ -2104,7 +2129,22 @@ function App() {
     return options.lessonTypes.filter(x => x.is_active !== false);
   }
   function activePools() {
+    let pools = options.pools.filter(x => x.is_active !== false);
+    // Branch filter: when a branch is selected, only that branch's pools.
+    // 'all' or null falls through to show every pool.
+    if (currentBranchId && currentBranchId !== 'all') {
+      pools = pools.filter(p => !p.branch_id || p.branch_id === currentBranchId);
+    }
+    return pools;
+  }
+  function allActivePools() {
     return options.pools.filter(x => x.is_active !== false);
+  }
+  function activeBranches() {
+    return (options.branches || []).filter(x => x.is_active !== false);
+  }
+  function branchById(id) {
+    return (options.branches || []).find(b => b.id === id) || null;
   }
   function activePackages() {
     return options.packages.filter(x => x.is_active !== false);
@@ -2178,12 +2218,22 @@ function App() {
     return sessionsForDate(dateStr).filter(passesFilters);
   }
   const weekBlocks = useMemo(() => {
-    const fallbackPoolId = activePools()[0]?.id || null;
+    const allActive = activePools();
+    const fallbackPoolId = allActive[0]?.id || null;
+    // Default (null) = show first two pools; 'all' = every pool; specific id = one pool.
+    const defaultPoolIds = new Set(allActive.slice(0, 2).map(p => p.id));
     return Array.from({
       length: 7
     }, (_, day) => {
       let items = weekSessions.filter(s => s.day === day);
-      if (selectedPoolId) items = items.filter(s => (s.poolId || fallbackPoolId) === selectedPoolId);
+      if (selectedPoolId === 'all') {
+        // no pool filter
+      } else if (!selectedPoolId) {
+        // Default: first two pools only
+        if (defaultPoolIds.size > 0) items = items.filter(s => defaultPoolIds.has(s.poolId || fallbackPoolId));
+      } else {
+        items = items.filter(s => (s.poolId || fallbackPoolId) === selectedPoolId);
+      }
       items = items.filter(passesFilters);
       const packed = packParallelColumns(items);
       const peak = packed.length ? packed[0]._total : 1;
@@ -3001,6 +3051,56 @@ function App() {
     }
   }
 
+  // ── Branches CRUD ────────────────────────────────────────────────────────
+  async function addBranch({
+    name,
+    code,
+    color
+  }) {
+    try {
+      const next = (options.branches || []).length + 1;
+      await insertRows('branches', {
+        name,
+        code: code || null,
+        color: color || null,
+        sort_order: next,
+        is_active: true
+      });
+      await loadOptions();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to add branch');
+    }
+  }
+  async function updateBranch(id, patch) {
+    try {
+      await patchRows('branches', {
+        id
+      }, patch);
+      await loadOptions();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to update branch');
+    }
+  }
+  async function deleteBranch(id) {
+    if (!confirm('Delete this branch?\n\nAny pools/students/invoices linked to it will be unlinked (set to null). They will appear under "All branches" until reassigned.')) return;
+    try {
+      await deleteRows('branches', {
+        id
+      });
+      await Promise.all([loadOptions(), loadStudents(), loadInvoiceData()]);
+      // If we were viewing it, fall back to HQ
+      if (currentBranchId === id) {
+        const hq = (options.branches || []).find(b => (b.code || '').toUpperCase() === 'SSGT' && b.id !== id);
+        setCurrentBranchId(hq ? hq.id : null);
+      }
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to delete branch');
+    }
+  }
+
   // Reorder a settings list by reindexing sort_order across the whole list, so
   // the result is clean and gap-free regardless of the existing values.
   async function reorderOption(table, list, index, dir) {
@@ -3040,7 +3140,8 @@ function App() {
     emergencySameAsGuardian,
     tcAcceptedAt,
     tcAcceptanceId,
-    accountId
+    accountId,
+    branchId
   }) {
     try {
       setError('');
@@ -3062,6 +3163,8 @@ function App() {
         is_active: true,
         account_id: accountId || null,
         // inherit account group from parent account
+        branch_id: branchId || currentBranchId || null,
+        // stamp with current branch by default
         guardian_name: guardianName || null,
         guardian_email: guardianEmail || null,
         guardian_phone: guardianPhone || null,
@@ -3740,7 +3843,12 @@ function App() {
   // Pre-migration fallback: cluster on email → phone → name as before.
   const parentGroups = useMemo(() => {
     const m = {};
-    (studentsWithGroups || []).forEach(s => {
+    // Branch filter on accounts: only swimmers in current branch (or unassigned).
+    const branchFiltered = (studentsWithGroups || []).filter(s => {
+      if (!currentBranchId || currentBranchId === 'all') return true;
+      return !s.branchId || s.branchId === currentBranchId;
+    });
+    branchFiltered.forEach(s => {
       // Prefer the stable account_id once the migration has run
       let key;
       if (s.accountId) {
@@ -3782,7 +3890,7 @@ function App() {
       if (b.key === '__unassigned__') return -1;
       return a.name.localeCompare(b.name);
     });
-  }, [studentsWithGroups]);
+  }, [studentsWithGroups, currentBranchId]);
 
   // Which sessions (in the selected week) each swimmer is already in — drives the
   // double-booking warning in the enrollment modal.
@@ -3855,6 +3963,30 @@ function App() {
   }, "Pool-aware lesson calendar"))), /*#__PURE__*/React.createElement("div", {
     className: "header-meta"
   }, /*#__PURE__*/React.createElement("div", {
+    className: "branch-selector"
+  }, /*#__PURE__*/React.createElement("label", {
+    className: "branch-label"
+  }, "Branch"), /*#__PURE__*/React.createElement("select", {
+    className: "branch-select",
+    value: currentBranchId || '',
+    onChange: e => setCurrentBranchId(e.target.value || null),
+    title: "Switch the active branch. Filters Accounts, Pools, Invoices, Intake."
+  }, (options.branches || []).filter(b => b.is_active !== false).map(b => /*#__PURE__*/React.createElement("option", {
+    key: b.id,
+    value: b.id
+  }, b.name, b.code ? ` (${b.code})` : '')), /*#__PURE__*/React.createElement("option", {
+    value: "all"
+  }, "All branches")), currentBranchId && currentBranchId !== 'all' && (() => {
+    const b = branchById(currentBranchId);
+    return b ? /*#__PURE__*/React.createElement("span", {
+      className: "branch-pill",
+      style: b.color ? {
+        background: b.color + '22',
+        borderColor: b.color,
+        color: b.color
+      } : {}
+    }, "\u25CF ", b.code || b.name) : null;
+  })()), /*#__PURE__*/React.createElement("div", {
     className: "header-summary"
   }, /*#__PURE__*/React.createElement("span", {
     style: {
@@ -3944,6 +4076,9 @@ function App() {
     className: `sub-tab ${adminSection === 'summary' ? 'active' : ''}`,
     onClick: () => setAdminSection('summary')
   }, "Summary"), /*#__PURE__*/React.createElement("button", {
+    className: `sub-tab ${adminSection === 'branches' ? 'active' : ''}`,
+    onClick: () => setAdminSection('branches')
+  }, "Branches"), /*#__PURE__*/React.createElement("button", {
     className: `sub-tab ${adminSection === 'pools' ? 'active' : ''}`,
     onClick: () => setAdminSection('pools')
   }, "Pools & Hours"), /*#__PURE__*/React.createElement("button", {
@@ -4245,6 +4380,11 @@ function App() {
   }), !loading && view === 'settings' && adminSection === 'summary' && /*#__PURE__*/React.createElement(SummaryView, {
     summary: summary,
     pools: activePools()
+  }), !loading && view === 'settings' && adminSection === 'branches' && /*#__PURE__*/React.createElement(BranchesAdminView, {
+    branches: options.branches || [],
+    addBranch: addBranch,
+    updateBranch: updateBranch,
+    deleteBranch: deleteBranch
   }), !loading && view === 'settings' && adminSection === 'invoiceSettings' && /*#__PURE__*/React.createElement("div", {
     className: "card"
   }, /*#__PURE__*/React.createElement("div", {
@@ -4457,7 +4597,7 @@ function WeekView(props) {
   // Sessions stack vertically inside each day-hour cell, so a busy slot grows
   // downward instead of forcing a horizontal scrollbar. Each card lays its
   // details out on separate lines.
-  const showPoolBadge = !selectedPoolId && pools.length > 1;
+  const showPoolBadge = selectedPoolId !== null && selectedPoolId !== 'all' ? false : pools.length > 1;
   const startHour = Math.floor(gridBounds.startMin / 60) * 60;
   const hours = [];
   for (let h = startHour; h < gridBounds.endMin; h += 60) hours.push(h);
@@ -4466,13 +4606,16 @@ function WeekView(props) {
   }, /*#__PURE__*/React.createElement("button", {
     className: `pool-tab ${selectedPoolId === null ? 'active' : ''}`,
     onClick: () => setSelectedPoolId(null)
-  }, "All pools"), pools.map(p => /*#__PURE__*/React.createElement("button", {
+  }, pools.slice(0, 2).map(p => p.name).join(' + ') || 'Default'), pools.map(p => /*#__PURE__*/React.createElement("button", {
     key: p.id,
     className: `pool-tab ${selectedPoolId === p.id ? 'active' : ''}`,
     onClick: () => setSelectedPoolId(p.id)
   }, p.name, " ", /*#__PURE__*/React.createElement("span", {
     className: "pool-tab-cap"
-  }, "cap ", p.capacity_total)))), /*#__PURE__*/React.createElement("div", {
+  }, "cap ", p.capacity_total))), pools.length > 2 && /*#__PURE__*/React.createElement("button", {
+    className: `pool-tab ${selectedPoolId === 'all' ? 'active' : ''}`,
+    onClick: () => setSelectedPoolId('all')
+  }, "All pools")), /*#__PURE__*/React.createElement("div", {
     className: "wagenda"
   }, /*#__PURE__*/React.createElement("div", {
     className: "wa-corner"
@@ -5496,6 +5639,242 @@ function MonthView({
 // SummaryView (M2: by-pool breakdown added)
 // ============================================================================
 
+function BranchesAdminView({
+  branches,
+  addBranch,
+  updateBranch,
+  deleteBranch
+}) {
+  const [name, setName] = useState('');
+  const [code, setCode] = useState('');
+  const [color, setColor] = useState('#0EA5E9');
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({
+    name: '',
+    code: '',
+    color: ''
+  });
+  function startEdit(b) {
+    setEditingId(b.id);
+    setEditForm({
+      name: b.name || '',
+      code: b.code || '',
+      color: b.color || '#0EA5E9'
+    });
+  }
+  async function saveEdit() {
+    if (!editForm.name.trim()) return;
+    await updateBranch(editingId, {
+      name: editForm.name.trim(),
+      code: editForm.code.trim() || null,
+      color: editForm.color || null
+    });
+    setEditingId(null);
+  }
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 18,
+      fontWeight: 800,
+      marginBottom: 4
+    }
+  }, "\uD83C\uDFE2 Branches"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginBottom: 14
+    }
+  }, "Branches are administrative locations (HQ + rented pool sites). They filter Accounts, Pools, and Invoices throughout the app. Instructors, lesson types, packages, and invoice numbering are shared across all branches."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      flexWrap: 'wrap',
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: {
+      flex: '1 1 200px',
+      maxWidth: 240
+    },
+    placeholder: "Branch name (e.g. Ipoh)",
+    value: name,
+    onChange: e => setName(e.target.value)
+  }), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: {
+      width: 120
+    },
+    placeholder: "Code (e.g. IPH)",
+    value: code,
+    onChange: e => setCode(e.target.value),
+    maxLength: 8
+  }), /*#__PURE__*/React.createElement("input", {
+    type: "color",
+    className: "input",
+    style: {
+      width: 64,
+      padding: 2
+    },
+    value: color,
+    onChange: e => setColor(e.target.value),
+    title: "Branch tint color"
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary small",
+    disabled: !name.trim(),
+    onClick: async () => {
+      if (!name.trim()) return;
+      await addBranch({
+        name: name.trim(),
+        code: code.trim() || null,
+        color
+      });
+      setName('');
+      setCode('');
+      setColor('#0EA5E9');
+    }
+  }, "+ Add Branch"))), /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      padding: 0,
+      overflow: 'hidden'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "table-wrap",
+    style: {
+      border: 'none',
+      borderRadius: 0
+    }
+  }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: '40%'
+    }
+  }, "Name"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: '15%'
+    }
+  }, "Code"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 90
+    }
+  }, "Color"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 100
+    }
+  }, "Status"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 200,
+      textAlign: 'right'
+    }
+  }, "Actions"))), /*#__PURE__*/React.createElement("tbody", null, (branches || []).length === 0 && /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
+    colSpan: 5,
+    className: "empty"
+  }, "No branches yet. Add one above to get started.")), (branches || []).map(b => editingId === b.id ? /*#__PURE__*/React.createElement("tr", {
+    key: b.id
+  }, /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: editForm.name,
+    onChange: e => setEditForm({
+      ...editForm,
+      name: e.target.value
+    })
+  })), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: editForm.code,
+    onChange: e => setEditForm({
+      ...editForm,
+      code: e.target.value
+    }),
+    maxLength: 8
+  })), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("input", {
+    type: "color",
+    className: "input",
+    style: {
+      width: 50,
+      padding: 2
+    },
+    value: editForm.color,
+    onChange: e => setEditForm({
+      ...editForm,
+      color: e.target.value
+    })
+  })), /*#__PURE__*/React.createElement("td", {
+    className: "small subtle"
+  }, b.is_active === false ? 'Archived' : 'Active'), /*#__PURE__*/React.createElement("td", {
+    style: {
+      textAlign: 'right'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary small",
+    onClick: saveEdit,
+    style: {
+      marginRight: 6
+    }
+  }, "Save"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => setEditingId(null)
+  }, "Cancel"))) : /*#__PURE__*/React.createElement("tr", {
+    key: b.id
+  }, /*#__PURE__*/React.createElement("td", {
+    style: {
+      fontWeight: 600
+    }
+  }, b.name), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: 'monospace',
+      fontSize: 12,
+      fontWeight: 600,
+      color: 'var(--text-2)'
+    }
+  }, b.code || '—')), /*#__PURE__*/React.createElement("td", null, b.color ? /*#__PURE__*/React.createElement("span", {
+    style: {
+      display: 'inline-block',
+      width: 24,
+      height: 24,
+      borderRadius: 6,
+      background: b.color,
+      border: '1px solid var(--border)'
+    }
+  }) : /*#__PURE__*/React.createElement("span", {
+    className: "subtle"
+  }, "\u2014")), /*#__PURE__*/React.createElement("td", null, b.is_active === false ? /*#__PURE__*/React.createElement("span", {
+    className: "pill",
+    style: {
+      background: '#FEF3C7',
+      color: '#92400E'
+    }
+  }, "Archived") : /*#__PURE__*/React.createElement("span", {
+    className: "pill",
+    style: {
+      background: '#D1FAE5',
+      color: '#065F46'
+    }
+  }, "Active")), /*#__PURE__*/React.createElement("td", {
+    style: {
+      textAlign: 'right'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => startEdit(b),
+    style: {
+      marginRight: 6
+    }
+  }, "\u270E Edit"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => updateBranch(b.id, {
+      is_active: b.is_active === false
+    }),
+    style: {
+      marginRight: 6
+    }
+  }, b.is_active === false ? 'Restore' : 'Archive'), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-danger small",
+    onClick: () => deleteBranch(b.id)
+  }, "\uD83D\uDDD1 Delete")))))))));
+}
 function SummaryView({
   summary,
   pools
