@@ -94,6 +94,22 @@ function IntakeForm(){
   // Children — array of { name, dob, gender }. Always at least one row.
   const [children, setChildren] = useState([{ name:'', dob:'', gender:null }]);
 
+  // Branch picker — list pulled from DB. Defaults to SSGT (HQ) on first load.
+  const [branches, setBranches] = useState([]);
+  const [branchId, setBranchId] = useState('');
+  React.useEffect(() => {
+    (async () => {
+      try{
+        const rows = await rest('branches?select=*&is_active=eq.true&order=sort_order.asc,name.asc');
+        const list = rows || [];
+        setBranches(list);
+        // Default to SSGT (HQ) if present, else first active branch.
+        const hq = list.find(b => (b.code||'').toUpperCase() === 'SSGT') || list[0];
+        if(hq) setBranchId(hq.id);
+      } catch(_) { /* table may not exist on older deploys — silently skip */ }
+    })();
+  }, []);
+
   // Emergency contact — when sameAsGuardian, the three fields below are
   // disabled and the form submits the guardian's name/phone instead.
   const [sameAsGuardian, setSameAsGuardian] = useState(false);
@@ -146,6 +162,9 @@ function IntakeForm(){
       const emergencyRel   = sameAsGuardian ? 'Parent / Guardian' : eRel.trim();
 
       const registered = [];
+      // Each child becomes a swimmer. To make siblings cluster as one account
+      // post-migration, generate a single account_id and reuse for every child.
+      const accountId = (crypto?.randomUUID?.()) || `acc-${Date.now()}-${Math.random().toString(36).slice(2,10)}`;
       for(const c of children){
         const dob = c.dob || null;
         const computedAge = dob ? ageFromDob(dob) : null;
@@ -155,6 +174,8 @@ function IntakeForm(){
           age: computedAge,
           gender: c.gender,
           is_active: true,
+          account_id: accountId,
+          branch_id: branchId || null,
           guardian_name: gName.trim(),
           guardian_email: gEmail.trim(),
           guardian_phone: gPhone.trim(),
@@ -239,6 +260,12 @@ function IntakeForm(){
         <div className="field"><label>IC No. <span className="opt-label">optional</span></label><input className="input" value={gIC} onChange={e=>setGIC(e.target.value)} placeholder="e.g. 901231-14-5678" /></div>
         <div className="field"><label>TIN No. <span className="opt-label">optional</span></label><input className="input" value={gTIN} onChange={e=>setGTIN(e.target.value)} placeholder="e.g. IG12345678090" /></div>
       </div>
+      {branches.length > 0 && <div className="field">
+        <label>Branch / Location<span className="req">*</span></label>
+        <select className="select" value={branchId} onChange={e=>setBranchId(e.target.value)}>
+          {branches.map(b => <option key={b.id} value={b.id}>{b.name}{b.code?` (${b.code})`:''}</option>)}
+        </select>
+      </div>}
     </div>
 
     <div className="card">
