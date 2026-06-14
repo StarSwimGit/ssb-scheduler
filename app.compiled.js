@@ -3848,12 +3848,9 @@ function App() {
   // Pre-migration fallback: cluster on email → phone → name as before.
   const parentGroups = useMemo(() => {
     const m = {};
-    // Branch filter on accounts: only swimmers in current branch (or unassigned).
-    const branchFiltered = (studentsWithGroups || []).filter(s => {
-      if (!currentBranchId || currentBranchId === 'all') return true;
-      return !s.branchId || s.branchId === currentBranchId;
-    });
-    branchFiltered.forEach(s => {
+    // No branch pre-filter here — Accounts page has its own local branch pills
+    // so it defaults to showing all accounts regardless of the header selector.
+    (studentsWithGroups || []).forEach(s => {
       // Prefer the stable account_id once the migration has run
       let key;
       if (s.accountId) {
@@ -3865,14 +3862,14 @@ function App() {
         key = emailKey ? `e:${emailKey}` : phoneKey ? `p:${phoneKey}` : nameKey ? `n:${nameKey}` : '__unassigned__';
       }
       if (!m[key]) {
-        // Human-readable display code derived from account_id UUID
-        // e.g. 550e8400-... → "AC·550E84"
         const rawId = s.accountId || '';
         const displayCode = rawId ? 'AC·' + rawId.replace(/-/g, '').slice(0, 6).toUpperCase() : '';
         m[key] = {
           key,
           displayCode,
           accountId: s.accountId || null,
+          branchId: s.branchId || null,
+          // dominant branch from first swimmer
           name: s.guardianName || (key === '__unassigned__' ? '— Unassigned —' : '— No name —'),
           email: s.guardianEmail || '',
           phone: s.guardianPhone || '',
@@ -3895,7 +3892,7 @@ function App() {
       if (b.key === '__unassigned__') return -1;
       return a.name.localeCompare(b.name);
     });
-  }, [studentsWithGroups, currentBranchId]);
+  }, [studentsWithGroups]);
 
   // Which sessions (in the selected week) each swimmer is already in — drives the
   // double-booking warning in the enrollment modal.
@@ -4229,6 +4226,7 @@ function App() {
     saveRemark: saveRemark,
     selectedItems: selectedItems
   }), !loading && view === 'accounts' && (accountSection === 'accounts' || accountSection === 'familyGroups') && /*#__PURE__*/React.createElement(ParentsView, {
+    branches: options.branches || [],
     accountSection: accountSection,
     setAccountSection: setAccountSection,
     parentGroups: parentGroups,
@@ -4294,6 +4292,7 @@ function App() {
     deleteStudent: deleteStudent,
     deleteAccount: deleteAccount
   }), !loading && view === 'accounts' && accountSection === 'invoices' && /*#__PURE__*/React.createElement(InvoicesView, {
+    branches: options.branches || [],
     invoices: invoices,
     invoiceLines: invoiceLines,
     pmts: pmts,
@@ -4317,8 +4316,10 @@ function App() {
     onDeleteLine: deleteInvoiceLine
   }), !loading && view === 'accounts' && accountSection === 'receipts' && /*#__PURE__*/React.createElement(ReceiptsView, {
     pmts: pmts,
-    invoices: invoices
+    invoices: invoices,
+    branches: options.branches || []
   }), !loading && view === 'accounts' && accountSection === 'pendingCredits' && /*#__PURE__*/React.createElement(PendingCreditsView, {
+    branches: options.branches || [],
     pendingCredits: pendingCredits,
     invoices: invoices,
     studentById: studentById,
@@ -9384,9 +9385,57 @@ function swimmerAccent(idx) {
 //     subscription log, ledger
 // The Swimmers page is intentionally read-only — use this page to admin.
 // ============================================================================
+// ── BranchFilterPills ────────────────────────────────────────────────────────
+// Reusable branch filter row used by Accounts, Invoices, Receipts, Pending Credits.
+// value=null means "All branches". onChange receives null or a branch.id string.
+function BranchFilterPills({
+  branches,
+  value,
+  onChange
+}) {
+  if (!branches || branches.length < 2) return null;
+  const active = branches.filter(b => b.is_active !== false);
+  if (!active.length) return null;
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 4,
+      flexWrap: 'wrap',
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "small subtle",
+    style: {
+      marginRight: 2
+    }
+  }, "Branch:"), /*#__PURE__*/React.createElement("button", {
+    className: `sub-tab${!value ? ' active' : ''}`,
+    style: {
+      padding: '3px 10px',
+      fontSize: 11,
+      height: 26
+    },
+    onClick: () => onChange(null)
+  }, "All"), active.map(b => /*#__PURE__*/React.createElement("button", {
+    key: b.id,
+    className: `sub-tab${value === b.id ? ' active' : ''}`,
+    style: {
+      padding: '3px 10px',
+      fontSize: 11,
+      height: 26,
+      ...(value === b.id && b.color ? {
+        background: b.color,
+        borderColor: b.color,
+        color: '#fff'
+      } : {})
+    },
+    onClick: () => onChange(value === b.id ? null : b.id)
+  }, b.code || b.name)));
+}
 function ParentsView({
   accountSection,
   setAccountSection,
+  branches,
   parentGroups,
   lessonTypes,
   lessonTypeById,
@@ -9427,6 +9476,7 @@ function ParentsView({
   };
   const [searchQ, setSearchQ] = useState('');
   const [statusFilter, setStatusFilter] = useState('active');
+  const [branchFilter, setBranchFilter] = useState(null);
   const [expandedKey, setExpandedKey] = useState(null);
   const [contactEditKey, setContactEditKey] = useState(null);
   const [addingSwimmerFor, setAddingSwimmerFor] = useState(null);
@@ -9495,6 +9545,11 @@ function ParentsView({
     if (statusFilter === 'active' && !pg.isActive) return false;
     if (statusFilter === 'archived' && pg.isActive) return false;
     return true;
+  }).filter(pg => {
+    // Local branch filter — null means show all branches
+    if (!branchFilter) return true;
+    // An account matches if any of its swimmers belong to the filtered branch
+    return pg.swimmers.some(s => !s.branchId || s.branchId === branchFilter);
   }).filter(pg => {
     if (!searchQ.trim()) return true;
     const q = searchQ.toLowerCase();
@@ -9649,12 +9704,16 @@ function ParentsView({
     className: "input",
     style: {
       flex: 1,
-      minWidth: 240,
-      maxWidth: 420
+      minWidth: 200,
+      maxWidth: 360
     },
     placeholder: "Search by account name, email, phone, or swimmer name\u2026",
     value: searchQ,
     onChange: e => setSearchQ(e.target.value)
+  }), /*#__PURE__*/React.createElement(BranchFilterPills, {
+    branches: branches,
+    value: branchFilter,
+    onChange: setBranchFilter
   }), /*#__PURE__*/React.createElement("div", {
     className: "tabs",
     style: {
@@ -11409,6 +11468,7 @@ function ParentGroupManager({
   }, "Close")));
 }
 function PendingCreditsView({
+  branches,
   pendingCredits,
   invoices,
   studentById,
@@ -11420,10 +11480,18 @@ function PendingCreditsView({
   onReverse
 }) {
   const [statusFilter, setStatusFilter] = useState('pending');
+  const [branchFilter, setBranchFilter] = useState(null);
   const [confirmingAll, setConfirmingAll] = useState(false);
   const pendingCount = pendingCredits.filter(p => p.status === 'pending').length;
   const invById = useMemo(() => Object.fromEntries((invoices || []).map(i => [i.id, i])), [invoices]);
-  const filtered = pendingCredits.filter(pc => statusFilter === 'all' || pc.status === statusFilter);
+  const filtered = pendingCredits.filter(pc => {
+    if (statusFilter !== 'all' && pc.status !== statusFilter) return false;
+    if (branchFilter) {
+      const stu = studentById?.[pc.student_id];
+      if (stu && stu.branchId && stu.branchId !== branchFilter) return false;
+    }
+    return true;
+  });
   async function confirmAll() {
     const targets = pendingCredits.filter(p => p.status === 'pending');
     if (!targets.length) {
@@ -11479,6 +11547,14 @@ function PendingCreditsView({
   }, confirmingAll ? 'Confirming…' : `✓ Confirm All (${pendingCount})`))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
+      gap: 8,
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      marginTop: 4
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
       gap: 3
     }
   }, ['pending', 'confirmed', 'reversed', 'all'].map(s => /*#__PURE__*/React.createElement("button", {
@@ -11490,7 +11566,11 @@ function PendingCreditsView({
       borderRadius: 7
     },
     onClick: () => setStatusFilter(s)
-  }, s === 'all' ? `All (${pendingCredits.length})` : s.charAt(0).toUpperCase() + s.slice(1) + ` (${pendingCredits.filter(p => p.status === s).length})`)))), filtered.length === 0 && /*#__PURE__*/React.createElement("div", {
+  }, s === 'all' ? `All (${pendingCredits.length})` : s.charAt(0).toUpperCase() + s.slice(1) + ` (${pendingCredits.filter(p => p.status === s).length})`))), /*#__PURE__*/React.createElement(BranchFilterPills, {
+    branches: branches,
+    value: branchFilter,
+    onChange: setBranchFilter
+  }))), filtered.length === 0 && /*#__PURE__*/React.createElement("div", {
     className: "card empty",
     style: {
       padding: 28
@@ -11824,21 +11904,24 @@ function AgingReportView({
 }
 function ReceiptsView({
   pmts,
-  invoices
+  invoices,
+  branches
 }) {
   const [searchQ, setSearchQ] = useState('');
+  const [branchFilter, setBranchFilter] = useState(null);
   const invoiceById = {};
   (invoices || []).forEach(inv => {
     invoiceById[inv.id] = inv;
   });
   const sorted = (pmts || []).slice().sort((a, b) => (b.payment_date || '').localeCompare(a.payment_date || ''));
   const filtered = sorted.filter(p => {
-    if (!searchQ.trim()) return true;
     const inv = invoiceById[p.invoice_id] || {};
+    if (branchFilter && inv.branch_id !== branchFilter) return false;
+    if (!searchQ.trim()) return true;
     const q = searchQ.toLowerCase();
     return (p.receipt_number || '').toLowerCase().includes(q) || (inv.invoice_number || '').toLowerCase().includes(q) || (inv.account_name || '').toLowerCase().includes(q) || (p.payment_method || '').toLowerCase().includes(q);
   });
-  const total = (pmts || []).reduce((s, p) => s + Number(p.amount || 0), 0);
+  const total = filtered.reduce((s, p) => s + Number(p.amount || 0), 0);
   function fmtDate(d) {
     if (!d) return '—';
     try {
@@ -11877,7 +11960,7 @@ function ReceiptsView({
     }
   }, "All recorded payments. Click \uD83D\uDDA8 to print a receipt.")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "small subtle"
-  }, "Total collected"), /*#__PURE__*/React.createElement("div", {
+  }, "Total collected", branchFilter ? ' (filtered)' : ''), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 22,
       fontWeight: 800,
@@ -11887,17 +11970,22 @@ function ReceiptsView({
     style: {
       display: 'flex',
       gap: 8,
-      alignItems: 'center'
+      alignItems: 'center',
+      flexWrap: 'wrap'
     }
   }, /*#__PURE__*/React.createElement("input", {
     className: "input",
     style: {
       flex: 1,
-      maxWidth: 360
+      maxWidth: 320
     },
     placeholder: "Search receipt #, invoice #, account, method\u2026",
     value: searchQ,
     onChange: e => setSearchQ(e.target.value)
+  }), /*#__PURE__*/React.createElement(BranchFilterPills, {
+    branches: branches,
+    value: branchFilter,
+    onChange: setBranchFilter
   }), /*#__PURE__*/React.createElement("span", {
     className: "small subtle"
   }, filtered.length, " / ", (pmts || []).length))), /*#__PURE__*/React.createElement("div", {
@@ -14083,6 +14171,7 @@ function methodLabel(m) {
 // Helper: resolve swimmer names for a group line
 
 function InvoicesView({
+  branches,
   invoices,
   invoiceLines,
   pmts,
@@ -14109,6 +14198,7 @@ function InvoicesView({
   const [searchQ, setSearchQ] = useState('');
   const [expandedId, setExpandedId] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [branchFilter, setBranchFilter] = useState(null);
   const today = todayStr();
   function isOverdue(inv) {
     return inv.due_date && inv.due_date < today && inv.status !== 'paid' && inv.status !== 'void';
@@ -14131,13 +14221,14 @@ function InvoicesView({
   }, [invoices]);
   const filtered = useMemo(() => {
     let list = invoices.slice();
+    if (branchFilter) list = list.filter(i => i.branch_id === branchFilter);
     if (statusFilter === 'overdue') list = list.filter(i => isOverdue(i));else if (statusFilter !== 'all') list = list.filter(i => i.status === statusFilter);
     if (searchQ.trim()) {
       const q = searchQ.toLowerCase();
       list = list.filter(i => (i.invoice_number || '').toLowerCase().includes(q) || (i.account_name || '').toLowerCase().includes(q));
     }
     return list.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
-  }, [invoices, statusFilter, searchQ]);
+  }, [invoices, statusFilter, searchQ, branchFilter]);
   function toggleSelect(id) {
     const s = new Set(selectedIds);
     s.has(id) ? s.delete(id) : s.add(id);
@@ -14192,7 +14283,11 @@ function InvoicesView({
       alignItems: 'center',
       marginBottom: 8
     }
-  }, [['all', 'All'], ['draft', 'Draft'], ['sent', 'Sent'], ['partial', 'Part Paid'], ['paid', 'Paid'], ['void', 'Void'], ['overdue', 'Overdue']].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement(BranchFilterPills, {
+    branches: branches,
+    value: branchFilter,
+    onChange: setBranchFilter
+  }), [['all', 'All'], ['draft', 'Draft'], ['sent', 'Sent'], ['partial', 'Part Paid'], ['paid', 'Paid'], ['void', 'Void'], ['overdue', 'Overdue']].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
     key: k,
     className: `tab ${statusFilter === k ? 'active' : ''}`,
     style: {
