@@ -2805,7 +2805,15 @@ function App(){
         onToggleInstructor={toggleInstructor}
         onClearInstructors={clearInstructors}
         instructorFilterActive={selectedInstructors.size > 0}
-        weekPendingReplacements={replacementPending.filter(p => p.week_start_date === selectedWeekStart)}
+        weekPendingReplacements={replacementPending.filter(p => {
+          if(p.week_start_date !== selectedWeekStart) return false;
+          // Branch filter: only show replacements whose student belongs to the current branch
+          if(currentBranchId && currentBranchId !== 'all'){
+            const stu = studentById[p.student_id];
+            if(stu && stu.branchId && stu.branchId !== currentBranchId) return false;
+          }
+          return true;
+        })}
         lessonTypeById={lessonTypeById}
         studentById={studentById}
         onCancelPendingReplacement={cancelPendingReplacement}
@@ -3221,26 +3229,22 @@ function WeekView(props){
       {(weekPendingReplacements || []).length > 0 && <div className="pending-repl-card">
         <div className="pending-repl-head">
           <span className="pending-repl-badge" aria-hidden="true">R</span>
-          <div>
-            <div className="pending-repl-title">Pending Replacements · {weekPendingReplacements.length}</div>
-            <div className="pending-repl-sub">Swimmers in limbo for this week — credit untouched until they're placed in another class. Cancel below to put them back in their original class (or clear the limbo state).</div>
-          </div>
+          <div className="pending-repl-title">Pending Replacements · {weekPendingReplacements.length}</div>
         </div>
-        <div className="pending-repl-list">
+        <div className="pending-repl-grid">
           {weekPendingReplacements.map(p => {
             const stu = studentById ? studentById[p.student_id] : null;
             const lt = lessonTypeById ? lessonTypeById(p.lesson_type_id) : null;
             const stillExists = (props.weekBlocks || []).some(day => (day.packed || []).some(b => b.id === p.original_session_id));
             const datePassed = p.week_start_date && p.week_start_date < (new Date().toISOString().slice(0,10));
-            return <div key={p.id} className="pending-repl-row">
-              <div className="pending-repl-info">
-                <span className="pending-repl-name">{stu ? `${stu.name}${stu.age != null ? ` (${stu.age})` : ''}` : '(unknown swimmer)'}</span>
-                <span className="pending-repl-meta">{lt ? lt.name : p.lesson_type_id} · from {p.original_session_label}{!stillExists ? ' · original class deleted' : ''}</span>
-                {p.notes && <span className="pending-repl-remark">📝 {p.notes}</span>}
-                {stu?.remark && <span className="pending-repl-remark">💬 {stu.remark}</span>}
-                {datePassed && <span className="pending-repl-passed">⚠️ Original week ({p.week_start_date}) has passed</span>}
-              </div>
-              <button type="button" className="btn btn-ghost small" onClick={()=>onCancelPendingReplacement && onCancelPendingReplacement(p, { restore: true })} title={stillExists ? `Cancel — restore to ${p.original_session_label}` : 'Original class no longer exists — clearing the limbo state only'}>{stillExists ? 'Cancel & restore' : 'Cancel only'}</button>
+            return <div key={p.id} className={`pending-repl-chip${datePassed?' repl-chip-passed':''}`}>
+              <div className="repl-chip-name">{stu ? stu.name : '?'}{stu?.age != null ? <span className="repl-chip-age"> {stu.age}y</span> : null}</div>
+              <div className="repl-chip-meta">{lt ? lt.name : '—'} · {p.original_session_label || '?'}</div>
+              {datePassed && <div className="repl-chip-warn">⚠ past date</div>}
+              {!stillExists && <div className="repl-chip-warn">⚠ slot deleted</div>}
+              <button type="button" className="repl-chip-btn" onClick={()=>onCancelPendingReplacement && onCancelPendingReplacement(p, { restore: true })} title={stillExists ? `Cancel — restore to ${p.original_session_label}` : 'Original class deleted — clear limbo only'}>
+                {stillExists ? 'Restore' : 'Clear'}
+              </button>
             </div>;
           })}
         </div>
