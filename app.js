@@ -2749,6 +2749,7 @@ function App(){
       <button className={`sub-tab ${accountSection==='pendingCredits'?'active':''}`} onClick={()=>setAccountSection('pendingCredits')}>Pending Credits</button>
       <button className={`sub-tab ${accountSection==='aging'?'active':''}`} onClick={()=>setAccountSection('aging')}>Aging</button>
       <button className={`sub-tab ${accountSection==='codes'?'active':''}`} onClick={()=>setAccountSection('codes')}>Discounts</button>
+      <button className={`sub-tab ${accountSection==='reports'?'active':''}`} onClick={()=>setAccountSection('reports')}>Reports</button>
     </div></div>}
 
     {/* ── Sub-bar: admin tabs ── */}
@@ -2964,7 +2965,13 @@ function App(){
         groupById={id => groupById[id]} lessonTypeById={lessonTypeById}
         packageById={packageById} onConfirm={confirmCredit} onReverse={reverseCredit}
       />}
-      {!loading && view==='accounts' && accountSection==='aging' && <AgingReportView invoices={invoices} pmts={pmts} />}
+      {!loading && view==='accounts' && accountSection==='aging' && <AgingReportView invoices={invoices} pmts={pmts} branches={options.branches||[]} />}
+      {!loading && view==='accounts' && accountSection==='reports' && <ReportsView
+        invoices={invoices} pmts={pmts} pendingCredits={pendingCredits}
+        students={students} sessions={sessions}
+        branches={options.branches||[]} lessonTypes={activeLessonTypes()}
+        lessonTypeById={lessonTypeById}
+      />}
       {!loading && view==='accounts' && accountSection==='codes' && <SettingsView
         section="codes" options={options}
         addOption={addOption} toggleOption={toggleOption} deleteOption={deleteOption}
@@ -6516,14 +6523,269 @@ function PendingCreditsView({ branches, pendingCredits, invoices, studentById, f
 }
 
 
-function AgingReportView({ invoices, pmts }){
-  const [sortBy,setSortBy]=useState('outstanding'); // outstanding | account | oldest
+// ── ReportsView ───────────────────────────────────────────────────────────────
+function ReportsView({ invoices, pmts, pendingCredits, students, sessions, branches, lessonTypes, lessonTypeById }){
+  const [report, setReport] = useState('revenue');
+  const [dateFrom, setDateFrom] = useState(() => {
+    const d = new Date(); d.setMonth(d.getMonth()-11); d.setDate(1);
+    return toDateStr(d);
+  });
+  const [dateTo, setDateTo] = useState(todayStr());
+  const rm = v => `RM ${Number(v).toFixed(2)}`;
+
+  // Filter payments by date range
+  const filteredPmts = pmts.filter(p => {
+    const d = p.payment_date || '';
+    return (!dateFrom || d >= dateFrom) && (!dateTo || d <= dateTo);
+  });
+
+  // Invoice lookup
+  const invById = {};
+  invoices.forEach(i => { invById[i.id] = i; });
+
+  // Branch lookup
+  const branchById2 = {};
+  branches.forEach(b => { branchById2[b.id] = b; });
+
+  // ── Revenue summary ─────────────────────────────────────────────────────────
+  const totalRevenue = filteredPmts.reduce((s,p)=>s+Number(p.amount||0),0);
+  const totalInvoiced = invoices.filter(i=>{
+    const d=i.issue_date||''; return(!dateFrom||d>=dateFrom)&&(!dateTo||d<=dateTo);
+  }).reduce((s,i)=>s+Number(i.total_amount||0),0);
+  const outstanding = totalInvoiced - totalRevenue;
+
+  // ── Revenue by branch ───────────────────────────────────────────────────────
+  const byBranch = {};
+  filteredPmts.forEach(p=>{
+    const inv = invById[p.invoice_id];
+    const bid = inv?.branch_id || '__none__';
+    if(!byBranch[bid]) byBranch[bid]={ name: branchById2[bid]?.name || (bid==='__none__'?'No branch assigned':bid), revenue:0, invoiced:0, count:0 };
+    byBranch[bid].revenue += Number(p.amount||0);
+    byBranch[bid].count++;
+  });
+  // Also tally invoiced amounts by branch
+  invoices.filter(i=>{ const d=i.issue_date||''; return(!dateFrom||d>=dateFrom)&&(!dateTo||d<=dateTo); }).forEach(i=>{
+    const bid=i.branch_id||'__none__';
+    if(!byBranch[bid]) byBranch[bid]={name:branchById2[bid]?.name||(bid==='__none__'?'No branch':bid),revenue:0,invoiced:0,count:0};
+    byBranch[bid].invoiced+=Number(i.total_amount||0);
+  });
+  const branchRows = Object.values(byBranch).sort((a,b)=>b.revenue-a.revenue);
+
+  // ── Revenue by lesson type ───────────────────────────────────────────────────
+  const byLT = {};
+  invoices.filter(i=>{ const d=i.issue_date||''; return(!dateFrom||d>=dateFrom)&&(!dateTo||d<=dateTo); }).forEach(inv=>{
+    // lesson type is on invoice_lines — we don't have lines here, so approximate via pmts matched to inv
+  });
+  // Use sessions lesson type + active students as a proxy
+  const ltStudentMap = {};
+  sessions.forEach(s=>{
+    const lt = lessonTypeById(s.lessonTypeId||s.type);
+    const key = lt?.name || s.type || 'Unknown';
+    if(!ltStudentMap[key]) ltStudentMap[key]={ name:key, students:new Set(), sessions:0 };
+    ltStudentMap[key].sessions++;
+    (s.students||[]).forEach(stu=>ltStudentMap[key].students.add(stu.studentId||stu.name));
+  });
+  const ltRows = Object.values(ltStudentMap).sort((a,b)=>b.students.size-a.students.size);
+
+  // ── Month-by-month revenue ──────────────────────────────────────────────────
+  const monthMap = {};
+  filteredPmts.forEach(p=>{
+    const mk = (p.payment_date||'').slice(0,7); // YYYY-MM
+    if(!mk) return;
+    if(!monthMap[mk]) monthMap[mk]={ month:mk, revenue:0, count:0 };
+    monthMap[mk].revenue += Number(p.amount||0);
+    monthMap[mk].count++;
+  });
+  const monthRows = Object.values(monthMap).sort((a,b)=>a.month.localeCompare(b.month));
+  const maxRevenue = monthRows.length ? Math.max(...monthRows.map(m=>m.revenue)) : 1;
+
+  // ── Month-by-month credit consumption (class attendance proxy) ──────────────
+  const creditMap = {};
+  (pendingCredits||[]).filter(pc=>pc.status==='confirmed').forEach(pc=>{
+    const mk = (pc.created_at||pc.updated_at||'').slice(0,7);
+    if(!mk) return;
+    if(!creditMap[mk]) creditMap[mk]={ month:mk, credits:0 };
+    creditMap[mk].credits += Number(pc.credits_per_swimmer||pc.amount||pc.initial_balance||4);
+  });
+  const creditRows = Object.values(creditMap).sort((a,b)=>a.month.localeCompare(b.month));
+
+  const tabs = [
+    ['revenue','Revenue Summary'],
+    ['branch','By Branch'],
+    ['lessonType','By Lesson Type'],
+    ['monthly','Monthly Revenue'],
+    ['credits','Credit Consumption'],
+  ];
+
+  function fmtMonth(mk){
+    try{ const [y,m]=mk.split('-'); return new Date(y,m-1,1).toLocaleDateString(undefined,{month:'short',year:'numeric'}); }catch(_){return mk;}
+  }
+
+  return <>
+    <div className="card" style={{marginBottom:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap',marginBottom:12}}>
+        <div><div style={{fontSize:18,fontWeight:800}}>Reports & Analytics</div>
+          <div className="small subtle">Financial performance and operational metrics.</div>
+        </div>
+        <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+          <span className="small subtle">Period:</span>
+          <input type="date" className="input" style={{width:145,padding:'4px 8px',fontSize:12}} value={dateFrom} onChange={e=>setDateFrom(e.target.value)} />
+          <span className="small subtle">to</span>
+          <input type="date" className="input" style={{width:145,padding:'4px 8px',fontSize:12}} value={dateTo} onChange={e=>setDateTo(e.target.value)} />
+        </div>
+      </div>
+      <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+        {tabs.map(([k,l])=><button key={k} className={`sub-tab ${report===k?'active':''}`} style={{padding:'4px 12px',fontSize:12}} onClick={()=>setReport(k)}>{l}</button>)}
+      </div>
+    </div>
+
+    {/* ── Revenue Summary ── */}
+    {report==='revenue' && <>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:12}}>
+        {[
+          ['Total Collected','var(--green-tx)',rm(totalRevenue),'Payments received in period'],
+          ['Total Invoiced','var(--primary)',rm(totalInvoiced),'Invoices issued in period'],
+          ['Outstanding','var(--amber-tx)',rm(Math.max(0,outstanding)),'Invoiced but not yet paid'],
+        ].map(([label,color,value,sub])=><div key={label} className="card">
+          <div className="small subtle">{label}</div>
+          <div style={{fontSize:26,fontWeight:800,color,marginTop:2}}>{value}</div>
+          <div className="small subtle" style={{marginTop:4}}>{sub}</div>
+        </div>)}
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12}}>
+        {[
+          ['Active Accounts',(()=>new Set(students.filter(s=>s.isActive!==false).map(s=>s.guardianEmail||s.guardianName)).size)(),'var(--text)'],
+          ['Total Swimmers',students.filter(s=>s.isActive!==false).length,'var(--text)'],
+          ['Sessions Scheduled',sessions.length,'var(--text)'],
+        ].map(([label,value,color])=><div key={label} className="card">
+          <div className="small subtle">{label}</div>
+          <div style={{fontSize:26,fontWeight:800,color,marginTop:2}}>{value}</div>
+        </div>)}
+      </div>
+    </>}
+
+    {/* ── By Branch ── */}
+    {report==='branch' && <div className="card" style={{padding:0,overflow:'hidden'}}>
+      <div className="table-wrap" style={{border:'none',borderRadius:0}}>
+        <table><thead><tr>
+          <th>Branch</th>
+          <th style={{textAlign:'right'}}>Total Invoiced</th>
+          <th style={{textAlign:'right'}}>Revenue Collected</th>
+          <th style={{textAlign:'right'}}>Collection Rate</th>
+          <th style={{textAlign:'right'}}>Transactions</th>
+        </tr></thead><tbody>
+          {branchRows.length===0&&<tr><td colSpan={5} className="empty">No data in period.</td></tr>}
+          {branchRows.map(r=><tr key={r.name}>
+            <td style={{fontWeight:600}}>{r.name}</td>
+            <td style={{textAlign:'right'}}>{rm(r.invoiced)}</td>
+            <td style={{textAlign:'right',color:'var(--green-tx)',fontWeight:700}}>{rm(r.revenue)}</td>
+            <td style={{textAlign:'right'}}>{r.invoiced>0?Math.round(r.revenue/r.invoiced*100)+'%':'—'}</td>
+            <td style={{textAlign:'right'}}>{r.count}</td>
+          </tr>)}
+          {branchRows.length>1&&<tr style={{borderTop:'2px solid var(--border)',fontWeight:800}}>
+            <td>Total</td>
+            <td style={{textAlign:'right'}}>{rm(branchRows.reduce((s,r)=>s+r.invoiced,0))}</td>
+            <td style={{textAlign:'right',color:'var(--green-tx)'}}>{rm(totalRevenue)}</td>
+            <td style={{textAlign:'right'}}>{totalInvoiced>0?Math.round(totalRevenue/totalInvoiced*100)+'%':'—'}</td>
+            <td style={{textAlign:'right'}}>{filteredPmts.length}</td>
+          </tr>}
+        </tbody></table>
+      </div>
+    </div>}
+
+    {/* ── By Lesson Type ── */}
+    {report==='lessonType' && <div className="card" style={{padding:0,overflow:'hidden'}}>
+      <div style={{padding:'12px 14px 8px',fontSize:12,color:'var(--text-3)'}}>
+        Based on active scheduled sessions. Revenue per lesson type requires invoice lines — shown as student load proxy.
+      </div>
+      <div className="table-wrap" style={{border:'none',borderRadius:0}}>
+        <table><thead><tr>
+          <th>Lesson Type</th>
+          <th style={{textAlign:'right'}}>Active Sessions</th>
+          <th style={{textAlign:'right'}}>Unique Swimmers</th>
+          <th>Load Bar</th>
+        </tr></thead><tbody>
+          {ltRows.length===0&&<tr><td colSpan={4} className="empty">No session data.</td></tr>}
+          {ltRows.map(r=><tr key={r.name}>
+            <td style={{fontWeight:600}}>{r.name}</td>
+            <td style={{textAlign:'right'}}>{r.sessions}</td>
+            <td style={{textAlign:'right',fontWeight:700,color:'var(--primary)'}}>{r.students.size}</td>
+            <td style={{width:'35%',paddingRight:16}}>
+              <div style={{height:8,borderRadius:4,background:'var(--border)',overflow:'hidden'}}>
+                <div style={{height:'100%',borderRadius:4,background:'var(--primary)',width:Math.round(r.students.size/Math.max(...ltRows.map(x=>x.students.size))*100)+'%'}} />
+              </div>
+            </td>
+          </tr>)}
+        </tbody></table>
+      </div>
+    </div>}
+
+    {/* ── Monthly Revenue ── */}
+    {report==='monthly' && <>
+      {monthRows.length===0&&<div className="card empty" style={{padding:28}}>No payment data in this period.</div>}
+      {monthRows.length>0&&<div className="card" style={{marginBottom:12}}>
+        <div style={{fontWeight:700,marginBottom:10,fontSize:13}}>Monthly Revenue — {fmtMonth(monthRows[0]?.month)} to {fmtMonth(monthRows[monthRows.length-1]?.month)}</div>
+        <div style={{display:'flex',flexDirection:'column',gap:6}}>
+          {monthRows.map(m=><div key={m.month} style={{display:'grid',gridTemplateColumns:'90px 1fr 100px',gap:10,alignItems:'center'}}>
+            <span style={{fontSize:12,fontWeight:600,color:'var(--text-2)'}}>{fmtMonth(m.month)}</span>
+            <div style={{height:22,borderRadius:5,background:'var(--border)',overflow:'hidden'}}>
+              <div style={{height:'100%',borderRadius:5,background:'var(--green-tx)',width:Math.round(m.revenue/maxRevenue*100)+'%',minWidth:2}} />
+            </div>
+            <span style={{fontSize:12,fontWeight:700,color:'var(--green-tx)',textAlign:'right'}}>{rm(m.revenue)}</span>
+          </div>)}
+        </div>
+        <div style={{marginTop:14,paddingTop:10,borderTop:'1px solid var(--border)',display:'flex',gap:20}}>
+          <div><span className="small subtle">Period total: </span><span style={{fontWeight:700,color:'var(--green-tx)'}}>{rm(monthRows.reduce((s,m)=>s+m.revenue,0))}</span></div>
+          <div><span className="small subtle">Monthly avg: </span><span style={{fontWeight:700}}>{rm(monthRows.reduce((s,m)=>s+m.revenue,0)/monthRows.length)}</span></div>
+          <div><span className="small subtle">Best month: </span><span style={{fontWeight:700}}>{fmtMonth(monthRows.slice().sort((a,b)=>b.revenue-a.revenue)[0]?.month)}</span></div>
+        </div>
+      </div>}
+    </>}
+
+    {/* ── Credit Consumption ── */}
+    {report==='credits' && <>
+      <div className="card" style={{marginBottom:12,padding:'10px 14px'}}>
+        <div className="small subtle">Credit consumption is based on confirmed pending credits — each confirmation represents lessons purchased by families. Higher consumption = higher class attendance activity.</div>
+      </div>
+      {creditRows.length===0&&<div className="card empty" style={{padding:28}}>No confirmed credit data available.</div>}
+      {creditRows.length>0&&<div className="card">
+        <div style={{fontWeight:700,marginBottom:10,fontSize:13}}>Monthly Credit Consumption</div>
+        {(()=>{ const maxC=Math.max(...creditRows.map(m=>m.credits)); return <>
+          <div style={{display:'flex',flexDirection:'column',gap:6}}>
+            {creditRows.map(m=><div key={m.month} style={{display:'grid',gridTemplateColumns:'90px 1fr 80px',gap:10,alignItems:'center'}}>
+              <span style={{fontSize:12,fontWeight:600,color:'var(--text-2)'}}>{fmtMonth(m.month)}</span>
+              <div style={{height:22,borderRadius:5,background:'var(--border)',overflow:'hidden'}}>
+                <div style={{height:'100%',borderRadius:5,background:'var(--primary)',width:Math.round(m.credits/maxC*100)+'%',minWidth:2}} />
+              </div>
+              <span style={{fontSize:12,fontWeight:700,color:'var(--primary)',textAlign:'right'}}>{m.credits} cr</span>
+            </div>)}
+          </div>
+          <div style={{marginTop:14,paddingTop:10,borderTop:'1px solid var(--border)',display:'flex',gap:20}}>
+            <div><span className="small subtle">Total credits: </span><span style={{fontWeight:700,color:'var(--primary)'}}>{creditRows.reduce((s,m)=>s+m.credits,0)} cr</span></div>
+            <div><span className="small subtle">Monthly avg: </span><span style={{fontWeight:700}}>{Math.round(creditRows.reduce((s,m)=>s+m.credits,0)/creditRows.length)} cr</span></div>
+          </div>
+        </>; })()}
+      </div>}
+    </>}
+  </>;
+}
+
+function AgingReportView({ invoices, pmts, branches }){
+  const [sortBy,setSortBy]=useState('outstanding');
+  const [dateFrom,setDateFrom]=useState('');
+  const [dateTo,setDateTo]=useState('');
   const today=todayStr();
   const todayMs=new Date(today).getTime();
 
-  // Group by account_name
+  // Filter invoices by date range (issue_date)
+  const filteredInvs=invoices.filter(inv=>{
+    if(dateFrom && inv.issue_date && inv.issue_date < dateFrom) return false;
+    if(dateTo   && inv.issue_date && inv.issue_date > dateTo)   return false;
+    return true;
+  });
+
   const accountMap={};
-  invoices.forEach(inv=>{
+  filteredInvs.forEach(inv=>{
     const key=inv.account_name;
     if(!accountMap[key]) accountMap[key]={ account:key, invoices:[], totalInvoiced:0, totalPaid:0 };
     accountMap[key].invoices.push(inv);
@@ -6533,7 +6795,6 @@ function AgingReportView({ invoices, pmts }){
 
   const rows=Object.values(accountMap).map(a=>{
     const outstanding=Math.max(0,a.totalInvoiced-a.totalPaid);
-    // Age unpaid invoices
     let current=0,d1_30=0,d31_60=0,d60plus=0;
     a.invoices.forEach(inv=>{
       if(inv.status==='paid'||inv.status==='void') return;
@@ -6561,24 +6822,34 @@ function AgingReportView({ invoices, pmts }){
 
   const totals=rows.reduce((s,r)=>({ invoiced:s.invoiced+r.totalInvoiced, paid:s.paid+r.totalPaid, outstanding:s.outstanding+r.outstanding, current:s.current+r.current, d1_30:s.d1_30+r.d1_30, d31_60:s.d31_60+r.d31_60, d60plus:s.d60plus+r.d60plus }),{ invoiced:0,paid:0,outstanding:0,current:0,d1_30:0,d31_60:0,d60plus:0 });
 
-  const rm=(v)=>`RM${v.toFixed(2)}`;
+  const rm=(v)=>`RM ${v.toFixed(2)}`;
 
   return <>
     <div className="card" style={{marginBottom:12}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap',marginBottom:10}}>
-        <div><div style={{fontSize:18,fontWeight:800}}>\ud83d\udcc8 Aging Report</div><div className="small subtle">Outstanding balances by account with age buckets based on invoice due dates. As of {today}.</div></div>
+        <div>
+          <div style={{fontSize:18,fontWeight:800}}>Aging Report</div>
+          <div className="small subtle">Outstanding balances by account, bucketed by how overdue they are. As of {today}.</div>
+        </div>
         <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
-          <div><div className="small subtle">Total Outstanding</div><div style={{fontSize:20,fontWeight:800,color:'#F59E0B'}}>{rm(totals.outstanding)}</div></div>
-          <div><div className="small subtle" style={{color:'#EF4444'}}>60+ Days</div><div style={{fontSize:20,fontWeight:800,color:'#EF4444'}}>{rm(totals.d60plus)}</div></div>
+          <div><div className="small subtle">Total Outstanding</div><div style={{fontSize:20,fontWeight:800,color:'var(--amber-tx)'}}>{rm(totals.outstanding)}</div></div>
+          <div><div className="small subtle" style={{color:'var(--red-tx)'}}>60+ Days</div><div style={{fontSize:20,fontWeight:800,color:'var(--red-tx)'}}>{rm(totals.d60plus)}</div></div>
         </div>
       </div>
-      <div style={{display:'flex',gap:6}}>
-        <span className="small subtle" style={{marginRight:4}}>Sort:</span>
-        {[['outstanding','By Outstanding'],['account','By Account'],['oldest','By Oldest Due']].map(([k,l])=><button key={k} className={`tab ${sortBy===k?'active':''}`} style={{padding:'4px 10px',fontSize:11,borderRadius:6}} onClick={()=>setSortBy(k)}>{l}</button>)}
+      <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+        <span className="small subtle">Date range (issue date):</span>
+        <input type="date" className="input" style={{width:150,padding:'4px 8px',fontSize:12}} value={dateFrom} onChange={e=>setDateFrom(e.target.value)} />
+        <span className="small subtle">to</span>
+        <input type="date" className="input" style={{width:150,padding:'4px 8px',fontSize:12}} value={dateTo} onChange={e=>setDateTo(e.target.value)} />
+        {(dateFrom||dateTo)&&<button className="btn btn-ghost small" onClick={()=>{setDateFrom('');setDateTo('');}}>Clear</button>}
+        <span style={{marginLeft:'auto',display:'flex',gap:6,alignItems:'center'}}>
+          <span className="small subtle">Sort:</span>
+          {[['outstanding','Outstanding'],['account','Account'],['oldest','Oldest Due']].map(([k,l])=><button key={k} className={`tab ${sortBy===k?'active':''}`} style={{padding:'4px 10px',fontSize:11,borderRadius:6}} onClick={()=>setSortBy(k)}>{l}</button>)}
+        </span>
       </div>
     </div>
 
-    {rows.length===0&&<div className="card empty" style={{padding:28}}>No invoiced accounts yet.</div>}
+    {rows.length===0&&<div className="card empty" style={{padding:28}}>No invoiced accounts{dateFrom||dateTo?' in this date range':''} yet.</div>}
 
     {rows.length>0&&<div className="table-wrap">
       <table>
@@ -6589,9 +6860,9 @@ function AgingReportView({ invoices, pmts }){
             <th className="num">Paid</th>
             <th className="num">Outstanding</th>
             <th className="num" title="Not yet due">Current</th>
-            <th className="num" style={{color:'#F59E0B'}}>1\u201330d</th>
-            <th className="num" style={{color:'#F97316'}}>31\u201360d</th>
-            <th className="num" style={{color:'#EF4444'}}>60+d</th>
+            <th className="num" style={{color:'var(--amber-tx)'}}>1–30d</th>
+            <th className="num" style={{color:'#F97316'}}>31–60d</th>
+            <th className="num" style={{color:'var(--red-tx)'}}>60+d</th>
             <th className="num">Open Inv.</th>
           </tr>
         </thead>
