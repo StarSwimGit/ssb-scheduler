@@ -628,6 +628,9 @@ function App(){
       packages: packages || [],
       branches: branches || []
     });
+    // Expose branches to module-level print helpers (printInvoice, printReceipt)
+    // which sit outside the App component and need to resolve invoice.branch_id.
+    try{ window.__SSB_BRANCHES__ = branches || []; }catch(_){}
   }
 
   // M2: students are loaded via PostgREST resource embedding (nested inside
@@ -2771,6 +2774,7 @@ function App(){
         pools={activePools()}
         selectedPoolId={selectedPoolId}
         setSelectedPoolId={setSelectedPoolId}
+        branchLabel={currentBranchId && currentBranchId!=='all' ? (branchById(currentBranchId)?.name || '') : 'All Branches'}
         gridBounds={gridBounds}
         gridSlots={gridSlots}
         slotToMinute={slotToMinute}
@@ -2820,6 +2824,7 @@ function App(){
         selectedDate={selectedDate} setSelectedDate={setSelectedDate}
         sessionsForDate={filteredSessionsForDate} colorsFor={colorsFor}
         lessonTypeByName={lessonTypeByName} poolById={poolById}
+        branchLabel={currentBranchId && currentBranchId!=='all' ? (branchById(currentBranchId)?.name || '') : 'All Branches'}
         onAddAtTime={openAddAtTime} onEdit={openEdit}
         onReorderSlot={saveDragOrder}
         selectedWeekStart={selectedWeekStart}
@@ -3244,7 +3249,7 @@ function WeekView(props){
     </div>
 
     <div className="print-rundown">
-      <div className="print-title">Weekly Daily Rundown</div>
+      <div className="print-title">Weekly Daily Rundown{props.branchLabel ? ` — ${props.branchLabel}` : ''}</div>
       <div className="print-meta">{wb.start.toLocaleDateString()} to {wb.end.toLocaleDateString()}</div>
       {printDays.map(({date, ds, items}) => <div className="print-day" key={ds}>
         <h3>{date.toLocaleDateString(undefined,{weekday:'long', year:'numeric', month:'long', day:'numeric'})}</h3>
@@ -3261,7 +3266,7 @@ function WeekView(props){
         </tbody></table>
       </div>)}
     </div>
-    <PrintWeeklyTableSection weekBlocksAllPools={weekBlocksAllPools} wb={wb} selectedWeekStart={selectedWeekStart} gridSlots={gridSlots} gridBounds={gridBounds} slotToMinute={slotToMinute} poolById={poolById} />
+    <PrintWeeklyTableSection weekBlocksAllPools={weekBlocksAllPools} wb={wb} selectedWeekStart={selectedWeekStart} gridSlots={gridSlots} gridBounds={gridBounds} slotToMinute={slotToMinute} poolById={poolById} branchLabel={props.branchLabel} />
   </>;
 }
 
@@ -3337,7 +3342,7 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
 // DailyView (M2: pool labels on each session)
 // ============================================================================
 
-function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, lessonTypeByName, poolById, onAddAtTime, onEdit, selectedWeekStart, currentWeekStart, onPrevWeek, onNextWeek, onThisWeek, onExportExcel, activeLessonTypes, isTypeEnabled, onToggleType, onToggleAllTypes, allTypesShown, activeInstructors, isInstructorActive, onToggleInstructor, onClearInstructors, instructorFilterActive, trialStudentIds, trialByLessonType, creditByKey, onReorderSlot }){
+function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, lessonTypeByName, poolById, branchLabel, onAddAtTime, onEdit, selectedWeekStart, currentWeekStart, onPrevWeek, onNextWeek, onThisWeek, onExportExcel, activeLessonTypes, isTypeEnabled, onToggleType, onToggleAllTypes, allTypesShown, activeInstructors, isInstructorActive, onToggleInstructor, onClearInstructors, instructorFilterActive, trialStudentIds, trialByLessonType, creditByKey, onReorderSlot }){
   const wb = weekBounds(selectedDate);
   const weekDays = Array.from({length:7}, (_,i) => { const d = new Date(wb.start); d.setDate(wb.start.getDate()+i); return { date:d, ds:toDateStr(d), idx:i }; });
   const items = sessionsForDate(selectedDate);
@@ -3507,7 +3512,7 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
       </div>
     </div>
     <div className="print-daily">
-      <div className="print-daily-heading">Daily Schedule</div>
+      <div className="print-daily-heading">Daily Schedule{branchLabel ? ` — ${branchLabel}` : ''}</div>
       <div className="print-daily-date">{longDate(selectedDate)}</div>
       <table className="print-daily-table">
         <thead>
@@ -3809,6 +3814,10 @@ function SettingsView({ section, options, status, addOption, toggleOption, delet
               <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
               <div style={{fontWeight:600}}>{r.name}</div>
               <input className="input" style={{width:74,padding:'4px 8px',fontSize:12}} type="number" defaultValue={r.capacity_total} onBlur={(e)=>{ const v = Number(e.target.value); if(v > 0 && v !== r.capacity_total) patchOption('pools', r.id, { capacity_total: v }); }} />
+              {(options.branches||[]).length > 0 && <select className="select" style={{width:140,padding:'4px 8px',fontSize:12}} value={r.branch_id || ''} onChange={(e)=>patchOption('pools', r.id, { branch_id: e.target.value || null })} title="Which branch this pool belongs to">
+                <option value="">No branch</option>
+                {(options.branches||[]).filter(b => b.is_active !== false).map(b => <option key={b.id} value={b.id}>{b.name}{b.code?` (${b.code})`:''}</option>)}
+              </select>}
             </div>
             <div style={{display:'flex',gap:6}}>
               <button className="btn btn-ghost small" onClick={()=>toggleOption('pools',r)}>{r.is_active?'Hide':'Show'}</button>
@@ -3859,7 +3868,7 @@ function SettingsView({ section, options, status, addOption, toggleOption, delet
           const assigned = (lessonTypeCounts && lessonTypeCounts.__bySessionInstructor && lessonTypeCounts.__bySessionInstructor[r.id]) || 0; // not provided; computed below in row instead
           return editingInstructorId === r.id
             ? <div key={r.id} className="row-item" style={{display:'block'}}>
-                <InstructorEditor row={r} onCancel={()=>setEditingInstructorId(null)} onSave={(patch)=>{ patchOption('scheduler_instructors', r.id, patch); setEditingInstructorId(null); }} />
+                <InstructorEditor row={r} branches={options.branches} onCancel={()=>setEditingInstructorId(null)} onSave={(patch)=>{ patchOption('scheduler_instructors', r.id, patch); setEditingInstructorId(null); }} />
               </div>
             : <div key={r.id} className={`row-item ${dragClass('inst', idx)}`} {...dragProps('inst', 'scheduler_instructors', options.instructors, idx)}>
                 <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'nowrap',minWidth:0,overflow:'hidden'}}>
@@ -3867,6 +3876,7 @@ function SettingsView({ section, options, status, addOption, toggleOption, delet
                   <span className="pill" style={{fontSize:10,padding:'2px 7px',background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD',flexShrink:0}}>{r.is_active?'Active':'Hidden'}</span>
                   <div style={{fontWeight:700,fontSize:12,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',minWidth:0}}>{r.name}</div>
                   {r.gender ? <span className={`gender-chip gender-chip-${r.gender}`} style={{fontSize:10,padding:'2px 6px',flexShrink:0}} title={r.gender==='female'?'Female':'Male'}>{r.gender==='female'?'♀':'♂'}</span> : null}
+                  {r.primary_branch_id && (() => { const b = (options.branches||[]).find(x => x.id === r.primary_branch_id); return b ? <span style={{fontSize:10,padding:'2px 6px',background:'var(--surface-2)',border:'1px solid var(--border)',borderRadius:4,color:'var(--text-3)',fontFamily:'monospace',flexShrink:0}} title={`Primary branch: ${b.name}`}>🏢 {b.code||b.name}</span> : null; })()}
                 </div>
                 <div style={{display:'flex',gap:6}}>
                   <button className="btn btn-ghost small" onClick={()=>setEditingInstructorId(r.id)}>Edit</button>
@@ -4284,10 +4294,11 @@ function CodeEditor({ initial, students, packages, onCancel, onSave }){
 // reorder with ↑/↓, hide, delete. Same controls as the old top-level card but
 // scoped to its lesson type — so each type owns its Normal, Trial, Family 3…
 // Inline editor for an instructor: rename + Female/Male toggle.
-function InstructorEditor({ row, onSave, onCancel }){
+function InstructorEditor({ row, onSave, onCancel, branches }){
   const [name, setName] = useState(row.name || '');
   const [gender, setGender] = useState(row.gender || null);
-  function apply(){ const v = (name || '').trim(); if(!v) return; onSave({ name:v, gender: gender || null }); }
+  const [primaryBranchId, setPrimaryBranchId] = useState(row.primary_branch_id || '');
+  function apply(){ const v = (name || '').trim(); if(!v) return; onSave({ name:v, gender: gender || null, primary_branch_id: primaryBranchId || null }); }
   return <div className="inst-editor">
     <div className="field" style={{margin:0,flex:1,minWidth:160}}>
       <label>Name</label>
@@ -4300,6 +4311,13 @@ function InstructorEditor({ row, onSave, onCancel }){
         <button type="button" className={`gender-opt ${gender==='male'?'active':''}`} onClick={()=>setGender(gender==='male'?null:'male')}>♂ Male</button>
       </div>
     </div>
+    {(branches||[]).length > 0 && <div className="field" style={{margin:0,minWidth:140}}>
+      <label>Primary Branch <span style={{fontWeight:400,color:'var(--text-3)',fontSize:10}}>(hint only)</span></label>
+      <select className="select" value={primaryBranchId} onChange={e=>setPrimaryBranchId(e.target.value)}>
+        <option value="">— None —</option>
+        {(branches||[]).filter(b=>b.is_active!==false).map(b => <option key={b.id} value={b.id}>{b.name}{b.code?` (${b.code})`:''}</option>)}
+      </select>
+    </div>}
     <div style={{display:'flex',gap:6,alignSelf:'flex-end'}}>
       <button className="btn btn-ghost small" onClick={onCancel}>Cancel</button>
       <button className="btn btn-primary small" onClick={apply}>Save</button>
@@ -7487,7 +7505,7 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
 // PrintWeeklyTableSection (M2: pool labels per session in cells)
 // ============================================================================
 
-function PrintWeeklyTableSection({ weekBlocksAllPools, wb, selectedWeekStart, gridSlots, gridBounds, slotToMinute, poolById }){
+function PrintWeeklyTableSection({ weekBlocksAllPools, wb, selectedWeekStart, gridSlots, gridBounds, slotToMinute, poolById, branchLabel }){
   const dayHeaders = DAYS_F.map((d, di) => {
     const dateObj = new Date(wb.start);
     dateObj.setDate(wb.start.getDate() + di);
@@ -7544,7 +7562,7 @@ function PrintWeeklyTableSection({ weekBlocksAllPools, wb, selectedWeekStart, gr
 
   return <div className="print-weekly-table">
     <div className="wt-header">
-      <div className="wt-title">Weekly Schedule</div>
+      <div className="wt-title">Weekly Schedule{branchLabel ? ` — ${branchLabel}` : ''}</div>
       <div className="wt-meta">Week of {selectedWeekStart} &nbsp;&middot;&nbsp; {wb.start.toLocaleDateString(undefined,{weekday:'long',year:'numeric',month:'long',day:'numeric'})} &ndash; {wb.end.toLocaleDateString(undefined,{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</div>
     </div>
     <table className="wt-table">
@@ -8009,6 +8027,12 @@ function printInvoice(invoice, lines, membersByGroup){
       : descText;
     return `<tr><td class="td-desc">${descHtml}</td><td class="td-type">${pkgName}</td><td class="td-amt">RM ${Number(l.amount).toFixed(2)}</td></tr>`;
   }).join('');
+  const branchRow = (() => {
+    try{
+      const b = (window.__SSB_BRANCHES__||[]).find(x => x.id === invoice.branch_id);
+      return b ? `<span>Branch: ${b.name}${b.code?' ('+b.code+')':''}</span>` : '';
+    }catch(_){ return ''; }
+  })();
   const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${invoice.invoice_number}</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -8076,7 +8100,7 @@ ${invoice.notes?`<div class="notes">${invoice.notes}</div>`:''}
     <span>${isPaid?'RM 0.00':'RM '+outstanding.toFixed(2)}</span>
   </div>
 </div>
-<div class="footer"><span>Thank you for choosing Star Swim Sdn Bhd</span><span>Generated ${new Date().toLocaleDateString(undefined,{dateStyle:'long'})}</span></div>
+<div class="footer"><span>Thank you for choosing Star Swim Sdn Bhd${branchRow?' &middot; '+branchRow:''}</span><span>Generated ${new Date().toLocaleDateString(undefined,{dateStyle:'long'})}</span></div>
 </div></body></html>`;
   const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
 }
