@@ -1544,7 +1544,7 @@ function App(){
       const peak = packed.length ? packed[0]._total : 1;
       return { packed, peak: Math.max(1, peak) };
     });
-  }, [weekSessions, selectedPoolId, enabledTypes, selectedInstructors, options.pools]);
+  }, [weekSessions, selectedPoolId, enabledTypes, selectedInstructors, options.pools, currentBranchId]);
 
   // ── Lesson-type legend filters ──
   const allTypesShown = useMemo(() => {
@@ -1612,7 +1612,7 @@ function App(){
       totalStudents += count;
     });
     return { byType, byInst, byPool, totalStudents, totalSessions };
-  }, [weekSessions, options]);
+  }, [weekSessions, options, currentBranchId]);
 
   function defaultFormForStart(startMinute, poolId){
     const firstType = activeLessonTypes()[0];
@@ -3795,6 +3795,8 @@ function SettingsView({ section, options, status, addOption, toggleOption, delet
   const [tx, setTx] = useState('#1E40AF');
   const [newPoolName, setNewPoolName] = useState('');
   const [newPoolCap, setNewPoolCap] = useState(16);
+  const [editingPoolId, setEditingPoolId] = useState(null);
+  const [editPoolForm, setEditPoolForm] = useState({ name:'', capacity_total:16 });
   const [newPkgName, setNewPkgName] = useState('');
   const [newPkgPax, setNewPkgPax] = useState('');
   const [newPkgAmount, setNewPkgAmount] = useState('');
@@ -3819,22 +3821,43 @@ function SettingsView({ section, options, status, addOption, toggleOption, delet
           <button className="btn btn-primary" onClick={()=>{ const v = newPoolName.trim(); const c = Number(newPoolCap); if(!v || !c || c < 1) return; addOption('pool', { name:v, capacity:c }); setNewPoolName(''); setNewPoolCap(16); }}>Add</button>
         </div>
         <div className="settings-list">
-          {options.pools.length ? options.pools.map((r, idx) => <div key={r.id} className={`row-item ${dragClass('pool', idx)}`} {...dragProps('pool', 'pools', options.pools, idx)}>
-            <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-              {reorderCluster('pool', 'pools', options.pools, idx)}
-              <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
-              <div style={{fontWeight:600}}>{r.name}</div>
-              <input className="input" style={{width:74,padding:'4px 8px',fontSize:12}} type="number" defaultValue={r.capacity_total} onBlur={(e)=>{ const v = Number(e.target.value); if(v > 0 && v !== r.capacity_total) patchOption('pools', r.id, { capacity_total: v }); }} />
-              {(options.branches||[]).length > 0 && <select className="select" style={{width:140,padding:'4px 8px',fontSize:12}} value={r.branch_id || ''} onChange={(e)=>patchOption('pools', r.id, { branch_id: e.target.value || null })} title="Which branch this pool belongs to">
-                <option value="">No branch</option>
-                {(options.branches||[]).filter(b => b.is_active !== false).map(b => <option key={b.id} value={b.id}>{b.name}{b.code?` (${b.code})`:''}</option>)}
-              </select>}
-            </div>
-            <div style={{display:'flex',gap:6}}>
-              <button className="btn btn-ghost small" onClick={()=>toggleOption('pools',r)}>{r.is_active?'Hide':'Show'}</button>
-              <button className="btn btn-danger small" onClick={()=>deleteOption('pools',r,r.name)}>Delete</button>
-            </div>
-          </div>) : <div className="empty">No pools</div>}
+          {options.pools.length ? options.pools.map((r, idx) => {
+            const isEditing = editingPoolId === r.id;
+            return <div key={r.id} className={`row-item ${dragClass('pool', idx)}`} style={isEditing?{flexDirection:'column',alignItems:'stretch',gap:10}:{}} {...dragProps('pool', 'pools', options.pools, idx)}>
+              {isEditing ? <>
+                <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+                  <input className="input" style={{flex:'1 1 130px'}} value={editPoolForm.name} onChange={e=>setEditPoolForm({...editPoolForm,name:e.target.value})} placeholder="Pool name" />
+                  <input className="input" style={{width:90}} type="number" min="1" value={editPoolForm.capacity_total} onChange={e=>setEditPoolForm({...editPoolForm,capacity_total:Number(e.target.value)})} placeholder="Cap" />
+                  {(options.branches||[]).length > 0 && <select className="select" style={{width:140,padding:'4px 8px',fontSize:12}} value={editPoolForm.branch_id || ''} onChange={e=>setEditPoolForm({...editPoolForm,branch_id:e.target.value||null})}>
+                    <option value="">No branch</option>
+                    {(options.branches||[]).filter(b=>b.is_active!==false).map(b=><option key={b.id} value={b.id}>{b.name}{b.code?` (${b.code})`:''}</option>)}
+                  </select>}
+                </div>
+                <div style={{display:'flex',gap:6,justifyContent:'flex-end'}}>
+                  <button className="btn btn-ghost small" onClick={()=>setEditingPoolId(null)}>Cancel</button>
+                  <button className="btn btn-primary small" onClick={()=>{
+                    const v=editPoolForm.name.trim(); const c=Number(editPoolForm.capacity_total);
+                    if(!v||!c||c<1) return;
+                    patchOption('pools',r.id,{name:v,capacity_total:c,branch_id:editPoolForm.branch_id||null});
+                    setEditingPoolId(null);
+                  }}>Save</button>
+                </div>
+              </> : <>
+                <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                  {reorderCluster('pool', 'pools', options.pools, idx)}
+                  <span className="pill" style={{background:r.is_active?'var(--primary-soft)':'#F0F0F5',color:r.is_active?'var(--primary-on-soft)':'#9C9CAD'}}>{r.is_active?'Active':'Hidden'}</span>
+                  <div style={{fontWeight:600}}>{r.name}</div>
+                  <span className="small subtle">cap {r.capacity_total}</span>
+                  {(()=>{ const b=(options.branches||[]).find(x=>x.id===r.branch_id); return b?<span className="pill" style={{fontSize:10,background:'var(--surface-2)',color:'var(--text-3)'}}>{b.code||b.name}</span>:null; })()}
+                </div>
+                <div style={{display:'flex',gap:6}}>
+                  <button className="btn btn-ghost small" style={{background:'#EAB308',color:'#000',border:'1px solid #CA8A04'}} onClick={()=>{ setEditPoolForm({name:r.name,capacity_total:r.capacity_total,branch_id:r.branch_id||''}); setEditingPoolId(r.id); }}>✎ Edit</button>
+                  <button className="btn btn-ghost small" onClick={()=>toggleOption('pools',r)}>{r.is_active?'Hide':'Show'}</button>
+                  <button className="btn btn-danger small" onClick={()=>deleteOption('pools',r,r.name)}>Delete</button>
+                </div>
+              </>}
+            </div>;
+          }) : <div className="empty">No pools</div>}
         </div>
       </div>
 
