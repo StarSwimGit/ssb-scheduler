@@ -2626,9 +2626,12 @@ function App(){
   // Pre-migration fallback: cluster on email → phone → name as before.
   const parentGroups = useMemo(() => {
     const m = {};
-    // No branch pre-filter here — Accounts page has its own local branch pills
-    // so it defaults to showing all accounts regardless of the header selector.
-    (studentsWithGroups || []).forEach(s => {
+    // Pre-filter by current branch (header selector) — shows only this branch's accounts.
+    // Accounts with no branchId on their swimmers are shown in every branch.
+    const branchFiltered = currentBranchId && currentBranchId !== 'all'
+      ? (studentsWithGroups || []).filter(s => !s.branchId || s.branchId === currentBranchId)
+      : (studentsWithGroups || []);
+    branchFiltered.forEach(s => {
       // Prefer the stable account_id once the migration has run
       let key;
       if(s.accountId){
@@ -2669,7 +2672,7 @@ function App(){
       if(b.key === '__unassigned__') return -1;
       return a.name.localeCompare(b.name);
     });
-  }, [studentsWithGroups]);
+  }, [studentsWithGroups, currentBranchId]);
 
   // Which sessions (in the selected week) each swimmer is already in — drives the
   // double-booking warning in the enrollment modal.
@@ -2870,7 +2873,14 @@ function App(){
         lessonTypeById={lessonTypeById}
         packages={activePackages()}
         packageById={packageById}
-        familyGroups={familyGroups}
+        familyGroups={currentBranchId && currentBranchId !== 'all'
+          ? (familyGroups || []).filter(g => {
+              const gid = g.id;
+              return (studentsWithGroups || []).some(s =>
+                (s.familyGroupIds || []).includes(gid) && (!s.branchId || s.branchId === currentBranchId)
+              );
+            })
+          : familyGroups}
         groupById={groupById}
         membersByGroup={membersByGroup}
         creditByKey={creditByKey}
@@ -2898,7 +2908,10 @@ function App(){
         setView={setView}
       />}
       {!loading && view==='accounts' && accountSection==='swimmers' && <StudentsView
-        students={students} lessonTypes={activeLessonTypes()} lessonTypeById={lessonTypeById}
+        students={currentBranchId && currentBranchId !== 'all'
+          ? students.filter(s => !s.branchId || s.branchId === currentBranchId)
+          : students}
+        lessonTypes={activeLessonTypes()} lessonTypeById={lessonTypeById}
         packages={activePackages()} packageById={packageById}
         groupById={groupById} familyGroups={familyGroups} membersByGroup={membersByGroup}
         scheduleByStudent={scheduleByStudent} sessions={sessions}
@@ -2925,7 +2938,12 @@ function App(){
       {!loading && view==='accounts' && accountSection==='receipts' && <ReceiptsView pmts={pmts} invoices={invoices} branches={options.branches||[]} />}
       {!loading && view==='accounts' && accountSection==='pendingCredits' && <PendingCreditsView
         branches={options.branches||[]}
-        pendingCredits={pendingCredits} invoices={invoices}
+        pendingCredits={currentBranchId && currentBranchId !== 'all'
+          ? pendingCredits.filter(pc => {
+              const stu = studentById[pc.student_id];
+              return !stu || !stu.branchId || stu.branchId === currentBranchId;
+            })
+          : pendingCredits} invoices={invoices}
         studentById={studentById} familyGroups={familyGroups}
         groupById={id => groupById[id]} lessonTypeById={lessonTypeById}
         packageById={packageById} onConfirm={confirmCredit} onReverse={reverseCredit}
@@ -5190,7 +5208,6 @@ function ParentsView({ accountSection, setAccountSection, branches, parentGroups
   const setAdminView = (v) => { if(setAccountSection) setAccountSection(v); };
   const [searchQ, setSearchQ] = useState('');
   const [statusFilter, setStatusFilter] = useState('active');
-  const [branchFilter, setBranchFilter] = useState(null);
   const [expandedKey, setExpandedKey] = useState(null);
   const [contactEditKey, setContactEditKey] = useState(null);
   const [addingSwimmerFor, setAddingSwimmerFor] = useState(null);
@@ -5273,12 +5290,6 @@ function ParentsView({ accountSection, setAccountSection, branches, parentGroups
       if(statusFilter === 'active' && !pg.isActive) return false;
       if(statusFilter === 'archived' && pg.isActive) return false;
       return true;
-    })
-    .filter(pg => {
-      // Local branch filter — null means show all branches
-      if(!branchFilter) return true;
-      // An account matches if any of its swimmers belong to the filtered branch
-      return pg.swimmers.some(s => !s.branchId || s.branchId === branchFilter);
     })
     .filter(pg => {
       if(!searchQ.trim()) return true;
@@ -5378,8 +5389,7 @@ function ParentsView({ accountSection, setAccountSection, branches, parentGroups
             }}
           /> Select all
         </label>
-        <input className="input" style={{flex:1,minWidth:200,maxWidth:360}} placeholder="Search by account name, email, phone, or swimmer name…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
-        <BranchFilterPills branches={branches} value={branchFilter} onChange={setBranchFilter} />
+        <input className="input" style={{flex:1,minWidth:200,maxWidth:420}} placeholder="Search by account name, email, phone, or swimmer name…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
         <div className="tabs" style={{gap:2,padding:2}}>
           <button className={`tab ${statusFilter==='active'?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setStatusFilter('active')}>Active ({activeCount})</button>
           <button className={`tab ${statusFilter==='archived'?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setStatusFilter('archived')}>Archived ({archivedCount})</button>
@@ -6417,19 +6427,11 @@ function ParentGroupManager({ pg, familyGroups, groupById, membersByGroup, group
 
 function PendingCreditsView({ branches, pendingCredits, invoices, studentById, familyGroups, groupById, lessonTypeById, packageById, onConfirm, onReverse }){
   const [statusFilter,setStatusFilter]=useState('pending');
-  const [branchFilter,setBranchFilter]=useState(null);
   const [confirmingAll,setConfirmingAll]=useState(false);
   const pendingCount=pendingCredits.filter(p=>p.status==='pending').length;
   const invById=useMemo(()=>Object.fromEntries((invoices||[]).map(i=>[i.id,i])),[invoices]);
 
-  const filtered=pendingCredits.filter(pc=>{
-    if(statusFilter!=='all'&&pc.status!==statusFilter) return false;
-    if(branchFilter){
-      const stu = studentById?.[pc.student_id];
-      if(stu && stu.branchId && stu.branchId !== branchFilter) return false;
-    }
-    return true;
-  });
+  const filtered=pendingCredits.filter(pc=>statusFilter==='all'||pc.status===statusFilter);
 
   async function confirmAll(){
     const targets = pendingCredits.filter(p=>p.status==='pending');
@@ -6460,7 +6462,6 @@ function PendingCreditsView({ branches, pendingCredits, invoices, studentById, f
             {s==='all'?`All (${pendingCredits.length})`:s.charAt(0).toUpperCase()+s.slice(1)+` (${pendingCredits.filter(p=>p.status===s).length})`}
           </button>)}
         </div>
-        <BranchFilterPills branches={branches} value={branchFilter} onChange={setBranchFilter} />
       </div>
     </div>
 
