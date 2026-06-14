@@ -2940,8 +2940,25 @@ function App(){
         branches={options.branches||[]}
         pendingCredits={currentBranchId && currentBranchId !== 'all'
           ? pendingCredits.filter(pc => {
-              const stu = studentById[pc.student_id];
-              return !stu || !stu.branchId || stu.branchId === currentBranchId;
+              // Priority 1: use the invoice's branch_id — most reliable for both
+              // individual and group/family credits since invoices are stamped at creation.
+              if(pc.invoice_id){
+                const inv = invoices.find(i => i.id === pc.invoice_id);
+                if(inv){
+                  if(!inv.branch_id) return true; // unassigned invoice → show everywhere
+                  return inv.branch_id === currentBranchId;
+                }
+              }
+              // Priority 2: fall back to the individual student's branchId
+              if(pc.student_id){
+                const stu = studentById[pc.student_id];
+                if(stu){
+                  if(!stu.branchId) return true; // unassigned student → show everywhere
+                  return stu.branchId === currentBranchId;
+                }
+              }
+              // No anchor found (old data with no branch info) → show in all branches
+              return true;
             })
           : pendingCredits} invoices={invoices}
         studentById={studentById} familyGroups={familyGroups}
