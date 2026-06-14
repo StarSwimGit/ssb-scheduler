@@ -2247,7 +2247,7 @@ function App() {
         peak: Math.max(1, peak)
       };
     });
-  }, [weekSessions, selectedPoolId, enabledTypes, selectedInstructors, options.pools]);
+  }, [weekSessions, selectedPoolId, enabledTypes, selectedInstructors, options.pools, currentBranchId]);
 
   // ── Lesson-type legend filters ──
   const allTypesShown = useMemo(() => {
@@ -2335,7 +2335,7 @@ function App() {
       totalStudents,
       totalSessions
     };
-  }, [weekSessions, options]);
+  }, [weekSessions, options, currentBranchId]);
   function defaultFormForStart(startMinute, poolId) {
     const firstType = activeLessonTypes()[0];
     const firstInst = activeInstructors()[0];
@@ -6265,6 +6265,11 @@ function SettingsView({
   const [tx, setTx] = useState('#1E40AF');
   const [newPoolName, setNewPoolName] = useState('');
   const [newPoolCap, setNewPoolCap] = useState(16);
+  const [editingPoolId, setEditingPoolId] = useState(null);
+  const [editPoolForm, setEditPoolForm] = useState({
+    name: '',
+    capacity_total: 16
+  });
   const [newPkgName, setNewPkgName] = useState('');
   const [newPkgPax, setNewPkgPax] = useState('');
   const [newPkgAmount, setNewPkgAmount] = useState('');
@@ -6333,70 +6338,143 @@ function SettingsView({
     }
   }, "Add")), /*#__PURE__*/React.createElement("div", {
     className: "settings-list"
-  }, options.pools.length ? options.pools.map((r, idx) => /*#__PURE__*/React.createElement("div", _extends({
-    key: r.id,
-    className: `row-item ${dragClass('pool', idx)}`
-  }, dragProps('pool', 'pools', options.pools, idx)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 8,
-      flexWrap: 'wrap'
-    }
-  }, reorderCluster('pool', 'pools', options.pools, idx), /*#__PURE__*/React.createElement("span", {
-    className: "pill",
-    style: {
-      background: r.is_active ? 'var(--primary-soft)' : '#F0F0F5',
-      color: r.is_active ? 'var(--primary-on-soft)' : '#9C9CAD'
-    }
-  }, r.is_active ? 'Active' : 'Hidden'), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontWeight: 600
-    }
-  }, r.name), /*#__PURE__*/React.createElement("input", {
-    className: "input",
-    style: {
-      width: 74,
-      padding: '4px 8px',
-      fontSize: 12
-    },
-    type: "number",
-    defaultValue: r.capacity_total,
-    onBlur: e => {
-      const v = Number(e.target.value);
-      if (v > 0 && v !== r.capacity_total) patchOption('pools', r.id, {
-        capacity_total: v
-      });
-    }
-  }), (options.branches || []).length > 0 && /*#__PURE__*/React.createElement("select", {
-    className: "select",
-    style: {
-      width: 140,
-      padding: '4px 8px',
-      fontSize: 12
-    },
-    value: r.branch_id || '',
-    onChange: e => patchOption('pools', r.id, {
-      branch_id: e.target.value || null
-    }),
-    title: "Which branch this pool belongs to"
-  }, /*#__PURE__*/React.createElement("option", {
-    value: ""
-  }, "No branch"), (options.branches || []).filter(b => b.is_active !== false).map(b => /*#__PURE__*/React.createElement("option", {
-    key: b.id,
-    value: b.id
-  }, b.name, b.code ? ` (${b.code})` : '')))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 6
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-ghost small",
-    onClick: () => toggleOption('pools', r)
-  }, r.is_active ? 'Hide' : 'Show'), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-danger small",
-    onClick: () => deleteOption('pools', r, r.name)
-  }, "Delete")))) : /*#__PURE__*/React.createElement("div", {
+  }, options.pools.length ? options.pools.map((r, idx) => {
+    const isEditing = editingPoolId === r.id;
+    return /*#__PURE__*/React.createElement("div", _extends({
+      key: r.id,
+      className: `row-item ${dragClass('pool', idx)}`,
+      style: isEditing ? {
+        flexDirection: 'column',
+        alignItems: 'stretch',
+        gap: 10
+      } : {}
+    }, dragProps('pool', 'pools', options.pools, idx)), isEditing ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 8,
+        flexWrap: 'wrap',
+        alignItems: 'center'
+      }
+    }, /*#__PURE__*/React.createElement("input", {
+      className: "input",
+      style: {
+        flex: '1 1 130px'
+      },
+      value: editPoolForm.name,
+      onChange: e => setEditPoolForm({
+        ...editPoolForm,
+        name: e.target.value
+      }),
+      placeholder: "Pool name"
+    }), /*#__PURE__*/React.createElement("input", {
+      className: "input",
+      style: {
+        width: 90
+      },
+      type: "number",
+      min: "1",
+      value: editPoolForm.capacity_total,
+      onChange: e => setEditPoolForm({
+        ...editPoolForm,
+        capacity_total: Number(e.target.value)
+      }),
+      placeholder: "Cap"
+    }), (options.branches || []).length > 0 && /*#__PURE__*/React.createElement("select", {
+      className: "select",
+      style: {
+        width: 140,
+        padding: '4px 8px',
+        fontSize: 12
+      },
+      value: editPoolForm.branch_id || '',
+      onChange: e => setEditPoolForm({
+        ...editPoolForm,
+        branch_id: e.target.value || null
+      })
+    }, /*#__PURE__*/React.createElement("option", {
+      value: ""
+    }, "No branch"), (options.branches || []).filter(b => b.is_active !== false).map(b => /*#__PURE__*/React.createElement("option", {
+      key: b.id,
+      value: b.id
+    }, b.name, b.code ? ` (${b.code})` : '')))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 6,
+        justifyContent: 'flex-end'
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      onClick: () => setEditingPoolId(null)
+    }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-primary small",
+      onClick: () => {
+        const v = editPoolForm.name.trim();
+        const c = Number(editPoolForm.capacity_total);
+        if (!v || !c || c < 1) return;
+        patchOption('pools', r.id, {
+          name: v,
+          capacity_total: c,
+          branch_id: editPoolForm.branch_id || null
+        });
+        setEditingPoolId(null);
+      }
+    }, "Save"))) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        flexWrap: 'wrap'
+      }
+    }, reorderCluster('pool', 'pools', options.pools, idx), /*#__PURE__*/React.createElement("span", {
+      className: "pill",
+      style: {
+        background: r.is_active ? 'var(--primary-soft)' : '#F0F0F5',
+        color: r.is_active ? 'var(--primary-on-soft)' : '#9C9CAD'
+      }
+    }, r.is_active ? 'Active' : 'Hidden'), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: 600
+      }
+    }, r.name), /*#__PURE__*/React.createElement("span", {
+      className: "small subtle"
+    }, "cap ", r.capacity_total), (() => {
+      const b = (options.branches || []).find(x => x.id === r.branch_id);
+      return b ? /*#__PURE__*/React.createElement("span", {
+        className: "pill",
+        style: {
+          fontSize: 10,
+          background: 'var(--surface-2)',
+          color: 'var(--text-3)'
+        }
+      }, b.code || b.name) : null;
+    })()), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 6
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      style: {
+        background: '#EAB308',
+        color: '#000',
+        border: '1px solid #CA8A04'
+      },
+      onClick: () => {
+        setEditPoolForm({
+          name: r.name,
+          capacity_total: r.capacity_total,
+          branch_id: r.branch_id || ''
+        });
+        setEditingPoolId(r.id);
+      }
+    }, "\u270E Edit"), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      onClick: () => toggleOption('pools', r)
+    }, r.is_active ? 'Hide' : 'Show'), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-danger small",
+      onClick: () => deleteOption('pools', r, r.name)
+    }, "Delete"))));
+  }) : /*#__PURE__*/React.createElement("div", {
     className: "empty"
   }, "No pools"))), /*#__PURE__*/React.createElement("div", {
     className: "card"
