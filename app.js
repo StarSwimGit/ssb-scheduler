@@ -2942,7 +2942,14 @@ function App(){
 
       {/* ── Explore ── */}
       {!loading && view==='enroll' && <EnrollView
-        sessions={sessions} students={students} studentById={studentById}
+        sessions={sessions.filter(s => {
+          if(!currentBranchId || currentBranchId === 'all') return true;
+          // A session belongs to a branch via its pool's branch_id
+          const pool = poolById(s.poolId);
+          if(!pool) return true; // no pool assigned — show in all branches
+          return !pool.branch_id || pool.branch_id === currentBranchId;
+        })}
+        students={students} studentById={studentById}
         lessonTypes={activeLessonTypes()} lessonTypeById={lessonTypeById}
         lessonTypeByName={lessonTypeByName} poolById={poolById} colorsFor={colorsFor}
         gridBounds={gridBounds} packages={options.packages} instructors={activeInstructors()}
