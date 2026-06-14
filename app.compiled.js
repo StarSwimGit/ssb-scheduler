@@ -1056,6 +1056,11 @@ function App() {
       packages: packages || [],
       branches: branches || []
     });
+    // Expose branches to module-level print helpers (printInvoice, printReceipt)
+    // which sit outside the App component and need to resolve invoice.branch_id.
+    try {
+      window.__SSB_BRANCHES__ = branches || [];
+    } catch (_) {}
   }
 
   // M2: students are loaded via PostgREST resource embedding (nested inside
@@ -4123,6 +4128,7 @@ function App() {
     pools: activePools(),
     selectedPoolId: selectedPoolId,
     setSelectedPoolId: setSelectedPoolId,
+    branchLabel: currentBranchId && currentBranchId !== 'all' ? branchById(currentBranchId)?.name || '' : 'All Branches',
     gridBounds: gridBounds,
     gridSlots: gridSlots,
     slotToMinute: slotToMinute,
@@ -4178,6 +4184,7 @@ function App() {
     colorsFor: colorsFor,
     lessonTypeByName: lessonTypeByName,
     poolById: poolById,
+    branchLabel: currentBranchId && currentBranchId !== 'all' ? branchById(currentBranchId)?.name || '' : 'All Branches',
     onAddAtTime: openAddAtTime,
     onEdit: openEdit,
     onReorderSlot: saveDragOrder,
@@ -4858,7 +4865,7 @@ function WeekView(props) {
     className: "print-rundown"
   }, /*#__PURE__*/React.createElement("div", {
     className: "print-title"
-  }, "Weekly Daily Rundown"), /*#__PURE__*/React.createElement("div", {
+  }, "Weekly Daily Rundown", props.branchLabel ? ` — ${props.branchLabel}` : ''), /*#__PURE__*/React.createElement("div", {
     className: "print-meta"
   }, wb.start.toLocaleDateString(), " to ", wb.end.toLocaleDateString()), printDays.map(({
     date,
@@ -4903,7 +4910,8 @@ function WeekView(props) {
     gridSlots: gridSlots,
     gridBounds: gridBounds,
     slotToMinute: slotToMinute,
-    poolById: poolById
+    poolById: poolById,
+    branchLabel: props.branchLabel
   }));
 }
 
@@ -5049,6 +5057,7 @@ function DailyView({
   colorsFor,
   lessonTypeByName,
   poolById,
+  branchLabel,
   onAddAtTime,
   onEdit,
   selectedWeekStart,
@@ -5396,7 +5405,7 @@ function DailyView({
     className: "print-daily"
   }, /*#__PURE__*/React.createElement("div", {
     className: "print-daily-heading"
-  }, "Daily Schedule"), /*#__PURE__*/React.createElement("div", {
+  }, "Daily Schedule", branchLabel ? ` — ${branchLabel}` : ''), /*#__PURE__*/React.createElement("div", {
     className: "print-daily-date"
   }, longDate(selectedDate)), /*#__PURE__*/React.createElement("table", {
     className: "print-daily-table"
@@ -6349,7 +6358,24 @@ function SettingsView({
         capacity_total: v
       });
     }
-  })), /*#__PURE__*/React.createElement("div", {
+  }), (options.branches || []).length > 0 && /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    style: {
+      width: 140,
+      padding: '4px 8px',
+      fontSize: 12
+    },
+    value: r.branch_id || '',
+    onChange: e => patchOption('pools', r.id, {
+      branch_id: e.target.value || null
+    }),
+    title: "Which branch this pool belongs to"
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "No branch"), (options.branches || []).filter(b => b.is_active !== false).map(b => /*#__PURE__*/React.createElement("option", {
+    key: b.id,
+    value: b.id
+  }, b.name, b.code ? ` (${b.code})` : '')))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6
@@ -6511,6 +6537,7 @@ function SettingsView({
       }
     }, /*#__PURE__*/React.createElement(InstructorEditor, {
       row: r,
+      branches: options.branches,
       onCancel: () => setEditingInstructorId(null),
       onSave: patch => {
         patchOption('scheduler_instructors', r.id, patch);
@@ -6554,7 +6581,22 @@ function SettingsView({
         flexShrink: 0
       },
       title: r.gender === 'female' ? 'Female' : 'Male'
-    }, r.gender === 'female' ? '♀' : '♂') : null), /*#__PURE__*/React.createElement("div", {
+    }, r.gender === 'female' ? '♀' : '♂') : null, r.primary_branch_id && (() => {
+      const b = (options.branches || []).find(x => x.id === r.primary_branch_id);
+      return b ? /*#__PURE__*/React.createElement("span", {
+        style: {
+          fontSize: 10,
+          padding: '2px 6px',
+          background: 'var(--surface-2)',
+          border: '1px solid var(--border)',
+          borderRadius: 4,
+          color: 'var(--text-3)',
+          fontFamily: 'monospace',
+          flexShrink: 0
+        },
+        title: `Primary branch: ${b.name}`
+      }, "\uD83C\uDFE2 ", b.code || b.name) : null;
+    })()), /*#__PURE__*/React.createElement("div", {
       style: {
         display: 'flex',
         gap: 6
@@ -7542,16 +7584,19 @@ function CodeEditor({
 function InstructorEditor({
   row,
   onSave,
-  onCancel
+  onCancel,
+  branches
 }) {
   const [name, setName] = useState(row.name || '');
   const [gender, setGender] = useState(row.gender || null);
+  const [primaryBranchId, setPrimaryBranchId] = useState(row.primary_branch_id || '');
   function apply() {
     const v = (name || '').trim();
     if (!v) return;
     onSave({
       name: v,
-      gender: gender || null
+      gender: gender || null,
+      primary_branch_id: primaryBranchId || null
     });
   }
   return /*#__PURE__*/React.createElement("div", {
@@ -7583,7 +7628,28 @@ function InstructorEditor({
     type: "button",
     className: `gender-opt ${gender === 'male' ? 'active' : ''}`,
     onClick: () => setGender(gender === 'male' ? null : 'male')
-  }, "\u2642 Male"))), /*#__PURE__*/React.createElement("div", {
+  }, "\u2642 Male"))), (branches || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0,
+      minWidth: 140
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Primary Branch ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontWeight: 400,
+      color: 'var(--text-3)',
+      fontSize: 10
+    }
+  }, "(hint only)")), /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    value: primaryBranchId,
+    onChange: e => setPrimaryBranchId(e.target.value)
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "\u2014 None \u2014"), (branches || []).filter(b => b.is_active !== false).map(b => /*#__PURE__*/React.createElement("option", {
+    key: b.id,
+    value: b.id
+  }, b.name, b.code ? ` (${b.code})` : '')))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6,
@@ -13639,7 +13705,8 @@ function PrintWeeklyTableSection({
   gridSlots,
   gridBounds,
   slotToMinute,
-  poolById
+  poolById,
+  branchLabel
 }) {
   const dayHeaders = DAYS_F.map((d, di) => {
     const dateObj = new Date(wb.start);
@@ -13728,7 +13795,7 @@ function PrintWeeklyTableSection({
     className: "wt-header"
   }, /*#__PURE__*/React.createElement("div", {
     className: "wt-title"
-  }, "Weekly Schedule"), /*#__PURE__*/React.createElement("div", {
+  }, "Weekly Schedule", branchLabel ? ` — ${branchLabel}` : ''), /*#__PURE__*/React.createElement("div", {
     className: "wt-meta"
   }, "Week of ", selectedWeekStart, " \xA0\xB7\xA0 ", wb.start.toLocaleDateString(undefined, {
     weekday: 'long',
@@ -14717,6 +14784,14 @@ function printInvoice(invoice, lines, membersByGroup) {
     const descHtml = swimmers.length ? `${descText}<div style="font-size:7pt;color:#777;margin-top:2pt;line-height:1.5">${swimmers.join(' &middot; ')}</div>` : descText;
     return `<tr><td class="td-desc">${descHtml}</td><td class="td-type">${pkgName}</td><td class="td-amt">RM ${Number(l.amount).toFixed(2)}</td></tr>`;
   }).join('');
+  const branchRow = (() => {
+    try {
+      const b = (window.__SSB_BRANCHES__ || []).find(x => x.id === invoice.branch_id);
+      return b ? `<span>Branch: ${b.name}${b.code ? ' (' + b.code + ')' : ''}</span>` : '';
+    } catch (_) {
+      return '';
+    }
+  })();
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${invoice.invoice_number}</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -14784,7 +14859,7 @@ ${invoice.notes ? `<div class="notes">${invoice.notes}</div>` : ''}
     <span>${isPaid ? 'RM 0.00' : 'RM ' + outstanding.toFixed(2)}</span>
   </div>
 </div>
-<div class="footer"><span>Thank you for choosing Star Swim Sdn Bhd</span><span>Generated ${new Date().toLocaleDateString(undefined, {
+<div class="footer"><span>Thank you for choosing Star Swim Sdn Bhd${branchRow ? ' &middot; ' + branchRow : ''}</span><span>Generated ${new Date().toLocaleDateString(undefined, {
     dateStyle: 'long'
   })}</span></div>
 </div></body></html>`;
