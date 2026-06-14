@@ -281,6 +281,7 @@ function App(){
   });
   function setCurrentBranchId(id){
     setCurrentBranchIdRaw(id);
+    setSelectedPoolId(null); // reset pool filter when branch changes
     try{ if(id) window.localStorage.setItem('ssb.currentBranchId', id);
          else window.localStorage.removeItem('ssb.currentBranchId'); }catch(_){}
   }
@@ -1524,19 +1525,17 @@ function App(){
   function filteredSessionsForDate(dateStr){ return sessionsForDate(dateStr).filter(passesFilters); }
 
   const weekBlocks = useMemo(() => {
-    const allActive = activePools();
+    const allActive = activePools(); // already branch-filtered
+    const allPoolIds = new Set(allActive.map(p => p.id));
     const fallbackPoolId = allActive[0]?.id || null;
-    // Default (null) = show first two pools; 'all' = every pool; specific id = one pool.
-    const defaultPoolIds = new Set(allActive.slice(0, 2).map(p => p.id));
     return Array.from({length:7}, (_, day) => {
       let items = weekSessions.filter(s => s.day === day);
-      if(selectedPoolId === 'all'){
-        // no pool filter
-      } else if(!selectedPoolId){
-        // Default: first two pools only
-        if(defaultPoolIds.size > 0)
-          items = items.filter(s => defaultPoolIds.has(s.poolId || fallbackPoolId));
+      if(!selectedPoolId){
+        // Default: show all pools that belong to the current branch
+        if(allPoolIds.size > 0)
+          items = items.filter(s => allPoolIds.has(s.poolId || fallbackPoolId));
       } else {
+        // Specific pool selected
         items = items.filter(s => (s.poolId || fallbackPoolId) === selectedPoolId);
       }
       items = items.filter(passesFilters);
@@ -3156,7 +3155,7 @@ function WeekView(props){
   // Sessions stack vertically inside each day-hour cell, so a busy slot grows
   // downward instead of forcing a horizontal scrollbar. Each card lays its
   // details out on separate lines.
-  const showPoolBadge = selectedPoolId !== null && selectedPoolId !== 'all' ? false : pools.length > 1;
+  const showPoolBadge = !selectedPoolId && pools.length > 1;
   const startHour = Math.floor(gridBounds.startMin / 60) * 60;
   const hours = [];
   for(let h = startHour; h < gridBounds.endMin; h += 60) hours.push(h);
@@ -3164,10 +3163,9 @@ function WeekView(props){
   const weekGrid = <>
     <div className="pool-tabs">
       <button className={`pool-tab ${selectedPoolId===null?'active':''}`} onClick={()=>setSelectedPoolId(null)}>
-        {pools.slice(0,2).map(p=>p.name).join(' + ') || 'Default'}
+        All
       </button>
       {pools.map(p => <button key={p.id} className={`pool-tab ${selectedPoolId===p.id?'active':''}`} onClick={()=>setSelectedPoolId(p.id)}>{p.name} <span className="pool-tab-cap">cap {p.capacity_total}</span></button>)}
-      {pools.length > 2 && <button className={`pool-tab ${selectedPoolId==='all'?'active':''}`} onClick={()=>setSelectedPoolId('all')}>All pools</button>}
     </div>
 
     <div className="wagenda">
