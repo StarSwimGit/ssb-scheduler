@@ -4164,7 +4164,15 @@ function App() {
     onToggleInstructor: toggleInstructor,
     onClearInstructors: clearInstructors,
     instructorFilterActive: selectedInstructors.size > 0,
-    weekPendingReplacements: replacementPending.filter(p => p.week_start_date === selectedWeekStart),
+    weekPendingReplacements: replacementPending.filter(p => {
+      if (p.week_start_date !== selectedWeekStart) return false;
+      // Branch filter: only show replacements whose student belongs to the current branch
+      if (currentBranchId && currentBranchId !== 'all') {
+        const stu = studentById[p.student_id];
+        if (stu && stu.branchId && stu.branchId !== currentBranchId) return false;
+      }
+      return true;
+    }),
     lessonTypeById: lessonTypeById,
     studentById: studentById,
     onCancelPendingReplacement: cancelPendingReplacement,
@@ -4827,12 +4835,10 @@ function WeekView(props) {
   }, /*#__PURE__*/React.createElement("span", {
     className: "pending-repl-badge",
     "aria-hidden": "true"
-  }, "R"), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, "R"), /*#__PURE__*/React.createElement("div", {
     className: "pending-repl-title"
-  }, "Pending Replacements \xB7 ", weekPendingReplacements.length), /*#__PURE__*/React.createElement("div", {
-    className: "pending-repl-sub"
-  }, "Swimmers in limbo for this week \u2014 credit untouched until they're placed in another class. Cancel below to put them back in their original class (or clear the limbo state)."))), /*#__PURE__*/React.createElement("div", {
-    className: "pending-repl-list"
+  }, "Pending Replacements \xB7 ", weekPendingReplacements.length)), /*#__PURE__*/React.createElement("div", {
+    className: "pending-repl-grid"
   }, weekPendingReplacements.map(p => {
     const stu = studentById ? studentById[p.student_id] : null;
     const lt = lessonTypeById ? lessonTypeById(p.lesson_type_id) : null;
@@ -4840,27 +4846,25 @@ function WeekView(props) {
     const datePassed = p.week_start_date && p.week_start_date < new Date().toISOString().slice(0, 10);
     return /*#__PURE__*/React.createElement("div", {
       key: p.id,
-      className: "pending-repl-row"
+      className: `pending-repl-chip${datePassed ? ' repl-chip-passed' : ''}`
     }, /*#__PURE__*/React.createElement("div", {
-      className: "pending-repl-info"
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "pending-repl-name"
-    }, stu ? `${stu.name}${stu.age != null ? ` (${stu.age})` : ''}` : '(unknown swimmer)'), /*#__PURE__*/React.createElement("span", {
-      className: "pending-repl-meta"
-    }, lt ? lt.name : p.lesson_type_id, " \xB7 from ", p.original_session_label, !stillExists ? ' · original class deleted' : ''), p.notes && /*#__PURE__*/React.createElement("span", {
-      className: "pending-repl-remark"
-    }, "\uD83D\uDCDD ", p.notes), stu?.remark && /*#__PURE__*/React.createElement("span", {
-      className: "pending-repl-remark"
-    }, "\uD83D\uDCAC ", stu.remark), datePassed && /*#__PURE__*/React.createElement("span", {
-      className: "pending-repl-passed"
-    }, "\u26A0\uFE0F Original week (", p.week_start_date, ") has passed")), /*#__PURE__*/React.createElement("button", {
+      className: "repl-chip-name"
+    }, stu ? stu.name : '?', stu?.age != null ? /*#__PURE__*/React.createElement("span", {
+      className: "repl-chip-age"
+    }, " ", stu.age, "y") : null), /*#__PURE__*/React.createElement("div", {
+      className: "repl-chip-meta"
+    }, lt ? lt.name : '—', " \xB7 ", p.original_session_label || '?'), datePassed && /*#__PURE__*/React.createElement("div", {
+      className: "repl-chip-warn"
+    }, "\u26A0 past date"), !stillExists && /*#__PURE__*/React.createElement("div", {
+      className: "repl-chip-warn"
+    }, "\u26A0 slot deleted"), /*#__PURE__*/React.createElement("button", {
       type: "button",
-      className: "btn btn-ghost small",
+      className: "repl-chip-btn",
       onClick: () => onCancelPendingReplacement && onCancelPendingReplacement(p, {
         restore: true
       }),
-      title: stillExists ? `Cancel — restore to ${p.original_session_label}` : 'Original class no longer exists — clearing the limbo state only'
-    }, stillExists ? 'Cancel & restore' : 'Cancel only'));
+      title: stillExists ? `Cancel — restore to ${p.original_session_label}` : 'Original class deleted — clear limbo only'
+    }, stillExists ? 'Restore' : 'Clear'));
   }))), weekGrid), /*#__PURE__*/React.createElement("div", {
     className: "print-rundown"
   }, /*#__PURE__*/React.createElement("div", {
