@@ -7241,7 +7241,10 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
   const [adultSelf, setAdultSelf] = useState(false);
   const [editId, setEditId] = useState(null);
   const [creditId, setCreditId] = useState(null);
-  const [q, setQ] = useState('');
+  const [localQ, setLocalQ] = useState('');
+  // Prefer the sticky sub-bar search when provided
+  const q = externalSearchQ !== undefined ? externalSearchQ : localQ;
+  const setQ = setLocalQ;
   const [sortBy, setSortBy] = useState('name');
   const [formExpanded, setFormExpanded] = useState(false);
 
@@ -7302,7 +7305,14 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
   function handleAdultSelf(v){ setAdultSelf(v); if(v) setGuardianName(name); }
   function handleSameAsG(v){ setSameAsGuardian(v); if(v){ setEmergencyPhone(guardianPhone); setEmergencyRel('Parent / Guardian'); } }
 
-  const filtered = students.filter(s => !q || (s.name || '').toLowerCase().includes(q.toLowerCase()));
+  const filtered = students.filter(s => {
+    if(!q) return true;
+    const ql = q.toLowerCase();
+    return (s.name||'').toLowerCase().includes(ql)
+        || (s.guardianName||'').toLowerCase().includes(ql)
+        || (s.guardianPhone||'').toLowerCase().includes(ql)
+        || (s.guardianEmail||'').toLowerCase().includes(ql);
+  });
 
   // Always flat list — no group separators. All swimmers listed individually
   // regardless of family group membership (Groups tab handles group admin).
