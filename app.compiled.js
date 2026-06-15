@@ -4207,7 +4207,11 @@ function App() {
     onClearInstructors: clearInstructors,
     instructorFilterActive: selectedInstructors.size > 0,
     weekPendingReplacements: replacementPending.filter(p => {
-      if (p.week_start_date !== selectedWeekStart) return false;
+      // Show on the selected week AND any past-week limbo records that
+      // were never placed (they remain pending until manually resolved).
+      // Only future-week (>selectedWeekStart) records are hidden until
+      // their own week becomes the selected week.
+      if (p.week_start_date > selectedWeekStart) return false;
       // Branch filter: only show replacements whose student belongs to the current branch
       if (currentBranchId && currentBranchId !== 'all') {
         const stu = studentById[p.student_id];
@@ -9697,7 +9701,8 @@ function ParentsView({
     packages: packages,
     packageById: packageById,
     deleteGroup: deleteGroup,
-    updateGroup: updateGroup
+    updateGroup: updateGroup,
+    externalSearchQ: externalSearchQ
   }), adminView === 'accounts' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
@@ -14361,9 +14366,11 @@ function SessionModal({
     const wk = modal.weekStartDate;
     const ltId = currentLt?.id;
     if (!ltId) return null;
-    // 4-week forward window: this week plus the next 3
+    // Forward window: this week plus the next 3. Past-week limbo
+    // records are also included — they remain pending until placed,
+    // so they must stay in quick-pick across weeks.
     const windowWeeks = new Set([0, 1, 2, 3].map(n => addDays(wk, n * 7)));
-    const pendingCandidates = (replacementPending || []).filter(p => p.lesson_type_id === ltId && windowWeeks.has(p.week_start_date) && studentById[p.student_id] &&
+    const pendingCandidates = (replacementPending || []).filter(p => p.lesson_type_id === ltId && (windowWeeks.has(p.week_start_date) || p.week_start_date < wk) && studentById[p.student_id] &&
     // student must exist
     !(modal.form.replacementRows || []).some(r => r.studentId === p.student_id));
     const trialCandidates = students.filter(s => {
@@ -15383,21 +15390,34 @@ function InvoicesView({
       style: {
         display: 'flex',
         alignItems: 'center',
-        gap: 8,
+        gap: 6,
         flexWrap: 'wrap'
       }
     }, /*#__PURE__*/React.createElement("span", {
       style: {
         fontWeight: 800,
-        fontSize: 14
+        fontSize: 12
       }
     }, inv.invoice_number || '#—'), /*#__PURE__*/React.createElement("span", {
       className: `inv-status-chip s-${inv.status || 'draft'}`
     }, invoiceStatusLabel(inv.status)), overdue && /*#__PURE__*/React.createElement("span", {
       className: "inv-status-chip s-overdue"
-    }, "Overdue")), /*#__PURE__*/React.createElement("div", {
-      className: "small subtle"
-    }, inv.account_name || '—', " \xB7 Issued ", inv.issue_date || '—', inv.due_date ? ` · Due ${inv.due_date}` : '')), /*#__PURE__*/React.createElement("div", {
+    }, "Overdue"), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11,
+        color: 'var(--text-2)',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis'
+      }
+    }, inv.account_name || '—')), /*#__PURE__*/React.createElement("div", {
+      className: "small subtle",
+      style: {
+        fontSize: 10.5,
+        lineHeight: 1.3,
+        marginTop: 1
+      }
+    }, "Issued ", inv.issue_date || '—', inv.due_date ? ` · Due ${inv.due_date}` : '')), /*#__PURE__*/React.createElement("div", {
       style: {
         textAlign: 'right',
         flexShrink: 0
@@ -15405,15 +15425,18 @@ function InvoicesView({
     }, /*#__PURE__*/React.createElement("div", {
       style: {
         fontWeight: 800,
-        fontSize: 15
+        fontSize: 13
       }
     }, "RM ", total.toFixed(2)), paid > 0 && /*#__PURE__*/React.createElement("div", {
-      className: "small subtle"
-    }, "Paid RM ", paid.toFixed(2), " \xB7 Owed RM ", outstanding.toFixed(2))), /*#__PURE__*/React.createElement("div", {
+      className: "small subtle",
+      style: {
+        fontSize: 10
+      }
+    }, "Paid ", paid.toFixed(2), " \xB7 Owed ", outstanding.toFixed(2))), /*#__PURE__*/React.createElement("div", {
       style: {
         flexShrink: 0,
         color: 'var(--text-3)',
-        fontSize: 12
+        fontSize: 10
       }
     }, isExpanded ? '▲' : '▼')), isExpanded && /*#__PURE__*/React.createElement(InvoiceDetailPanel, {
       invoice: inv,
