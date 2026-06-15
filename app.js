@@ -256,7 +256,9 @@ function App(){
   const [view,setView] = useState('schedule');          // 'schedule'|'accounts'|'enroll'|'settings'|'students'
   const [scheduleSection,setScheduleSection] = useState('week'); // 'week'|'day'|'month'
   const [adminSection,setAdminSection] = useState('pools');      // 'summary'|'pools'|'instructors'|'lessonTypes'
-  const [accountSection,setAccountSection] = useState('accounts'); // 'accounts'|'familyGroups'|'invoices'|'receipts'|'pendingCredits'|'aging'|'codes'
+  const [accountSection,setAccountSection] = useState('accounts');
+  // Clear sticky search box when switching account sub-tabs
+  useEffect(() => { setAccountSearchQ(''); }, [accountSection]); // 'accounts'|'familyGroups'|'invoices'|'receipts'|'pendingCredits'|'aging'|'codes'
   const [loading,setLoading] = useState(true);
   const [status,setStatus] = useState('');
   const [error,setError] = useState('');
@@ -275,6 +277,8 @@ function App(){
   const [monthCursor,setMonthCursor] = useState(new Date());
   const [selectedDate,setSelectedDate] = useState(todayStr());
   const [selectedPoolId,setSelectedPoolId] = useState(null);
+  // Search box lifted to App so it can live in the sticky sub-bar
+  const [accountSearchQ, setAccountSearchQ] = useState('');
   // Branch filter — remembered across sessions; defaults to last selection or HQ.
   const [currentBranchId,setCurrentBranchIdRaw] = useState(() => {
     try{ return window.localStorage.getItem('ssb.currentBranchId') || null; }catch(_){ return null; }
@@ -2737,6 +2741,15 @@ function App(){
       <button className={`sub-tab ${scheduleSection==='week'?'active':''}`} onClick={()=>setScheduleSection('week')}>Weekly</button>
       <button className={`sub-tab ${scheduleSection==='day'?'active':''}`} onClick={()=>setScheduleSection('day')}>Daily</button>
       <button className={`sub-tab ${scheduleSection==='month'?'active':''}`} onClick={()=>setScheduleSection('month')}>Monthly</button>
+      {/* Inline week navigation — keeps Prev/Range/Next/This Week sticky with the sub-bar */}
+      {(scheduleSection==='week' || scheduleSection==='day') && <div className="sub-bar-spacer">
+        <div className="period-stepper" style={{margin:0}}>
+          <button className="step-btn" onClick={()=>setSelectedDate(addDays(selectedDate,-7))} title="Previous week" aria-label="Previous week">‹</button>
+          <div className="period-label" style={{fontSize:12}}>{weekRangeLabel(selectedWeekStart)}</div>
+          <button className="step-btn" onClick={()=>setSelectedDate(addDays(selectedDate,7))} title="Next week" aria-label="Next week">›</button>
+        </div>
+        <button className={`today-btn ${selectedWeekStart===currentWeekStart?'is-current':''}`} disabled={selectedWeekStart===currentWeekStart} onClick={()=>setSelectedDate(todayStr())} style={{marginLeft:6}}>This Week</button>
+      </div>}
     </div></div>}
 
     {/* ── Sub-bar: accounts tabs ── */}
@@ -2750,6 +2763,19 @@ function App(){
       <button className={`sub-tab ${accountSection==='aging'?'active':''}`} onClick={()=>setAccountSection('aging')}>Aging</button>
       <button className={`sub-tab ${accountSection==='codes'?'active':''}`} onClick={()=>setAccountSection('codes')}>Discounts</button>
       <button className={`sub-tab ${accountSection==='reports'?'active':''}`} onClick={()=>setAccountSection('reports')}>Reports</button>
+      {/* Inline search for the modules that use it */}
+      {['accounts','familyGroups','swimmers','invoices','receipts'].includes(accountSection) && <div className="sub-bar-spacer">
+        <input
+          className="input sub-bar-search"
+          placeholder={accountSection==='swimmers' ? 'Search swimmer, parent, phone…'
+                     : accountSection==='invoices' ? 'Search invoice # or account…'
+                     : accountSection==='receipts' ? 'Search receipt #, invoice, account…'
+                     : accountSection==='familyGroups' ? 'Search group or member…'
+                     : 'Search account, email, phone, swimmer…'}
+          value={accountSearchQ}
+          onChange={e=>setAccountSearchQ(e.target.value)}
+        />
+      </div>}
     </div></div>}
 
     {/* ── Sub-bar: admin tabs ── */}
@@ -2865,6 +2891,7 @@ function App(){
 
       {/* ── Accounts views (no side-column for billing sub-sections) ── */}
       {!loading && view==='accounts' && (accountSection==='accounts'||accountSection==='familyGroups') && <ParentsView
+        externalSearchQ={accountSearchQ}
         branches={options.branches||[]}
         accountSection={accountSection}
         setAccountSection={setAccountSection}
@@ -2908,6 +2935,7 @@ function App(){
         setView={setView}
       />}
       {!loading && view==='accounts' && accountSection==='swimmers' && <StudentsView
+        externalSearchQ={accountSearchQ}
         students={currentBranchId && currentBranchId !== 'all'
           ? students.filter(s => !s.branchId || s.branchId === currentBranchId)
           : students}
@@ -2923,6 +2951,7 @@ function App(){
         addStudent={addStudent} updateStudent={updateStudent} deleteStudent={deleteStudent} deleteAccount={deleteAccount}
       />}
       {!loading && view==='accounts' && accountSection==='invoices' && <InvoicesView
+        externalSearchQ={accountSearchQ}
         branches={options.branches||[]}
         invoices={invoices} invoiceLines={invoiceLines} pmts={pmts}
         pendingCredits={pendingCredits} lessonTypeById={lessonTypeById}
@@ -2935,7 +2964,7 @@ function App(){
         onReverseCredit={reverseCredit} onAddLine={addInvoiceLine}
         onUpdateLine={updateInvoiceLine} onDeleteLine={deleteInvoiceLine}
       />}
-      {!loading && view==='accounts' && accountSection==='receipts' && <ReceiptsView pmts={pmts} invoices={invoices} branches={options.branches||[]} />}
+      {!loading && view==='accounts' && accountSection==='receipts' && <ReceiptsView externalSearchQ={accountSearchQ} pmts={pmts} invoices={invoices} branches={options.branches||[]} />}
       {!loading && view==='accounts' && accountSection==='pendingCredits' && <PendingCreditsView
         branches={options.branches||[]}
         pendingCredits={currentBranchId && currentBranchId !== 'all'
@@ -5226,11 +5255,14 @@ function BranchFilterPills({ branches, value, onChange }){
   </div>;
 }
 
-function ParentsView({ accountSection, setAccountSection, branches, parentGroups, lessonTypes, lessonTypeById, packages, packageById, familyGroups, groupById, membersByGroup, creditByKey, subscriptions, addStudent, updateStudent, deleteStudent, deleteAccount, addGroup, updateGroup, deleteGroup, setStudentGroup, addStudentToGroup, removeStudentFromGroup, groupIdsByStudent, addSubscription, cancelSubscription, adjustBalanceTo, scheduleByStudent, sessions, poolById, selectedWeekStart, createInvoice, setAdminSection, onJumpToSession, setView }){
+function ParentsView({ accountSection, setAccountSection, branches, parentGroups, lessonTypes, lessonTypeById, packages, packageById, familyGroups, groupById, membersByGroup, creditByKey, subscriptions, addStudent, updateStudent, deleteStudent, deleteAccount, addGroup, updateGroup, deleteGroup, setStudentGroup, addStudentToGroup, removeStudentFromGroup, groupIdsByStudent, addSubscription, cancelSubscription, adjustBalanceTo, scheduleByStudent, sessions, poolById, selectedWeekStart, createInvoice, setAdminSection, onJumpToSession, setView, externalSearchQ }){
   // ── Sub-view driven by external accountSection prop (from nav dropdown) ──
   const adminView = accountSection || 'accounts';
   const setAdminView = (v) => { if(setAccountSection) setAccountSection(v); };
-  const [searchQ, setSearchQ] = useState('');
+  // Search comes from the sticky sub-bar when provided; falls back to internal state
+  const [localSearchQ, setLocalSearchQ] = useState('');
+  const searchQ = externalSearchQ !== undefined ? externalSearchQ : localSearchQ;
+  const setSearchQ = setLocalSearchQ;
   const [statusFilter, setStatusFilter] = useState('active');
   const [expandedKey, setExpandedKey] = useState(null);
   const [contactEditKey, setContactEditKey] = useState(null);
@@ -5413,7 +5445,7 @@ function ParentsView({ accountSection, setAccountSection, branches, parentGroups
             }}
           /> Select all
         </label>
-        <input className="input" style={{flex:1,minWidth:200,maxWidth:420}} placeholder="Search by account name, email, phone, or swimmer name…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
+        <input className="input" style={{flex:1,minWidth:200,maxWidth:420,display:'none'}} placeholder="Search by account name, email, phone, or swimmer name…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
         <div className="tabs" style={{gap:2,padding:2}}>
           <button className={`tab ${statusFilter==='active'?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setStatusFilter('active')}>Active ({activeCount})</button>
           <button className={`tab ${statusFilter==='archived'?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setStatusFilter('archived')}>Archived ({archivedCount})</button>
@@ -5775,8 +5807,10 @@ function ParentsView({ accountSection, setAccountSection, branches, parentGroups
 // context, member names, and the guardian/account each member belongs to.
 // Use to audit and clean up legacy/test data without dropping to SQL.
 // ============================================================================
-function FamilyGroupsAdminView({ familyGroups, membersByGroup, lessonTypes, lessonTypeById, packages, packageById, deleteGroup, updateGroup }){
-  const [searchQ, setSearchQ] = useState('');
+function FamilyGroupsAdminView({ familyGroups, membersByGroup, lessonTypes, lessonTypeById, packages, packageById, deleteGroup, updateGroup, externalSearchQ }){
+  const [localSearchQ, setLocalSearchQ] = useState('');
+  const searchQ = externalSearchQ !== undefined ? externalSearchQ : localSearchQ;
+  const setSearchQ = setLocalSearchQ;
   const [filter, setFilter] = useState('all');
   const [bulkBusy, setBulkBusy] = useState(false);
   const [editingNameId, setEditingNameId] = useState(null);
@@ -5860,7 +5894,7 @@ function FamilyGroupsAdminView({ familyGroups, membersByGroup, lessonTypes, less
         </div>
       </div>
       <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-        <input className="input" style={{flex:1,minWidth:240,maxWidth:420}} placeholder="Search by group, package, lesson type, account, or member name…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
+        {externalSearchQ === undefined && <input className="input" style={{flex:1,minWidth:240,maxWidth:420}} placeholder="Search by group, package, lesson type, account, or member name…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />}
         <div className="tabs" style={{gap:2,padding:2}}>
           <button className={`tab ${filter==='all'?'active':''}`}            style={{padding:'4px 10px',fontSize:11}} onClick={()=>setFilter('all')}>All ({counts.all})</button>
           <button className={`tab ${filter==='configured'?'active':''}`}     style={{padding:'4px 10px',fontSize:11}} onClick={()=>setFilter('configured')}>Configured ({counts.configured})</button>
@@ -7124,8 +7158,10 @@ function AgingReportView({ invoices, pmts, branches }){
 }
 
 
-function ReceiptsView({ pmts, invoices, branches }){
-  const [searchQ, setSearchQ] = useState('');
+function ReceiptsView({ pmts, invoices, branches, externalSearchQ }){
+  const [localSearchQ, setLocalSearchQ] = useState('');
+  const searchQ = externalSearchQ !== undefined ? externalSearchQ : localSearchQ;
+  const setSearchQ = setLocalSearchQ;
   const [branchFilter, setBranchFilter] = useState(null);
   const invoiceById = {};
   (invoices || []).forEach(inv => { invoiceById[inv.id] = inv; });
@@ -7153,7 +7189,7 @@ function ReceiptsView({ pmts, invoices, branches }){
         <div><div className="small subtle">Total collected{branchFilter?' (filtered)':''}</div><div style={{fontSize:22,fontWeight:800,color:'var(--green-tx)'}}>RM{total.toFixed(2)}</div></div>
       </div>
       <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-        <input className="input" style={{flex:1,maxWidth:320}} placeholder="Search receipt #, invoice #, account, method…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
+        {externalSearchQ === undefined && <input className="input" style={{flex:1,maxWidth:320}} placeholder="Search receipt #, invoice #, account, method…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />}
         <BranchFilterPills branches={branches} value={branchFilter} onChange={setBranchFilter} />
         <span className="small subtle">{filtered.length} / {(pmts||[]).length}</span>
       </div>
@@ -7191,7 +7227,7 @@ function ReceiptsView({ pmts, invoices, branches }){
     </div>
   </>;
 }
-function StudentsView({ students, lessonTypes, lessonTypeById, packages, packageById, groupById, familyGroups, membersByGroup, scheduleByStudent, sessions, jumpToWeek, creditByKey, purchasesByStudent, subscriptions, addCreditPurchase, deleteCreditPurchase, addSubscription, cancelSubscription, adjustBalanceTo, addStudent, updateStudent, deleteStudent }){
+function StudentsView({ students, lessonTypes, lessonTypeById, packages, packageById, groupById, familyGroups, membersByGroup, scheduleByStudent, sessions, jumpToWeek, creditByKey, purchasesByStudent, subscriptions, addCreditPurchase, deleteCreditPurchase, addSubscription, cancelSubscription, adjustBalanceTo, addStudent, updateStudent, deleteStudent, externalSearchQ }){
   const [name, setName] = useState('');
   const [dob, setDob] = useState('');
   const [gender, setGender] = useState(null);
@@ -7296,8 +7332,8 @@ function StudentsView({ students, lessonTypes, lessonTypeById, packages, package
   return <>
     <div className="card" style={{marginBottom:12}}>
       <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-        <input className="input" style={{flex:'1 1 240px',maxWidth:380}} placeholder="Search swimmer name, parent, phone…"
-          value={q} onChange={e=>setQ(e.target.value)} />
+        {externalSearchQ === undefined && <input className="input" style={{flex:'1 1 240px',maxWidth:380}} placeholder="Search swimmer name, parent, phone…"
+          value={q} onChange={e=>setQ(e.target.value)} />}
         <div style={{display:'flex',gap:4,alignItems:'center',flexShrink:0}}>
           <span className="small subtle">Sort:</span>
           {[['name','Name'],['type','Lesson Type'],['package','Package'],['parent','Parent']].map(([k,lbl])=>(
@@ -8272,9 +8308,11 @@ function methodLabel(m){ return({cash:'Cash',bank_transfer:'Bank Transfer',duitn
 // Helper: resolve swimmer names for a group line
 
 
-function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, lessonTypeById, packageById, studentById, membersByGroup, invoiceSettings, onSaveSettings, formatInvoiceNumber, formatReceiptNumber, onVoid, onDelete, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
+function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, lessonTypeById, packageById, studentById, membersByGroup, invoiceSettings, onSaveSettings, formatInvoiceNumber, formatReceiptNumber, onVoid, onDelete, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine, externalSearchQ }){
   const [statusFilter,setStatusFilter]=useState('all');
-  const [searchQ,setSearchQ]=useState('');
+  const [localSearchQ, setLocalSearchQ] = useState('');
+  const searchQ = externalSearchQ !== undefined ? externalSearchQ : localSearchQ;
+  const setSearchQ = setLocalSearchQ;
   const [expandedId,setExpandedId]=useState(null);
   const [selectedIds,setSelectedIds]=useState(new Set());
   const [branchFilter,setBranchFilter]=useState(null);
@@ -8330,7 +8368,7 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
           </button>)}
       </div>
       <div style={{display:'flex',gap:8,alignItems:'center'}}>
-        <input className="input" style={{flex:1,maxWidth:340}} placeholder="Search invoice # or account…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
+        {externalSearchQ === undefined && <input className="input" style={{flex:1,maxWidth:340}} placeholder="Search invoice # or account…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />}
         <label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,cursor:'pointer'}}>
           <input type="checkbox" checked={selCount===filtered.length&&filtered.length>0} onChange={toggleAll} /> Select all
         </label>
