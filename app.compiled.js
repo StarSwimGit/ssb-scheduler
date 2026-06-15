@@ -10488,7 +10488,7 @@ function FamilyGroupsAdminView({
     style: {
       display: 'flex',
       flexDirection: 'column',
-      gap: 8
+      gap: 4
     }
   }, filtered.map(g => {
     const isBound = g.groupType === 'bound';
@@ -15353,7 +15353,7 @@ function InvoicesView({
     style: {
       display: 'flex',
       flexDirection: 'column',
-      gap: 8
+      gap: 4
     }
   }, filtered.map(inv => {
     const overdue = isOverdue(inv);
@@ -15381,22 +15381,13 @@ function InvoicesView({
       type: "checkbox",
       checked: isSelected,
       onChange: () => toggleSelect(inv.id)
-    })), /*#__PURE__*/React.createElement("div", {
+    })), /*#__PURE__*/React.createElement("span", {
       style: {
-        flex: 1,
-        minWidth: 0
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-        flexWrap: 'wrap'
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontWeight: 800,
-        fontSize: 12
+        fontFamily: 'monospace',
+        fontSize: 11,
+        fontWeight: 700,
+        minWidth: 90,
+        flexShrink: 0
       }
     }, inv.invoice_number || '#—'), /*#__PURE__*/React.createElement("span", {
       className: `inv-status-chip s-${inv.status || 'draft'}`
@@ -15404,39 +15395,45 @@ function InvoicesView({
       className: "inv-status-chip s-overdue"
     }, "Overdue"), /*#__PURE__*/React.createElement("span", {
       style: {
-        fontSize: 11,
-        color: 'var(--text-2)',
+        flex: 1,
+        minWidth: 0,
+        fontSize: 11.5,
+        fontWeight: 600,
         whiteSpace: 'nowrap',
         overflow: 'hidden',
         textOverflow: 'ellipsis'
       }
-    }, inv.account_name || '—')), /*#__PURE__*/React.createElement("div", {
+    }, inv.account_name || '—'), /*#__PURE__*/React.createElement("span", {
       className: "small subtle",
       style: {
         fontSize: 10.5,
-        lineHeight: 1.3,
-        marginTop: 1
+        whiteSpace: 'nowrap',
+        flexShrink: 0
       }
-    }, "Issued ", inv.issue_date || '—', inv.due_date ? ` · Due ${inv.due_date}` : '')), /*#__PURE__*/React.createElement("div", {
+    }, inv.issue_date || '—', inv.due_date ? ` → ${inv.due_date}` : ''), /*#__PURE__*/React.createElement("span", {
       style: {
+        fontWeight: 700,
+        fontSize: 12,
+        minWidth: 80,
         textAlign: 'right',
         flexShrink: 0
       }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontWeight: 800,
-        fontSize: 13
-      }
-    }, "RM ", total.toFixed(2)), paid > 0 && /*#__PURE__*/React.createElement("div", {
+    }, "RM ", total.toFixed(2)), paid > 0 && /*#__PURE__*/React.createElement("span", {
       className: "small subtle",
       style: {
-        fontSize: 10
+        fontSize: 10,
+        minWidth: 90,
+        textAlign: 'right',
+        flexShrink: 0,
+        color: outstanding > 0 ? 'var(--amber-tx)' : 'var(--green-tx)'
       }
-    }, "Paid ", paid.toFixed(2), " \xB7 Owed ", outstanding.toFixed(2))), /*#__PURE__*/React.createElement("div", {
+    }, outstanding > 0 ? `Owed ${outstanding.toFixed(2)}` : `Paid`), /*#__PURE__*/React.createElement("span", {
       style: {
         flexShrink: 0,
         color: 'var(--text-3)',
-        fontSize: 10
+        fontSize: 10,
+        width: 14,
+        textAlign: 'center'
       }
     }, isExpanded ? '▲' : '▼')), isExpanded && /*#__PURE__*/React.createElement(InvoiceDetailPanel, {
       invoice: inv,
