@@ -7883,15 +7883,34 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
           }}>+ Add replacement</button>
         </div>
         {(() => {
-          // Pending-replacement candidates for THIS lesson type + week, surfaced
-          // as a quick-pick row above the manual selector so the scheduler can
-          // place them with one click. Trial candidates (any student on a trial
-          // package eligible by lesson-type bucket) are also surfaced.
+          // Surface quick-pick candidates above the manual selector:
+          //  • TRIAL — students on a trial package with a positive credit balance
+          //    for THIS lesson type (skip if balance is 0 or student is missing).
+          //  • PENDING REPLACEMENT — every pending replacement record for THIS
+          //    lesson type within a 4-week forward window from this session's
+          //    week. (Used to be only "this week", which caused replacements
+          //    to disappear from quick-pick after one week.)
           const wk = modal.weekStartDate;
           const ltId = currentLt?.id;
           if(!ltId) return null;
-          const pendingCandidates = (replacementPending || []).filter(p => p.lesson_type_id === ltId && p.week_start_date === wk && !(modal.form.replacementRows || []).some(r => r.studentId === p.student_id));
-          const trialCandidates = students.filter(s => trialStudentIds && trialStudentIds.has(s.id) && (s.lessonTypeIds||[]).includes(ltId) && !(modal.form.studentRows || []).some(r => r.studentId === s.id) && !(modal.form.replacementRows || []).some(r => r.studentId === s.id));
+          // 4-week forward window: this week plus the next 3
+          const windowWeeks = new Set([0,1,2,3].map(n => addDays(wk, n*7)));
+          const pendingCandidates = (replacementPending || []).filter(p =>
+            p.lesson_type_id === ltId &&
+            windowWeeks.has(p.week_start_date) &&
+            studentById[p.student_id] && // student must exist
+            !(modal.form.replacementRows || []).some(r => r.studentId === p.student_id)
+          );
+          const trialCandidates = students.filter(s => {
+            if(!trialStudentIds || !trialStudentIds.has(s.id)) return false;
+            if(!(s.lessonTypeIds||[]).includes(ltId)) return false;
+            // Must have credit balance > 0 for this lesson type
+            const bal = creditByKey ? Number(creditByKey[`${s.id}:${ltId}`] || 0) : 0;
+            if(bal <= 0) return false;
+            if((modal.form.studentRows || []).some(r => r.studentId === s.id)) return false;
+            if((modal.form.replacementRows || []).some(r => r.studentId === s.id)) return false;
+            return true;
+          });
           if(!pendingCandidates.length && !trialCandidates.length) return null;
           function addAsReplacement(studentId, fromLabel){
             const stu = studentById[studentId];
@@ -7906,11 +7925,23 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
             const rows = [...(modal.form.replacementRows||[]), { studentId, name:stu.name, age:stu.age, replacementFrom: fromLabel || '', attendance:'pending' }];
             setModal({ ...modal, form:{ ...modal.form, replacementRows: rows } });
           }
+          // Compact name: truncate to 14 chars with ellipsis
+          const trunc = (s, n=14) => { s = String(s||''); return s.length > n ? s.slice(0,n-1)+'…' : s; };
           return <div className="repl-quickpick">
-            <div className="small subtle" style={{marginBottom:6,fontWeight:700}}>Quick-pick candidates ({pendingCandidates.length + trialCandidates.length})</div>
-            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-              {pendingCandidates.map(p => { const stu = studentById[p.student_id]; if(!stu) return null; return <button key={`p-${p.id}`} type="button" className="quickpick-chip quickpick-rpending" onClick={()=>addAsReplacement(p.student_id, encodeReplacementFrom(p.original_session_id, p.original_session_label))} title={`Pending replacement from ${p.original_session_label}`}><span className="qp-tag qp-tag-r">R-pending</span> {stu.name}{stu.age!=null?` (${stu.age})`:''} <span className="qp-meta">· from {p.original_session_label}</span></button>; })}
-              {trialCandidates.map(s => <button key={`t-${s.id}`} type="button" className="quickpick-chip quickpick-trial" onClick={()=>addAsReplacement(s.id, '(trial)')} title="Trial swimmer — one-off booking"><span className="qp-tag qp-tag-trial">trial</span> {s.name}{s.age!=null?` (${s.age})`:''}</button>)}
+            <div className="small subtle" style={{marginBottom:4,fontWeight:700,fontSize:11}}>Quick-pick ({pendingCandidates.length + trialCandidates.length}) <span style={{fontWeight:400}}>· trials need credit · pending shown for next 4 weeks</span></div>
+            <div style={{display:'flex',gap:3,flexWrap:'wrap'}}>
+              {pendingCandidates.map(p => { const stu = studentById[p.student_id]; if(!stu) return null;
+                const weekTag = p.week_start_date === wk ? '' : ` (${p.week_start_date.slice(5)})`;
+                return <button key={`p-${p.id}`} type="button" className="quickpick-chip quickpick-rpending" style={{padding:'2px 7px',fontSize:10.5,lineHeight:1.3}} onClick={()=>addAsReplacement(p.student_id, encodeReplacementFrom(p.original_session_id, p.original_session_label))} title={`Pending replacement from ${p.original_session_label}${weekTag?` · week of ${p.week_start_date}`:''}`}>
+                  <span className="qp-tag qp-tag-r" style={{padding:'0 4px',fontSize:9}}>R</span> {trunc(stu.name)}{stu.age!=null?` ${stu.age}`:''}{weekTag}
+                </button>;
+              })}
+              {trialCandidates.map(s => {
+                const bal = creditByKey ? Number(creditByKey[`${s.id}:${ltId}`] || 0) : 0;
+                return <button key={`t-${s.id}`} type="button" className="quickpick-chip quickpick-trial" style={{padding:'2px 7px',fontSize:10.5,lineHeight:1.3}} onClick={()=>addAsReplacement(s.id, '(trial)')} title={`Trial swimmer · ${bal} credit${bal===1?'':'s'} remaining`}>
+                  <span className="qp-tag qp-tag-trial" style={{padding:'0 4px',fontSize:9}}>T</span> {trunc(s.name)}{s.age!=null?` ${s.age}`:''}
+                </button>;
+              })}
             </div>
           </div>;
         })()}
