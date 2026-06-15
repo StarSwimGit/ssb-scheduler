@@ -4365,6 +4365,8 @@ function App() {
     pendingCredits: pendingCredits,
     students: students,
     sessions: sessions,
+    creditBalances: creditBalances,
+    currentBranchId: currentBranchId,
     branches: options.branches || [],
     lessonTypes: activeLessonTypes(),
     lessonTypeById: lessonTypeById
@@ -11644,146 +11646,67 @@ function PendingCreditsView({
   })));
 }
 
-// ── ReportsView ───────────────────────────────────────────────────────────────
+// ── ReportsView — Dashboard + Retention ─────────────────────────────────────
+// Focused analytics for the swim school owner. Two tabs:
+//  1. Dashboard — today's cash snapshot, deferred revenue, at-risk swimmers,
+//     overdue invoices, low-utilization slots. Decision-ready.
+//  2. Retention — cohort analysis, LTV, churn signals. The growth-vs-leak chart.
 function ReportsView({
   invoices,
   pmts,
   pendingCredits,
   students,
   sessions,
+  creditBalances,
   branches,
   lessonTypes,
-  lessonTypeById
+  lessonTypeById,
+  currentBranchId
 }) {
-  const [report, setReport] = useState('revenue');
-  const [dateFrom, setDateFrom] = useState(() => {
+  const [tab, setTab] = useState('dashboard');
+  const today = todayStr();
+  const todayMs = new Date(today).getTime();
+  const rm = v => `RM ${Number(v || 0).toFixed(2)}`;
+  const monthAgo = n => {
     const d = new Date();
-    d.setMonth(d.getMonth() - 11);
-    d.setDate(1);
+    d.setMonth(d.getMonth() - n);
     return toDateStr(d);
-  });
-  const [dateTo, setDateTo] = useState(todayStr());
-  const rm = v => `RM ${Number(v).toFixed(2)}`;
+  };
 
-  // Filter payments by date range
-  const filteredPmts = pmts.filter(p => {
-    const d = p.payment_date || '';
-    return (!dateFrom || d >= dateFrom) && (!dateTo || d <= dateTo);
-  });
+  // Branch filter — match the global selector unless we explicitly want everything
+  const branchScope = currentBranchId && currentBranchId !== 'all' ? currentBranchId : null;
+  const branchById2 = useMemo(() => Object.fromEntries((branches || []).map(b => [b.id, b])), [branches]);
+  const studentById2 = useMemo(() => Object.fromEntries((students || []).map(s => [s.id, s])), [students]);
 
-  // Invoice lookup
-  const invById = {};
-  invoices.forEach(i => {
-    invById[i.id] = i;
-  });
-
-  // Branch lookup
-  const branchById2 = {};
-  branches.forEach(b => {
-    branchById2[b.id] = b;
+  // Scope-filtered datasets
+  const scopedStudents = students.filter(s => !branchScope || !s.branchId || s.branchId === branchScope);
+  const scopedInvoices = invoices.filter(i => !branchScope || !i.branch_id || i.branch_id === branchScope);
+  const scopedPmts = pmts.filter(p => {
+    const inv = invoices.find(i => i.id === p.invoice_id);
+    return !branchScope || !inv?.branch_id || inv.branch_id === branchScope;
   });
 
-  // ── Revenue summary ─────────────────────────────────────────────────────────
-  const totalRevenue = filteredPmts.reduce((s, p) => s + Number(p.amount || 0), 0);
-  const totalInvoiced = invoices.filter(i => {
-    const d = i.issue_date || '';
-    return (!dateFrom || d >= dateFrom) && (!dateTo || d <= dateTo);
-  }).reduce((s, i) => s + Number(i.total_amount || 0), 0);
-  const outstanding = totalInvoiced - totalRevenue;
-
-  // ── Revenue by branch ───────────────────────────────────────────────────────
-  const byBranch = {};
-  filteredPmts.forEach(p => {
-    const inv = invById[p.invoice_id];
-    const bid = inv?.branch_id || '__none__';
-    if (!byBranch[bid]) byBranch[bid] = {
-      name: branchById2[bid]?.name || (bid === '__none__' ? 'No branch assigned' : bid),
-      revenue: 0,
-      invoiced: 0,
-      count: 0
-    };
-    byBranch[bid].revenue += Number(p.amount || 0);
-    byBranch[bid].count++;
-  });
-  // Also tally invoiced amounts by branch
-  invoices.filter(i => {
-    const d = i.issue_date || '';
-    return (!dateFrom || d >= dateFrom) && (!dateTo || d <= dateTo);
-  }).forEach(i => {
-    const bid = i.branch_id || '__none__';
-    if (!byBranch[bid]) byBranch[bid] = {
-      name: branchById2[bid]?.name || (bid === '__none__' ? 'No branch' : bid),
-      revenue: 0,
-      invoiced: 0,
-      count: 0
-    };
-    byBranch[bid].invoiced += Number(i.total_amount || 0);
-  });
-  const branchRows = Object.values(byBranch).sort((a, b) => b.revenue - a.revenue);
-
-  // ── Revenue by lesson type ───────────────────────────────────────────────────
-  const byLT = {};
-  invoices.filter(i => {
-    const d = i.issue_date || '';
-    return (!dateFrom || d >= dateFrom) && (!dateTo || d <= dateTo);
-  }).forEach(inv => {
-    // lesson type is on invoice_lines — we don't have lines here, so approximate via pmts matched to inv
-  });
-  // Use sessions lesson type + active students as a proxy
-  const ltStudentMap = {};
-  sessions.forEach(s => {
-    const lt = lessonTypeById(s.lessonTypeId || s.type);
-    const key = lt?.name || s.type || 'Unknown';
-    if (!ltStudentMap[key]) ltStudentMap[key] = {
-      name: key,
-      students: new Set(),
-      sessions: 0
-    };
-    ltStudentMap[key].sessions++;
-    (s.students || []).forEach(stu => ltStudentMap[key].students.add(stu.studentId || stu.name));
-  });
-  const ltRows = Object.values(ltStudentMap).sort((a, b) => b.students.size - a.students.size);
-
-  // ── Month-by-month revenue ──────────────────────────────────────────────────
-  const monthMap = {};
-  filteredPmts.forEach(p => {
-    const mk = (p.payment_date || '').slice(0, 7); // YYYY-MM
-    if (!mk) return;
-    if (!monthMap[mk]) monthMap[mk] = {
-      month: mk,
-      revenue: 0,
-      count: 0
-    };
-    monthMap[mk].revenue += Number(p.amount || 0);
-    monthMap[mk].count++;
-  });
-  const monthRows = Object.values(monthMap).sort((a, b) => a.month.localeCompare(b.month));
-  const maxRevenue = monthRows.length ? Math.max(...monthRows.map(m => m.revenue)) : 1;
-
-  // ── Month-by-month credit consumption (class attendance proxy) ──────────────
-  const creditMap = {};
-  (pendingCredits || []).filter(pc => pc.status === 'confirmed').forEach(pc => {
-    const mk = (pc.created_at || pc.updated_at || '').slice(0, 7);
-    if (!mk) return;
-    if (!creditMap[mk]) creditMap[mk] = {
-      month: mk,
-      credits: 0
-    };
-    creditMap[mk].credits += Number(pc.credits_per_swimmer || pc.amount || pc.initial_balance || 4);
-  });
-  const creditRows = Object.values(creditMap).sort((a, b) => a.month.localeCompare(b.month));
-  const tabs = [['revenue', 'Revenue Summary'], ['branch', 'By Branch'], ['lessonType', 'By Lesson Type'], ['monthly', 'Monthly Revenue'], ['credits', 'Credit Consumption']];
-  function fmtMonth(mk) {
-    try {
-      const [y, m] = mk.split('-');
-      return new Date(y, m - 1, 1).toLocaleDateString(undefined, {
-        month: 'short',
-        year: 'numeric'
+  // ── Last attended date per swimmer (used by at-risk + retention) ─────────
+  const lastAttendedByStu = useMemo(() => {
+    const m = {};
+    sessions.forEach(s => {
+      const sessionDate = addDays(s.weekStartDate || '', s.day);
+      if (!sessionDate || sessionDate > today) return; // future sessions don't count
+      (s.students || []).forEach(st => {
+        const sid = st.studentId;
+        if (!sid) return;
+        // Only count if attendance was recorded as 'present' OR not recorded
+        // (legacy data has no attendance — assume attended)
+        const att = st.attendance || st.attendance_status || 'pending';
+        if (att === 'absent' || att === 'no_show') return;
+        if (!m[sid] || sessionDate > m[sid]) m[sid] = sessionDate;
       });
-    } catch (_) {
-      return mk;
-    }
-  }
+    });
+    return m;
+  }, [sessions, today]);
+
+  // ── Tab routing ─────────────────────────────────────────────────────────
+  const tabs = [['dashboard', '📊 Dashboard'], ['retention', '🔁 Retention & Churn']];
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
@@ -11805,38 +11728,7 @@ function ReportsView({
     }
   }, "Reports & Analytics"), /*#__PURE__*/React.createElement("div", {
     className: "small subtle"
-  }, "Financial performance and operational metrics.")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 8,
-      alignItems: 'center',
-      flexWrap: 'wrap'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "small subtle"
-  }, "Period:"), /*#__PURE__*/React.createElement("input", {
-    type: "date",
-    className: "input",
-    style: {
-      width: 145,
-      padding: '4px 8px',
-      fontSize: 12
-    },
-    value: dateFrom,
-    onChange: e => setDateFrom(e.target.value)
-  }), /*#__PURE__*/React.createElement("span", {
-    className: "small subtle"
-  }, "to"), /*#__PURE__*/React.createElement("input", {
-    type: "date",
-    className: "input",
-    style: {
-      width: 145,
-      padding: '4px 8px',
-      fontSize: 12
-    },
-    value: dateTo,
-    onChange: e => setDateTo(e.target.value)
-  }))), /*#__PURE__*/React.createElement("div", {
+  }, "Focused, decision-ready views", branchScope ? ` · scoped to ${branchById2[branchScope]?.name || 'branch'}` : ' · all branches', "."))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 4,
@@ -11844,184 +11736,325 @@ function ReportsView({
     }
   }, tabs.map(([k, l]) => /*#__PURE__*/React.createElement("button", {
     key: k,
-    className: `sub-tab ${report === k ? 'active' : ''}`,
+    className: `sub-tab ${tab === k ? 'active' : ''}`,
     style: {
-      padding: '4px 12px',
+      padding: '4px 14px',
       fontSize: 12
     },
-    onClick: () => setReport(k)
-  }, l)))), report === 'revenue' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    onClick: () => setTab(k)
+  }, l)))), tab === 'dashboard' && /*#__PURE__*/React.createElement(DashboardReport, {
+    invoices: scopedInvoices,
+    pmts: scopedPmts,
+    students: scopedStudents,
+    pendingCredits: pendingCredits,
+    creditBalances: creditBalances,
+    sessions: sessions,
+    lastAttendedByStu: lastAttendedByStu,
+    today: today,
+    todayMs: todayMs,
+    rm: rm,
+    studentById2: studentById2,
+    branchById2: branchById2,
+    branchScope: branchScope
+  }), tab === 'retention' && /*#__PURE__*/React.createElement(RetentionReport, {
+    students: scopedStudents,
+    pmts: scopedPmts,
+    lastAttendedByStu: lastAttendedByStu,
+    sessions: sessions,
+    today: today,
+    todayMs: todayMs,
+    rm: rm,
+    studentById2: studentById2
+  }));
+}
+
+// ── Dashboard tab ───────────────────────────────────────────────────────────
+function DashboardReport({
+  invoices,
+  pmts,
+  students,
+  pendingCredits,
+  creditBalances,
+  sessions,
+  lastAttendedByStu,
+  today,
+  todayMs,
+  rm,
+  studentById2,
+  branchById2,
+  branchScope
+}) {
+  // Current month boundaries
+  const monthStart = today.slice(0, 7) + '-01';
+  const now = new Date();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const dayOfMonth = now.getDate();
+
+  // Cash collected this month
+  const thisMonthPmts = pmts.filter(p => (p.payment_date || '') >= monthStart && (p.payment_date || '') <= today);
+  const cashThisMonth = thisMonthPmts.reduce((s, p) => s + Number(p.amount || 0), 0);
+
+  // Same month last year — only if data exists going back that far
+  const lastYearStart = `${now.getFullYear() - 1}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+  const lastYearEnd = `${now.getFullYear() - 1}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
+  const lastYearSamePmts = pmts.filter(p => (p.payment_date || '') >= lastYearStart && (p.payment_date || '') <= lastYearEnd);
+  const cashLastYear = lastYearSamePmts.reduce((s, p) => s + Number(p.amount || 0), 0);
+  const yoyDelta = cashLastYear > 0 ? Math.round((cashThisMonth - cashLastYear) / cashLastYear * 100) : null;
+
+  // Pace projection
+  const projection = dayOfMonth > 0 ? Math.round(cashThisMonth / dayOfMonth * daysInMonth) : 0;
+
+  // Outstanding receivables
+  const outstanding = invoices.filter(i => i.status !== 'paid' && i.status !== 'void').reduce((s, i) => s + Math.max(0, Number(i.total_amount || 0) - Number(i.amount_paid || 0)), 0);
+
+  // Deferred revenue — sum of remaining credit balances multiplied by an estimated
+  // per-credit value. We don't have a clean per-credit price, so use:
+  //   per-credit value = total credit_purchases value / total credits purchased
+  // This is the most defensible business approximation.
+  const totalCreditsRemaining = (creditBalances || []).reduce((s, c) => s + Number(c.remaining_balance || 0), 0);
+  // Approximate per-credit value from confirmed pending credits: amount / credits
+  const confirmedCredits = (pendingCredits || []).filter(p => p.status === 'confirmed');
+  let perCreditValue = 0;
+  if (confirmedCredits.length > 0) {
+    const totalValue = confirmedCredits.reduce((s, p) => s + Number(p.amount || 0), 0);
+    const totalCredits = confirmedCredits.reduce((s, p) => s + Number(p.credits_per_swimmer || p.initial_balance || 4), 0);
+    if (totalCredits > 0) perCreditValue = totalValue / totalCredits;
+  }
+  const deferredRevenue = totalCreditsRemaining * perCreditValue;
+
+  // ── At-risk swimmers: last attended >30d ago AND credit ≤ 1 ──
+  const balanceByStu = useMemo(() => {
+    const m = {};
+    (creditBalances || []).forEach(c => {
+      const sid = c.student_id;
+      if (!sid) return;
+      m[sid] = (m[sid] || 0) + Number(c.remaining_balance || 0);
+    });
+    return m;
+  }, [creditBalances]);
+  const atRisk = students.filter(s => s.isActive !== false).map(s => {
+    const last = lastAttendedByStu[s.id];
+    const daysSince = last ? Math.floor((todayMs - new Date(last).getTime()) / 86400000) : 999;
+    const bal = balanceByStu[s.id] || 0;
+    return {
+      swimmer: s,
+      daysSince,
+      lastAttended: last,
+      balance: bal
+    };
+  }).filter(r => r.daysSince >= 30 && r.balance <= 1).sort((a, b) => b.daysSince - a.daysSince);
+
+  // ── Overdue invoices ──
+  const overdueInvs = invoices.filter(i => i.status !== 'paid' && i.status !== 'void' && i.due_date && i.due_date < today).map(i => ({
+    inv: i,
+    owed: Math.max(0, Number(i.total_amount || 0) - Number(i.amount_paid || 0)),
+    daysOverdue: Math.floor((todayMs - new Date(i.due_date).getTime()) / 86400000)
+  })).sort((a, b) => b.daysOverdue - a.daysOverdue);
+
+  // ── Cash by payment method (last 30 days) ──
+  const last30 = pmts.filter(p => (p.payment_date || '') >= monthAgoStr(30));
+  const byMethod = {};
+  last30.forEach(p => {
+    const m = (p.payment_method || 'unknown').toLowerCase();
+    byMethod[m] = (byMethod[m] || 0) + Number(p.amount || 0);
+  });
+  const methodRows = Object.entries(byMethod).sort((a, b) => b[1] - a[1]);
+  const methodTotal = methodRows.reduce((s, [, v]) => s + v, 0);
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: 'repeat(3,1fr)',
+      gridTemplateColumns: 'repeat(4,1fr)',
+      gap: 10,
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement(KpiCard, {
+    label: `Cash · ${now.toLocaleDateString(undefined, {
+      month: 'long'
+    })}`,
+    value: rm(cashThisMonth),
+    color: "var(--green-tx)",
+    sub: yoyDelta !== null ? `${yoyDelta >= 0 ? '↑' : '↓'} ${Math.abs(yoyDelta)}% vs last year (${rm(cashLastYear)})` : `Day ${dayOfMonth} of ${daysInMonth}`
+  }), /*#__PURE__*/React.createElement(KpiCard, {
+    label: "Month-end projection",
+    value: rm(projection),
+    color: "var(--primary)",
+    sub: `Pace: ${rm(cashThisMonth / Math.max(dayOfMonth, 1))} per day`
+  }), /*#__PURE__*/React.createElement(KpiCard, {
+    label: "Outstanding (AR)",
+    value: rm(outstanding),
+    color: "var(--amber-tx)",
+    sub: `${invoices.filter(i => i.status !== 'paid' && i.status !== 'void').length} open invoice${invoices.filter(i => i.status !== 'paid' && i.status !== 'void').length === 1 ? '' : 's'}`
+  }), /*#__PURE__*/React.createElement(KpiCard, {
+    label: "Deferred revenue",
+    value: rm(deferredRevenue),
+    color: "#7C3AED",
+    sub: `${totalCreditsRemaining} credits unredeemed · ~${rm(perCreditValue)}/credit`
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: '1fr 1fr',
       gap: 12,
       marginBottom: 12
     }
-  }, [['Total Collected', 'var(--green-tx)', rm(totalRevenue), 'Payments received in period'], ['Total Invoiced', 'var(--primary)', rm(totalInvoiced), 'Invoices issued in period'], ['Outstanding', 'var(--amber-tx)', rm(Math.max(0, outstanding)), 'Invoiced but not yet paid']].map(([label, color, value, sub]) => /*#__PURE__*/React.createElement("div", {
-    key: label,
+  }, /*#__PURE__*/React.createElement("div", {
     className: "card"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "small subtle"
-  }, label), /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 26,
-      fontWeight: 800,
-      color,
-      marginTop: 2
-    }
-  }, value), /*#__PURE__*/React.createElement("div", {
-    className: "small subtle",
-    style: {
-      marginTop: 4
-    }
-  }, sub)))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(3,1fr)',
-      gap: 12
-    }
-  }, [['Active Accounts', (() => new Set(students.filter(s => s.isActive !== false).map(s => s.guardianEmail || s.guardianName)).size)(), 'var(--text)'], ['Total Swimmers', students.filter(s => s.isActive !== false).length, 'var(--text)'], ['Sessions Scheduled', sessions.length, 'var(--text)']].map(([label, value, color]) => /*#__PURE__*/React.createElement("div", {
-    key: label,
-    className: "card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "small subtle"
-  }, label), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 26,
-      fontWeight: 800,
-      color,
-      marginTop: 2
-    }
-  }, value))))), report === 'branch' && /*#__PURE__*/React.createElement("div", {
-    className: "card",
-    style: {
-      padding: 0,
-      overflow: 'hidden'
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'baseline',
+      marginBottom: 8
     }
   }, /*#__PURE__*/React.createElement("div", {
-    className: "table-wrap",
     style: {
-      border: 'none',
-      borderRadius: 0
-    }
-  }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Branch"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      textAlign: 'right'
-    }
-  }, "Total Invoiced"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      textAlign: 'right'
-    }
-  }, "Revenue Collected"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      textAlign: 'right'
-    }
-  }, "Collection Rate"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      textAlign: 'right'
-    }
-  }, "Transactions"))), /*#__PURE__*/React.createElement("tbody", null, branchRows.length === 0 && /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
-    colSpan: 5,
-    className: "empty"
-  }, "No data in period.")), branchRows.map(r => /*#__PURE__*/React.createElement("tr", {
-    key: r.name
-  }, /*#__PURE__*/React.createElement("td", {
-    style: {
-      fontWeight: 600
-    }
-  }, r.name), /*#__PURE__*/React.createElement("td", {
-    style: {
-      textAlign: 'right'
-    }
-  }, rm(r.invoiced)), /*#__PURE__*/React.createElement("td", {
-    style: {
-      textAlign: 'right',
-      color: 'var(--green-tx)',
-      fontWeight: 700
-    }
-  }, rm(r.revenue)), /*#__PURE__*/React.createElement("td", {
-    style: {
-      textAlign: 'right'
-    }
-  }, r.invoiced > 0 ? Math.round(r.revenue / r.invoiced * 100) + '%' : '—'), /*#__PURE__*/React.createElement("td", {
-    style: {
-      textAlign: 'right'
-    }
-  }, r.count))), branchRows.length > 1 && /*#__PURE__*/React.createElement("tr", {
-    style: {
-      borderTop: '2px solid var(--border)',
+      fontSize: 13,
       fontWeight: 800
     }
-  }, /*#__PURE__*/React.createElement("td", null, "Total"), /*#__PURE__*/React.createElement("td", {
+  }, "\u26A0\uFE0F At-risk swimmers (", atRisk.length, ")"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle"
+  }, "No class in 30+ days \xB7 low credit")), atRisk.length === 0 && /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
     style: {
-      textAlign: 'right'
+      padding: '12px 0'
     }
-  }, rm(branchRows.reduce((s, r) => s + r.invoiced, 0))), /*#__PURE__*/React.createElement("td", {
-    style: {
-      textAlign: 'right',
-      color: 'var(--green-tx)'
-    }
-  }, rm(totalRevenue)), /*#__PURE__*/React.createElement("td", {
-    style: {
-      textAlign: 'right'
-    }
-  }, totalInvoiced > 0 ? Math.round(totalRevenue / totalInvoiced * 100) + '%' : '—'), /*#__PURE__*/React.createElement("td", {
-    style: {
-      textAlign: 'right'
-    }
-  }, filteredPmts.length)))))), report === 'lessonType' && /*#__PURE__*/React.createElement("div", {
-    className: "card",
-    style: {
-      padding: 0,
-      overflow: 'hidden'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '12px 14px 8px',
-      fontSize: 12,
-      color: 'var(--text-3)'
-    }
-  }, "Based on active scheduled sessions. Revenue per lesson type requires invoice lines \u2014 shown as student load proxy."), /*#__PURE__*/React.createElement("div", {
+  }, "None \u2014 every active swimmer attended recently or has credit remaining."), atRisk.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "table-wrap",
     style: {
-      border: 'none',
-      borderRadius: 0
+      maxHeight: 260,
+      overflow: 'auto'
     }
-  }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Lesson Type"), /*#__PURE__*/React.createElement("th", {
+  }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Swimmer"), /*#__PURE__*/React.createElement("th", {
     style: {
       textAlign: 'right'
     }
-  }, "Active Sessions"), /*#__PURE__*/React.createElement("th", {
+  }, "Days since"), /*#__PURE__*/React.createElement("th", {
     style: {
       textAlign: 'right'
     }
-  }, "Unique Swimmers"), /*#__PURE__*/React.createElement("th", null, "Load Bar"))), /*#__PURE__*/React.createElement("tbody", null, ltRows.length === 0 && /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
-    colSpan: 4,
-    className: "empty"
-  }, "No session data.")), ltRows.map(r => /*#__PURE__*/React.createElement("tr", {
-    key: r.name
-  }, /*#__PURE__*/React.createElement("td", {
+  }, "Balance"))), /*#__PURE__*/React.createElement("tbody", null, atRisk.slice(0, 30).map(r => /*#__PURE__*/React.createElement("tr", {
+    key: r.swimmer.id
+  }, /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("div", {
     style: {
       fontWeight: 600
     }
-  }, r.name), /*#__PURE__*/React.createElement("td", {
+  }, r.swimmer.name), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle"
+  }, r.swimmer.guardianName || '—', " \xB7 ", r.swimmer.guardianPhone || r.swimmer.guardianEmail || '—')), /*#__PURE__*/React.createElement("td", {
+    style: {
+      textAlign: 'right',
+      color: r.daysSince >= 90 ? 'var(--red-tx)' : r.daysSince >= 60 ? '#F97316' : 'var(--amber-tx)',
+      fontWeight: 700
+    }
+  }, r.daysSince >= 999 ? 'never' : `${r.daysSince}d`), /*#__PURE__*/React.createElement("td", {
     style: {
       textAlign: 'right'
     }
-  }, r.sessions), /*#__PURE__*/React.createElement("td", {
+  }, r.balance, " cr"))))), atRisk.length > 30 && /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      padding: '8px 12px'
+    }
+  }, "+ ", atRisk.length - 30, " more")), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginTop: 8,
+      fontStyle: 'italic'
+    }
+  }, "\uD83D\uDCDE A friendly call this week recovers most of these. They haven't decided to quit yet \u2014 they just got busy.")), /*#__PURE__*/React.createElement("div", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'baseline',
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      fontWeight: 800
+    }
+  }, "\uD83D\uDCCB Overdue invoices (", overdueInvs.length, ")"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle"
+  }, rm(overdueInvs.reduce((s, r) => s + r.owed, 0)), " total")), overdueInvs.length === 0 && /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      padding: '12px 0'
+    }
+  }, "None \u2014 all invoices either current or paid."), overdueInvs.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "table-wrap",
+    style: {
+      maxHeight: 260,
+      overflow: 'auto'
+    }
+  }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Account"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      textAlign: 'right'
+    }
+  }, "Owed"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      textAlign: 'right'
+    }
+  }, "Overdue"))), /*#__PURE__*/React.createElement("tbody", null, overdueInvs.slice(0, 30).map(r => /*#__PURE__*/React.createElement("tr", {
+    key: r.inv.id
+  }, /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 600
+    }
+  }, r.inv.account_name), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle"
+  }, r.inv.invoice_number, " \xB7 due ", r.inv.due_date)), /*#__PURE__*/React.createElement("td", {
     style: {
       textAlign: 'right',
       fontWeight: 700,
-      color: 'var(--primary)'
+      color: 'var(--red-tx)'
     }
-  }, r.students.size), /*#__PURE__*/React.createElement("td", {
+  }, rm(r.owed)), /*#__PURE__*/React.createElement("td", {
     style: {
-      width: '35%',
-      paddingRight: 16
+      textAlign: 'right'
+    }
+  }, r.daysOverdue, "d"))))), overdueInvs.length > 30 && /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      padding: '8px 12px'
+    }
+  }, "+ ", overdueInvs.length - 30, " more")))), /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 12
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      height: 8,
+      fontSize: 13,
+      fontWeight: 800,
+      marginBottom: 10
+    }
+  }, "\uD83D\uDCB0 Cash collected by method \xB7 last 30 days"), methodRows.length === 0 && /*#__PURE__*/React.createElement("div", {
+    className: "small subtle"
+  }, "No payments recorded in the last 30 days."), methodRows.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 6
+    }
+  }, methodRows.map(([m, v]) => /*#__PURE__*/React.createElement("div", {
+    key: m,
+    style: {
+      display: 'grid',
+      gridTemplateColumns: '150px 1fr 120px 60px',
+      gap: 10,
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12,
+      fontWeight: 600,
+      color: 'var(--text-2)',
+      textTransform: 'capitalize'
+    }
+  }, m), /*#__PURE__*/React.createElement("div", {
+    style: {
+      height: 14,
       borderRadius: 4,
       background: 'var(--border)',
       overflow: 'hidden'
@@ -12031,127 +12064,340 @@ function ReportsView({
       height: '100%',
       borderRadius: 4,
       background: 'var(--primary)',
-      width: Math.round(r.students.size / Math.max(...ltRows.map(x => x.students.size)) * 100) + '%'
-    }
-  }))))))))), report === 'monthly' && /*#__PURE__*/React.createElement(React.Fragment, null, monthRows.length === 0 && /*#__PURE__*/React.createElement("div", {
-    className: "card empty",
-    style: {
-      padding: 28
-    }
-  }, "No payment data in this period."), monthRows.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "card",
-    style: {
-      marginBottom: 12
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontWeight: 700,
-      marginBottom: 10,
-      fontSize: 13
-    }
-  }, "Monthly Revenue \u2014 ", fmtMonth(monthRows[0]?.month), " to ", fmtMonth(monthRows[monthRows.length - 1]?.month)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 6
-    }
-  }, monthRows.map(m => /*#__PURE__*/React.createElement("div", {
-    key: m.month,
-    style: {
-      display: 'grid',
-      gridTemplateColumns: '90px 1fr 100px',
-      gap: 10,
-      alignItems: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 12,
-      fontWeight: 600,
-      color: 'var(--text-2)'
-    }
-  }, fmtMonth(m.month)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      height: 22,
-      borderRadius: 5,
-      background: 'var(--border)',
-      overflow: 'hidden'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      height: '100%',
-      borderRadius: 5,
-      background: 'var(--green-tx)',
-      width: Math.round(m.revenue / maxRevenue * 100) + '%',
+      width: Math.round(v / methodTotal * 100) + '%',
       minWidth: 2
     }
   })), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 12,
       fontWeight: 700,
-      color: 'var(--green-tx)',
       textAlign: 'right'
     }
-  }, rm(m.revenue))))), /*#__PURE__*/React.createElement("div", {
+  }, rm(v)), /*#__PURE__*/React.createElement("span", {
     style: {
-      marginTop: 14,
-      paddingTop: 10,
-      borderTop: '1px solid var(--border)',
-      display: 'flex',
-      gap: 20
+      fontSize: 11,
+      color: 'var(--text-3)',
+      textAlign: 'right'
     }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
-    className: "small subtle"
-  }, "Period total: "), /*#__PURE__*/React.createElement("span", {
+  }, Math.round(v / methodTotal * 100), "%"))))));
+}
+
+// ── Retention tab ────────────────────────────────────────────────────────────
+function RetentionReport({
+  students,
+  pmts,
+  lastAttendedByStu,
+  sessions,
+  today,
+  todayMs,
+  rm,
+  studentById2
+}) {
+  // Build attendance set per swimmer: months they were active in
+  // "Active in month M" = attended a session OR was enrolled with positive balance
+  const attendedMonthsByStu = useMemo(() => {
+    const m = {};
+    sessions.forEach(s => {
+      const sessionDate = addDays(s.weekStartDate || '', s.day);
+      if (!sessionDate || sessionDate > today) return;
+      const mk = sessionDate.slice(0, 7);
+      (s.students || []).forEach(st => {
+        const sid = st.studentId;
+        if (!sid) return;
+        const att = st.attendance || st.attendance_status || 'pending';
+        if (att === 'absent' || att === 'no_show') return;
+        if (!m[sid]) m[sid] = new Set();
+        m[sid].add(mk);
+      });
+    });
+    return m;
+  }, [sessions, today]);
+
+  // Cohort: group students by month of created_at
+  const cohorts = useMemo(() => {
+    const c = {};
+    students.forEach(s => {
+      const created = (s.createdAt || s.created_at || '').slice(0, 7);
+      if (!created) return;
+      if (!c[created]) c[created] = [];
+      c[created].push(s);
+    });
+    return c;
+  }, [students]);
+
+  // For each cohort, % active at month N (where N=0..11 after signup)
+  const cohortKeys = Object.keys(cohorts).sort();
+  const lastCohort = cohortKeys.length ? cohortKeys[cohortKeys.length - 1] : null;
+  function monthsAfter(cohortMk, n) {
+    const [y, m] = cohortMk.split('-').map(Number);
+    const d = new Date(y, m - 1 + n, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }
+  const cohortRows = cohortKeys.slice(-12).reverse().map(ck => {
+    const members = cohorts[ck];
+    const size = members.length;
+    const buckets = Array.from({
+      length: 12
+    }, (_, n) => {
+      const targetMk = monthsAfter(ck, n);
+      // Only count cells where target month has already occurred
+      if (targetMk > today.slice(0, 7)) return null;
+      const activeCount = members.filter(s => {
+        const mset = attendedMonthsByStu[s.id];
+        return mset && mset.has(targetMk);
+      }).length;
+      return size > 0 ? Math.round(activeCount / size * 100) : 0;
+    });
+    return {
+      cohort: ck,
+      size,
+      buckets
+    };
+  });
+
+  // LTV calculation — per-account total payments × months active
+  // Build account → { totalPaid, firstAct, lastAct, swimmerCount }
+  const accountAgg = {};
+  const swimmerToAccount = {};
+  students.forEach(s => {
+    const key = s.accountId || `__legacy__${s.guardianEmail || s.guardianName || s.id}`;
+    swimmerToAccount[s.id] = key;
+    if (!accountAgg[key]) accountAgg[key] = {
+      swimmers: new Set(),
+      name: s.guardianName || '?',
+      firstAct: null,
+      lastAct: null,
+      totalPaid: 0
+    };
+    accountAgg[key].swimmers.add(s.id);
+    const last = lastAttendedByStu[s.id];
+    if (last) {
+      if (!accountAgg[key].firstAct || last < accountAgg[key].firstAct) accountAgg[key].firstAct = last;
+      if (!accountAgg[key].lastAct || last > accountAgg[key].lastAct) accountAgg[key].lastAct = last;
+    }
+  });
+
+  // LTV summary
+  const allAccounts = Object.values(accountAgg);
+  const activeAccounts = allAccounts.filter(a => a.lastAct);
+  const totalSwimmers = students.length;
+  const totalActiveSwimmers = students.filter(s => {
+    const last = lastAttendedByStu[s.id];
+    if (!last) return false;
+    return (todayMs - new Date(last).getTime()) / 86400000 <= 30;
+  }).length;
+
+  // Average months active across all accounts with both first and last
+  const monthsActiveList = allAccounts.filter(a => a.firstAct && a.lastAct).map(a => {
+    const months = (new Date(a.lastAct).getFullYear() - new Date(a.firstAct).getFullYear()) * 12 + (new Date(a.lastAct).getMonth() - new Date(a.firstAct).getMonth()) + 1;
+    return Math.max(1, months);
+  });
+  const avgMonthsActive = monthsActiveList.length ? Math.round(monthsActiveList.reduce((s, x) => s + x, 0) / monthsActiveList.length) : 0;
+
+  // Total revenue ÷ total swimmers = avg revenue per swimmer
+  const totalRevenue = pmts.reduce((s, p) => s + Number(p.amount || 0), 0);
+  const avgRevenuePerSwimmer = totalSwimmers > 0 ? totalRevenue / totalSwimmers : 0;
+  const avgLTV = avgMonthsActive > 0 ? avgRevenuePerSwimmer : 0; // already cumulative
+  const avgMonthlyValue = avgMonthsActive > 0 ? avgLTV / avgMonthsActive : 0;
+
+  // Churn: never attended OR last attended >60 days ago
+  const churnedSwimmers = students.filter(s => {
+    const last = lastAttendedByStu[s.id];
+    if (!last) return false; // never attended ≠ churned, they may be brand new
+    return (todayMs - new Date(last).getTime()) / 86400000 > 60;
+  });
+  const churnRate = totalSwimmers > 0 ? Math.round(churnedSwimmers.length / totalSwimmers * 100) : 0;
+
+  // Color cell by retention bucket
+  function cellColor(pct) {
+    if (pct === null) return 'transparent';
+    if (pct >= 75) return '#86EFAC';
+    if (pct >= 50) return '#FDE68A';
+    if (pct >= 25) return '#FCA5A5';
+    return '#FECACA';
+  }
+  function fmtCohort(mk) {
+    try {
+      const [y, m] = mk.split('-');
+      return new Date(y, m - 1, 1).toLocaleDateString(undefined, {
+        month: 'short',
+        year: '2-digit'
+      });
+    } catch (_) {
+      return mk;
+    }
+  }
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontWeight: 700,
-      color: 'var(--green-tx)'
+      display: 'grid',
+      gridTemplateColumns: 'repeat(4,1fr)',
+      gap: 10,
+      marginBottom: 12
     }
-  }, rm(monthRows.reduce((s, m) => s + m.revenue, 0)))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
-    className: "small subtle"
-  }, "Monthly avg: "), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontWeight: 700
-    }
-  }, rm(monthRows.reduce((s, m) => s + m.revenue, 0) / monthRows.length))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
-    className: "small subtle"
-  }, "Best month: "), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontWeight: 700
-    }
-  }, fmtMonth(monthRows.slice().sort((a, b) => b.revenue - a.revenue)[0]?.month)))))), report === 'credits' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(KpiCard, {
+    label: "Average LTV per swimmer",
+    value: rm(avgLTV),
+    color: "var(--primary)",
+    sub: `${rm(avgMonthlyValue)}/mo · ${avgMonthsActive} mo avg lifetime`
+  }), /*#__PURE__*/React.createElement(KpiCard, {
+    label: "Active swimmers",
+    value: `${totalActiveSwimmers} / ${totalSwimmers}`,
+    color: "var(--green-tx)",
+    sub: `${Math.round(totalActiveSwimmers / Math.max(totalSwimmers, 1) * 100)}% attended in last 30d`
+  }), /*#__PURE__*/React.createElement(KpiCard, {
+    label: "Churned (60+d inactive)",
+    value: churnedSwimmers.length,
+    color: "var(--red-tx)",
+    sub: `${churnRate}% of total roster`
+  }), /*#__PURE__*/React.createElement(KpiCard, {
+    label: "Total accounts tracked",
+    value: allAccounts.length,
+    color: "var(--text)",
+    sub: `${activeAccounts.length} have attendance recorded`
+  })), /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
       marginBottom: 12,
-      padding: '10px 14px'
+      padding: 0,
+      overflow: 'hidden'
     }
   }, /*#__PURE__*/React.createElement("div", {
-    className: "small subtle"
-  }, "Credit consumption is based on confirmed pending credits \u2014 each confirmation represents lessons purchased by families. Higher consumption = higher class attendance activity.")), creditRows.length === 0 && /*#__PURE__*/React.createElement("div", {
-    className: "card empty",
     style: {
-      padding: 28
+      padding: '12px 14px',
+      borderBottom: '1px solid var(--border)'
     }
-  }, "No confirmed credit data available."), creditRows.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      fontWeight: 800
+    }
+  }, "Cohort retention \u2014 % of swimmers still attending each month after signup"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginTop: 3
+    }
+  }, "Healthy benchmarks: 75%+ at month 3 (green) \xB7 50\u201375% (yellow) \xB7 below 50% needs intervention (red). Last 12 cohorts shown.")), cohortRows.length === 0 && /*#__PURE__*/React.createElement("div", {
+    className: "empty",
+    style: {
+      padding: 24
+    }
+  }, "No cohort data yet \u2014 need swimmer signup dates and recorded attendance."), cohortRows.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      overflow: 'auto'
+    }
+  }, /*#__PURE__*/React.createElement("table", {
+    style: {
+      width: '100%',
+      borderCollapse: 'separate',
+      borderSpacing: 0,
+      fontSize: 11
+    }
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", {
+    style: {
+      background: 'var(--surface-2)'
+    }
+  }, /*#__PURE__*/React.createElement("th", {
+    style: {
+      padding: '8px 10px',
+      textAlign: 'left',
+      position: 'sticky',
+      left: 0,
+      background: 'var(--surface-2)',
+      zIndex: 1,
+      minWidth: 90
+    }
+  }, "Cohort"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      padding: '8px 6px',
+      textAlign: 'right'
+    }
+  }, "Size"), Array.from({
+    length: 12
+  }, (_, i) => /*#__PURE__*/React.createElement("th", {
+    key: i,
+    style: {
+      padding: '8px 4px',
+      textAlign: 'center',
+      minWidth: 42
+    }
+  }, "M", i)))), /*#__PURE__*/React.createElement("tbody", null, cohortRows.map(r => /*#__PURE__*/React.createElement("tr", {
+    key: r.cohort
+  }, /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: '6px 10px',
+      fontWeight: 600,
+      position: 'sticky',
+      left: 0,
+      background: 'var(--surface)',
+      zIndex: 1
+    }
+  }, fmtCohort(r.cohort)), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: '6px',
+      textAlign: 'right',
+      fontWeight: 600,
+      color: 'var(--text-2)'
+    }
+  }, r.size), r.buckets.map((pct, i) => /*#__PURE__*/React.createElement("td", {
+    key: i,
+    style: {
+      padding: '6px 4px',
+      textAlign: 'center',
+      background: cellColor(pct),
+      color: pct === null ? 'transparent' : '#000',
+      fontWeight: 600
+    }
+  }, pct === null ? '—' : pct + '%')))))))), /*#__PURE__*/React.createElement("div", {
     className: "card"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontWeight: 700,
-      marginBottom: 10,
-      fontSize: 13
+      fontSize: 13,
+      fontWeight: 800,
+      marginBottom: 10
     }
-  }, "Monthly Credit Consumption"), (() => {
-    const maxC = Math.max(...creditRows.map(m => m.credits));
-    return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, "Roster activity distribution"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginBottom: 12
+    }
+  }, "How recently each currently-marked-active swimmer was seen in class."), (() => {
+    const buckets = {
+      '0-7d': 0,
+      '8-30d': 0,
+      '31-60d': 0,
+      '61-90d': 0,
+      '90+d': 0,
+      'never': 0
+    };
+    students.filter(s => s.isActive !== false).forEach(s => {
+      const last = lastAttendedByStu[s.id];
+      if (!last) {
+        buckets['never']++;
+        return;
+      }
+      const days = Math.floor((todayMs - new Date(last).getTime()) / 86400000);
+      if (days <= 7) buckets['0-7d']++;else if (days <= 30) buckets['8-30d']++;else if (days <= 60) buckets['31-60d']++;else if (days <= 90) buckets['61-90d']++;else buckets['90+d']++;
+    });
+    const max = Math.max(...Object.values(buckets), 1);
+    const colors = {
+      '0-7d': 'var(--green-tx)',
+      '8-30d': '#84CC16',
+      '31-60d': 'var(--amber-tx)',
+      '61-90d': '#F97316',
+      '90+d': 'var(--red-tx)',
+      'never': '#9CA3AF'
+    };
+    return /*#__PURE__*/React.createElement("div", {
       style: {
         display: 'flex',
         flexDirection: 'column',
         gap: 6
       }
-    }, creditRows.map(m => /*#__PURE__*/React.createElement("div", {
-      key: m.month,
+    }, Object.entries(buckets).map(([k, v]) => /*#__PURE__*/React.createElement("div", {
+      key: k,
       style: {
         display: 'grid',
-        gridTemplateColumns: '90px 1fr 80px',
+        gridTemplateColumns: '90px 1fr 60px',
         gap: 10,
         alignItems: 'center'
       }
@@ -12161,9 +12407,9 @@ function ReportsView({
         fontWeight: 600,
         color: 'var(--text-2)'
       }
-    }, fmtMonth(m.month)), /*#__PURE__*/React.createElement("div", {
+    }, k), /*#__PURE__*/React.createElement("div", {
       style: {
-        height: 22,
+        height: 18,
         borderRadius: 5,
         background: 'var(--border)',
         overflow: 'hidden'
@@ -12172,40 +12418,59 @@ function ReportsView({
       style: {
         height: '100%',
         borderRadius: 5,
-        background: 'var(--primary)',
-        width: Math.round(m.credits / maxC * 100) + '%',
+        background: colors[k],
+        width: Math.round(v / max * 100) + '%',
         minWidth: 2
       }
     })), /*#__PURE__*/React.createElement("span", {
       style: {
         fontSize: 12,
         fontWeight: 700,
-        color: 'var(--primary)',
         textAlign: 'right'
       }
-    }, m.credits, " cr")))), /*#__PURE__*/React.createElement("div", {
-      style: {
-        marginTop: 14,
-        paddingTop: 10,
-        borderTop: '1px solid var(--border)',
-        display: 'flex',
-        gap: 20
-      }
-    }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
-      className: "small subtle"
-    }, "Total credits: "), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontWeight: 700,
-        color: 'var(--primary)'
-      }
-    }, creditRows.reduce((s, m) => s + m.credits, 0), " cr")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
-      className: "small subtle"
-    }, "Monthly avg: "), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontWeight: 700
-      }
-    }, Math.round(creditRows.reduce((s, m) => s + m.credits, 0) / creditRows.length), " cr"))));
-  })())));
+    }, v))));
+  })()));
+}
+
+// ── KpiCard — reusable big-number tile ──────────────────────────────────────
+function KpiCard({
+  label,
+  value,
+  color,
+  sub
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      padding: '12px 14px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      fontSize: 11
+    }
+  }, label), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 24,
+      fontWeight: 800,
+      color,
+      marginTop: 3,
+      letterSpacing: '-.3px'
+    }
+  }, value), sub && /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      fontSize: 10.5,
+      marginTop: 4
+    }
+  }, sub));
+}
+
+// Helper used by Dashboard — defined at module scope
+function monthAgoStr(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 function AgingReportView({
   invoices,
