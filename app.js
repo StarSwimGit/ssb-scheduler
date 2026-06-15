@@ -2831,7 +2831,11 @@ function App(){
         onClearInstructors={clearInstructors}
         instructorFilterActive={selectedInstructors.size > 0}
         weekPendingReplacements={replacementPending.filter(p => {
-          if(p.week_start_date !== selectedWeekStart) return false;
+          // Show on the selected week AND any past-week limbo records that
+          // were never placed (they remain pending until manually resolved).
+          // Only future-week (>selectedWeekStart) records are hidden until
+          // their own week becomes the selected week.
+          if(p.week_start_date > selectedWeekStart) return false;
           // Branch filter: only show replacements whose student belongs to the current branch
           if(currentBranchId && currentBranchId !== 'all'){
             const stu = studentById[p.student_id];
@@ -5419,6 +5423,7 @@ function ParentsView({ accountSection, setAccountSection, branches, parentGroups
       packageById={packageById}
       deleteGroup={deleteGroup}
       updateGroup={updateGroup}
+      externalSearchQ={externalSearchQ}
     />}
 
     {adminView === 'accounts' && <>
@@ -7903,11 +7908,13 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
           const wk = modal.weekStartDate;
           const ltId = currentLt?.id;
           if(!ltId) return null;
-          // 4-week forward window: this week plus the next 3
+          // Forward window: this week plus the next 3. Past-week limbo
+          // records are also included — they remain pending until placed,
+          // so they must stay in quick-pick across weeks.
           const windowWeeks = new Set([0,1,2,3].map(n => addDays(wk, n*7)));
           const pendingCandidates = (replacementPending || []).filter(p =>
             p.lesson_type_id === ltId &&
-            windowWeeks.has(p.week_start_date) &&
+            (windowWeeks.has(p.week_start_date) || p.week_start_date < wk) &&
             studentById[p.student_id] && // student must exist
             !(modal.form.replacementRows || []).some(r => r.studentId === p.student_id)
           );
@@ -8442,18 +8449,19 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
               <input type="checkbox" checked={isSelected} onChange={()=>toggleSelect(inv.id)} />
             </label>
             <div style={{flex:1,minWidth:0}}>
-              <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-                <span style={{fontWeight:800,fontSize:14}}>{inv.invoice_number||'#—'}</span>
+              <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                <span style={{fontWeight:800,fontSize:12}}>{inv.invoice_number||'#—'}</span>
                 <span className={`inv-status-chip s-${inv.status||'draft'}`}>{invoiceStatusLabel(inv.status)}</span>
                 {overdue&&<span className="inv-status-chip s-overdue">Overdue</span>}
+                <span style={{fontSize:11,color:'var(--text-2)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{inv.account_name||'—'}</span>
               </div>
-              <div className="small subtle">{inv.account_name||'—'} · Issued {inv.issue_date||'—'}{inv.due_date?` · Due ${inv.due_date}`:''}</div>
+              <div className="small subtle" style={{fontSize:10.5,lineHeight:1.3,marginTop:1}}>Issued {inv.issue_date||'—'}{inv.due_date?` · Due ${inv.due_date}`:''}</div>
             </div>
             <div style={{textAlign:'right',flexShrink:0}}>
-              <div style={{fontWeight:800,fontSize:15}}>RM {total.toFixed(2)}</div>
-              {paid>0&&<div className="small subtle">Paid RM {paid.toFixed(2)} · Owed RM {outstanding.toFixed(2)}</div>}
+              <div style={{fontWeight:800,fontSize:13}}>RM {total.toFixed(2)}</div>
+              {paid>0&&<div className="small subtle" style={{fontSize:10}}>Paid {paid.toFixed(2)} · Owed {outstanding.toFixed(2)}</div>}
             </div>
-            <div style={{flexShrink:0,color:'var(--text-3)',fontSize:12}}>{isExpanded?'▲':'▼'}</div>
+            <div style={{flexShrink:0,color:'var(--text-3)',fontSize:10}}>{isExpanded?'▲':'▼'}</div>
           </div>
           {isExpanded&&<InvoiceDetailPanel
             invoice={inv} lines={invLines} pmts={invPmts} pendingCredits={invPcs}
