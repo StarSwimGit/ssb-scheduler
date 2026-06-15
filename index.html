@@ -753,13 +753,13 @@
     .inv-card.is-expanded{border-color:var(--primary);box-shadow:0 4px 16px rgba(14,165,233,.12)}
     .inv-card.is-overdue{border-color:#FCD34D;background:linear-gradient(135deg,#FFFDF0,#FFFBEB)}
     /* Card header row — replaces old .inv-row */
-    .inv-card-head{display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;flex-wrap:wrap}
+    .inv-card-head{display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;flex-wrap:nowrap;min-height:38px}
     .inv-card-head:hover{background:var(--surface-2)}
     /* Backward compat */
     .inv-row{display:flex;align-items:center;gap:12px;padding:11px 12px;cursor:pointer;flex-wrap:wrap}
     .inv-row:hover{background:var(--surface-2)}
     /* Status chips — light semantic colours */
-    .inv-status-chip{display:inline-block;padding:3px 8px;border-radius:6px;font-size:10.5px;font-weight:700;border:1px solid transparent}
+    .inv-status-chip{display:inline-block;padding:1px 6px;border-radius:5px;font-size:9.5px;font-weight:700;border:1px solid transparent;line-height:1.5}
     .inv-status-chip.s-draft{background:#F1F5F9;color:#475569;border-color:#CBD5E1}
     .inv-status-chip.s-sent{background:#DBEAFE;color:#1D4ED8;border-color:#93C5FD}
     .inv-status-chip.s-partial{background:#FEF3C7;color:#92400E;border-color:#FCD34D}
