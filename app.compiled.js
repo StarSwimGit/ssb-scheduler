@@ -521,7 +521,11 @@ function App() {
   const [view, setView] = useState('schedule'); // 'schedule'|'accounts'|'enroll'|'settings'|'students'
   const [scheduleSection, setScheduleSection] = useState('week'); // 'week'|'day'|'month'
   const [adminSection, setAdminSection] = useState('pools'); // 'summary'|'pools'|'instructors'|'lessonTypes'
-  const [accountSection, setAccountSection] = useState('accounts'); // 'accounts'|'familyGroups'|'invoices'|'receipts'|'pendingCredits'|'aging'|'codes'
+  const [accountSection, setAccountSection] = useState('accounts');
+  // Clear sticky search box when switching account sub-tabs
+  useEffect(() => {
+    setAccountSearchQ('');
+  }, [accountSection]); // 'accounts'|'familyGroups'|'invoices'|'receipts'|'pendingCredits'|'aging'|'codes'
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
@@ -548,6 +552,8 @@ function App() {
   const [monthCursor, setMonthCursor] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [selectedPoolId, setSelectedPoolId] = useState(null);
+  // Search box lifted to App so it can live in the sticky sub-bar
+  const [accountSearchQ, setAccountSearchQ] = useState('');
   // Branch filter — remembered across sessions; defaults to last selection or HQ.
   const [currentBranchId, setCurrentBranchIdRaw] = useState(() => {
     try {
@@ -4042,7 +4048,36 @@ function App() {
   }, "Daily"), /*#__PURE__*/React.createElement("button", {
     className: `sub-tab ${scheduleSection === 'month' ? 'active' : ''}`,
     onClick: () => setScheduleSection('month')
-  }, "Monthly"))), !loading && view === 'accounts' && /*#__PURE__*/React.createElement("div", {
+  }, "Monthly"), (scheduleSection === 'week' || scheduleSection === 'day') && /*#__PURE__*/React.createElement("div", {
+    className: "sub-bar-spacer"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "period-stepper",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "step-btn",
+    onClick: () => setSelectedDate(addDays(selectedDate, -7)),
+    title: "Previous week",
+    "aria-label": "Previous week"
+  }, "\u2039"), /*#__PURE__*/React.createElement("div", {
+    className: "period-label",
+    style: {
+      fontSize: 12
+    }
+  }, weekRangeLabel(selectedWeekStart)), /*#__PURE__*/React.createElement("button", {
+    className: "step-btn",
+    onClick: () => setSelectedDate(addDays(selectedDate, 7)),
+    title: "Next week",
+    "aria-label": "Next week"
+  }, "\u203A")), /*#__PURE__*/React.createElement("button", {
+    className: `today-btn ${selectedWeekStart === currentWeekStart ? 'is-current' : ''}`,
+    disabled: selectedWeekStart === currentWeekStart,
+    onClick: () => setSelectedDate(todayStr()),
+    style: {
+      marginLeft: 6
+    }
+  }, "This Week")))), !loading && view === 'accounts' && /*#__PURE__*/React.createElement("div", {
     className: "sub-bar"
   }, /*#__PURE__*/React.createElement("div", {
     className: "sub-bar-inner"
@@ -4073,7 +4108,14 @@ function App() {
   }, "Discounts"), /*#__PURE__*/React.createElement("button", {
     className: `sub-tab ${accountSection === 'reports' ? 'active' : ''}`,
     onClick: () => setAccountSection('reports')
-  }, "Reports"))), !loading && view === 'settings' && /*#__PURE__*/React.createElement("div", {
+  }, "Reports"), ['accounts', 'familyGroups', 'swimmers', 'invoices', 'receipts'].includes(accountSection) && /*#__PURE__*/React.createElement("div", {
+    className: "sub-bar-spacer"
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input sub-bar-search",
+    placeholder: accountSection === 'swimmers' ? 'Search swimmer, parent, phone…' : accountSection === 'invoices' ? 'Search invoice # or account…' : accountSection === 'receipts' ? 'Search receipt #, invoice, account…' : accountSection === 'familyGroups' ? 'Search group or member…' : 'Search account, email, phone, swimmer…',
+    value: accountSearchQ,
+    onChange: e => setAccountSearchQ(e.target.value)
+  })))), !loading && view === 'settings' && /*#__PURE__*/React.createElement("div", {
     className: "sub-bar"
   }, /*#__PURE__*/React.createElement("div", {
     className: "sub-bar-inner"
@@ -4229,6 +4271,7 @@ function App() {
     saveRemark: saveRemark,
     selectedItems: selectedItems
   }), !loading && view === 'accounts' && (accountSection === 'accounts' || accountSection === 'familyGroups') && /*#__PURE__*/React.createElement(ParentsView, {
+    externalSearchQ: accountSearchQ,
     branches: options.branches || [],
     accountSection: accountSection,
     setAccountSection: setAccountSection,
@@ -4268,6 +4311,7 @@ function App() {
     onJumpToSession: jumpToSession,
     setView: setView
   }), !loading && view === 'accounts' && accountSection === 'swimmers' && /*#__PURE__*/React.createElement(StudentsView, {
+    externalSearchQ: accountSearchQ,
     students: currentBranchId && currentBranchId !== 'all' ? students.filter(s => !s.branchId || s.branchId === currentBranchId) : students,
     lessonTypes: activeLessonTypes(),
     lessonTypeById: lessonTypeById,
@@ -4298,6 +4342,7 @@ function App() {
     deleteStudent: deleteStudent,
     deleteAccount: deleteAccount
   }), !loading && view === 'accounts' && accountSection === 'invoices' && /*#__PURE__*/React.createElement(InvoicesView, {
+    externalSearchQ: accountSearchQ,
     branches: options.branches || [],
     invoices: invoices,
     invoiceLines: invoiceLines,
@@ -4321,6 +4366,7 @@ function App() {
     onUpdateLine: updateInvoiceLine,
     onDeleteLine: deleteInvoiceLine
   }), !loading && view === 'accounts' && accountSection === 'receipts' && /*#__PURE__*/React.createElement(ReceiptsView, {
+    externalSearchQ: accountSearchQ,
     pmts: pmts,
     invoices: invoices,
     branches: options.branches || []
@@ -9502,14 +9548,18 @@ function ParentsView({
   createInvoice,
   setAdminSection,
   onJumpToSession,
-  setView
+  setView,
+  externalSearchQ
 }) {
   // ── Sub-view driven by external accountSection prop (from nav dropdown) ──
   const adminView = accountSection || 'accounts';
   const setAdminView = v => {
     if (setAccountSection) setAccountSection(v);
   };
-  const [searchQ, setSearchQ] = useState('');
+  // Search comes from the sticky sub-bar when provided; falls back to internal state
+  const [localSearchQ, setLocalSearchQ] = useState('');
+  const searchQ = externalSearchQ !== undefined ? externalSearchQ : localSearchQ;
+  const setSearchQ = setLocalSearchQ;
   const [statusFilter, setStatusFilter] = useState('active');
   const [expandedKey, setExpandedKey] = useState(null);
   const [contactEditKey, setContactEditKey] = useState(null);
@@ -9734,7 +9784,8 @@ function ParentsView({
     style: {
       flex: 1,
       minWidth: 200,
-      maxWidth: 420
+      maxWidth: 420,
+      display: 'none'
     },
     placeholder: "Search by account name, email, phone, or swimmer name\u2026",
     value: searchQ,
@@ -10229,9 +10280,12 @@ function FamilyGroupsAdminView({
   packages,
   packageById,
   deleteGroup,
-  updateGroup
+  updateGroup,
+  externalSearchQ
 }) {
-  const [searchQ, setSearchQ] = useState('');
+  const [localSearchQ, setLocalSearchQ] = useState('');
+  const searchQ = externalSearchQ !== undefined ? externalSearchQ : localSearchQ;
+  const setSearchQ = setLocalSearchQ;
   const [filter, setFilter] = useState('all');
   const [bulkBusy, setBulkBusy] = useState(false);
   const [editingNameId, setEditingNameId] = useState(null);
@@ -10371,7 +10425,7 @@ function FamilyGroupsAdminView({
       alignItems: 'center',
       flexWrap: 'wrap'
     }
-  }, /*#__PURE__*/React.createElement("input", {
+  }, externalSearchQ === undefined && /*#__PURE__*/React.createElement("input", {
     className: "input",
     style: {
       flex: 1,
@@ -12788,9 +12842,12 @@ function AgingReportView({
 function ReceiptsView({
   pmts,
   invoices,
-  branches
+  branches,
+  externalSearchQ
 }) {
-  const [searchQ, setSearchQ] = useState('');
+  const [localSearchQ, setLocalSearchQ] = useState('');
+  const searchQ = externalSearchQ !== undefined ? externalSearchQ : localSearchQ;
+  const setSearchQ = setLocalSearchQ;
   const [branchFilter, setBranchFilter] = useState(null);
   const invoiceById = {};
   (invoices || []).forEach(inv => {
@@ -12856,7 +12913,7 @@ function ReceiptsView({
       alignItems: 'center',
       flexWrap: 'wrap'
     }
-  }, /*#__PURE__*/React.createElement("input", {
+  }, externalSearchQ === undefined && /*#__PURE__*/React.createElement("input", {
     className: "input",
     style: {
       flex: 1,
@@ -12971,7 +13028,8 @@ function StudentsView({
   adjustBalanceTo,
   addStudent,
   updateStudent,
-  deleteStudent
+  deleteStudent,
+  externalSearchQ
 }) {
   const [name, setName] = useState('');
   const [dob, setDob] = useState('');
@@ -13140,7 +13198,7 @@ function StudentsView({
       alignItems: 'center',
       flexWrap: 'wrap'
     }
-  }, /*#__PURE__*/React.createElement("input", {
+  }, externalSearchQ === undefined && /*#__PURE__*/React.createElement("input", {
     className: "input",
     style: {
       flex: '1 1 240px',
@@ -15075,10 +15133,13 @@ function InvoicesView({
   onReverseCredit,
   onAddLine,
   onUpdateLine,
-  onDeleteLine
+  onDeleteLine,
+  externalSearchQ
 }) {
   const [statusFilter, setStatusFilter] = useState('all');
-  const [searchQ, setSearchQ] = useState('');
+  const [localSearchQ, setLocalSearchQ] = useState('');
+  const searchQ = externalSearchQ !== undefined ? externalSearchQ : localSearchQ;
+  const setSearchQ = setLocalSearchQ;
   const [expandedId, setExpandedId] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [branchFilter, setBranchFilter] = useState(null);
@@ -15184,7 +15245,7 @@ function InvoicesView({
       gap: 8,
       alignItems: 'center'
     }
-  }, /*#__PURE__*/React.createElement("input", {
+  }, externalSearchQ === undefined && /*#__PURE__*/React.createElement("input", {
     className: "input",
     style: {
       flex: 1,
