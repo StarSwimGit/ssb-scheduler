@@ -5912,7 +5912,7 @@ function FamilyGroupsAdminView({ familyGroups, membersByGroup, lessonTypes, less
 
     {filtered.length === 0 ? <div className="card empty" style={{padding:30}}>No family groups match the current filter.</div> : null}
 
-    <div style={{display:'flex',flexDirection:'column',gap:8}}>
+    <div style={{display:'flex',flexDirection:'column',gap:4}}>
       {filtered.map(g => {
         const isBound = g.groupType === 'bound';
         return <div key={g.id} className="fga-card">
@@ -8432,7 +8432,7 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
 
     {filtered.length===0&&<div className="card empty" style={{padding:32}}>No invoices match the current filter.</div>}
 
-    <div style={{display:'flex',flexDirection:'column',gap:8}}>
+    <div style={{display:'flex',flexDirection:'column',gap:4}}>
       {filtered.map(inv=>{
         const overdue=isOverdue(inv);
         const isExpanded=expandedId===inv.id;
@@ -8448,20 +8448,14 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
             <label style={{display:'flex',alignItems:'center'}} onClick={e=>e.stopPropagation()}>
               <input type="checkbox" checked={isSelected} onChange={()=>toggleSelect(inv.id)} />
             </label>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
-                <span style={{fontWeight:800,fontSize:12}}>{inv.invoice_number||'#—'}</span>
-                <span className={`inv-status-chip s-${inv.status||'draft'}`}>{invoiceStatusLabel(inv.status)}</span>
-                {overdue&&<span className="inv-status-chip s-overdue">Overdue</span>}
-                <span style={{fontSize:11,color:'var(--text-2)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{inv.account_name||'—'}</span>
-              </div>
-              <div className="small subtle" style={{fontSize:10.5,lineHeight:1.3,marginTop:1}}>Issued {inv.issue_date||'—'}{inv.due_date?` · Due ${inv.due_date}`:''}</div>
-            </div>
-            <div style={{textAlign:'right',flexShrink:0}}>
-              <div style={{fontWeight:800,fontSize:13}}>RM {total.toFixed(2)}</div>
-              {paid>0&&<div className="small subtle" style={{fontSize:10}}>Paid {paid.toFixed(2)} · Owed {outstanding.toFixed(2)}</div>}
-            </div>
-            <div style={{flexShrink:0,color:'var(--text-3)',fontSize:10}}>{isExpanded?'▲':'▼'}</div>
+            <span style={{fontFamily:'monospace',fontSize:11,fontWeight:700,minWidth:90,flexShrink:0}}>{inv.invoice_number||'#—'}</span>
+            <span className={`inv-status-chip s-${inv.status||'draft'}`}>{invoiceStatusLabel(inv.status)}</span>
+            {overdue&&<span className="inv-status-chip s-overdue">Overdue</span>}
+            <span style={{flex:1,minWidth:0,fontSize:11.5,fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{inv.account_name||'—'}</span>
+            <span className="small subtle" style={{fontSize:10.5,whiteSpace:'nowrap',flexShrink:0}}>{inv.issue_date||'—'}{inv.due_date?` → ${inv.due_date}`:''}</span>
+            <span style={{fontWeight:700,fontSize:12,minWidth:80,textAlign:'right',flexShrink:0}}>RM {total.toFixed(2)}</span>
+            {paid>0&&<span className="small subtle" style={{fontSize:10,minWidth:90,textAlign:'right',flexShrink:0,color:outstanding>0?'var(--amber-tx)':'var(--green-tx)'}}>{outstanding>0?`Owed ${outstanding.toFixed(2)}`:`Paid`}</span>}
+            <span style={{flexShrink:0,color:'var(--text-3)',fontSize:10,width:14,textAlign:'center'}}>{isExpanded?'▲':'▼'}</span>
           </div>
           {isExpanded&&<InvoiceDetailPanel
             invoice={inv} lines={invLines} pmts={invPmts} pendingCredits={invPcs}
