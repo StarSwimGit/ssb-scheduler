@@ -1,4 +1,3 @@
-function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 // ============================================================================
 // SSB Scheduler app.js — Module 2 build
 // ============================================================================
@@ -501,14 +500,14 @@ function PeriodNav({
     onClick: onPrev,
     title: "Previous week",
     "aria-label": "Previous week"
-  }, "\u2039"), /*#__PURE__*/React.createElement("div", {
+  }, "‹"), /*#__PURE__*/React.createElement("div", {
     className: "period-label"
   }, rangeLabel), /*#__PURE__*/React.createElement("button", {
     className: "step-btn",
     onClick: onNext,
     title: "Next week",
     "aria-label": "Next week"
-  }, "\u203A")), /*#__PURE__*/React.createElement("button", {
+  }, "›")), /*#__PURE__*/React.createElement("button", {
     className: `today-btn ${isCurrent ? 'is-current' : ''}`,
     onClick: onToday,
     disabled: isCurrent,
@@ -518,8 +517,16 @@ function PeriodNav({
   }, children) : null);
 }
 function App() {
-  const [view, setView] = useState('schedule'); // 'schedule'|'accounts'|'enroll'|'settings'|'students'
+  const [view, setView] = useState('schedule'); // 'schedule'|'programme'|'accounts'|'enroll'|'settings'|'students'
   const [scheduleSection, setScheduleSection] = useState('week'); // 'week'|'day'|'month'
+  // ── Programme planner (event & workout planning calendar) ──────────────
+  const [programmeSection, setProgrammeSection] = useState('week'); // 'week'|'month'
+  const [programmeSessions, setProgrammeSessions] = useState([]);
+  const [programmeCategories, setProgrammeCategories] = useState([]);
+  const [programmeModal, setProgrammeModal] = useState(null);
+  const [programmeDate, setProgrammeDate] = useState(todayStr()); // own week cursor (independent of Schedule)
+  const [programmeMonthCursor, setProgrammeMonthCursor] = useState(new Date());
+  const [programmePoolId, setProgrammePoolId] = useState(null);
   const [adminSection, setAdminSection] = useState('pools'); // 'summary'|'pools'|'instructors'|'lessonTypes'
   const [accountSection, setAccountSection] = useState('accounts');
   // Clear sticky search box when switching account sub-tabs
@@ -639,7 +646,7 @@ function App() {
       setLoading(false);
       setStatus('Connected');
       // Phase 2 — background: load everything else after first paint.
-      Promise.all([loadStudents(), loadGroups(), loadGroupMemberships(), loadCreditBalances(), loadCreditPurchases(), loadSubscriptions(), loadCodes(), loadReplacementPending(), loadTcAcceptances(), loadRemarks(monthCursor), loadInvoiceData()]).catch(e => console.warn('Background load warning:', e));
+      Promise.all([loadStudents(), loadGroups(), loadGroupMemberships(), loadCreditBalances(), loadCreditPurchases(), loadSubscriptions(), loadCodes(), loadReplacementPending(), loadTcAcceptances(), loadRemarks(monthCursor), loadInvoiceData(), loadProgrammeSessions(), loadProgrammeCategories()]).catch(e => console.warn('Background load warning:', e));
     } catch (err) {
       handleErr(err);
       setLoading(false);
@@ -1123,6 +1130,39 @@ function App() {
       };
     });
     setSessions(merged);
+  }
+
+  // ── Programme loaders ──────────────────────────────────────────────
+  async function loadProgrammeSessions() {
+    try {
+      const rows = await selectRows('programme_sessions', '*', '&order=week_start_date.asc,weekday.asc,start_minute.asc,sort_order.asc').catch(() => []);
+      setProgrammeSessions((rows || []).map(r => ({
+        id: r.id,
+        weekStartDate: r.week_start_date || weekStartStr(todayStr()),
+        day: Number(r.weekday) - 1,
+        startMinute: Number(r.start_minute),
+        durationMinutes: Number(r.duration_minutes || 60),
+        branchId: r.branch_id || null,
+        poolId: r.pool_id || null,
+        title: r.title || '',
+        body: r.body || '',
+        categoryId: r.category_id || null,
+        label: r.label || '',
+        color: r.color || null,
+        sortOrder: Number(r.sort_order || 0)
+      })));
+    } catch (e) {
+      console.warn('Programme sessions not available yet (run supabase_programme_migration.sql):', e?.message || e);
+      setProgrammeSessions([]);
+    }
+  }
+  async function loadProgrammeCategories() {
+    try {
+      const rows = await selectRows('programme_categories', '*', '&order=sort_order.asc,name.asc').catch(() => []);
+      setProgrammeCategories(rows || []);
+    } catch (_) {
+      setProgrammeCategories([]);
+    }
   }
   async function loadStudents() {
     try {
@@ -2199,6 +2239,38 @@ function App() {
   const selectedWeekStart = weekStartStr(selectedDate);
   const currentWeekStart = weekStartStr(todayStr());
   const isFutureSelectedWeek = selectedWeekStart > currentWeekStart;
+
+  // ── Programme derived data ─────────────────────────────────────────────
+  const programmeWeekStart = weekStartStr(programmeDate);
+  const programmeMonthDates = useMemo(() => monthCells(programmeMonthCursor), [programmeMonthCursor]);
+  // 7-day grid for the selected programme week, branch- and pool-filtered.
+  const programmeWeekDays = useMemo(() => {
+    const days = Array.from({
+      length: 7
+    }, () => []);
+    (programmeSessions || []).forEach(s => {
+      if (s.weekStartDate !== programmeWeekStart) return;
+      // branch filter (lenient: unassigned sessions show everywhere)
+      if (currentBranchId && currentBranchId !== 'all') {
+        if (s.branchId && s.branchId !== currentBranchId) return;
+      }
+      // pool tab filter
+      if (programmePoolId && s.poolId !== programmePoolId) return;
+      if (s.day >= 0 && s.day < 7) days[s.day].push(s);
+    });
+    days.forEach(arr => arr.sort((a, b) => a.startMinute - b.startMinute || a.sortOrder - b.sortOrder));
+    return days;
+  }, [programmeSessions, programmeWeekStart, currentBranchId, programmePoolId]);
+  // Sessions on a given calendar date (for the monthly view), branch-filtered.
+  function programmeSessionsForDate(ds) {
+    const ws = weekStartStr(ds);
+    const di = (fromDateStr(ds).getDay() + 6) % 7;
+    return (programmeSessions || []).filter(s => {
+      if (s.weekStartDate !== ws || s.day !== di) return false;
+      if (currentBranchId && currentBranchId !== 'all' && s.branchId && s.branchId !== currentBranchId) return false;
+      return true;
+    }).sort((a, b) => a.startMinute - b.startMinute);
+  }
   function sessionsForDate(dateStr) {
     const day = dateToWeekdayIndex(dateStr);
     const ws = weekStartStr(dateStr);
@@ -3111,6 +3183,136 @@ function App() {
     }
   }
 
+  // ── Programme CRUD ───────────────────────────────────────────────────────
+  function programmeCategoryById(id) {
+    return (programmeCategories || []).find(c => c.id === id) || null;
+  }
+  function openProgrammeCreate(day, startMinute, poolId) {
+    setProgrammeModal({
+      mode: 'add',
+      id: null,
+      weekStartDate: programmeWeekStart,
+      form: {
+        weekday: day,
+        startMinute: startMinute,
+        durationMinutes: 60,
+        poolId: poolId || null,
+        categoryId: null,
+        title: '',
+        body: '',
+        color: null,
+        branchId: currentBranchId && currentBranchId !== 'all' ? currentBranchId : null
+      }
+    });
+  }
+  function openProgrammeEdit(s) {
+    setProgrammeModal({
+      mode: 'edit',
+      id: s.id,
+      weekStartDate: s.weekStartDate,
+      form: {
+        weekday: s.day,
+        startMinute: s.startMinute,
+        durationMinutes: s.durationMinutes,
+        poolId: s.poolId,
+        categoryId: s.categoryId,
+        title: s.title,
+        body: s.body,
+        color: s.color,
+        branchId: s.branchId || null
+      }
+    });
+  }
+  async function saveProgrammeSession() {
+    const m = programmeModal;
+    if (!m) return;
+    try {
+      setSaveBusy(true);
+      setError('');
+      const payload = {
+        week_start_date: m.weekStartDate,
+        weekday: Number(m.form.weekday) + 1,
+        start_minute: Number(m.form.startMinute),
+        duration_minutes: Number(m.form.durationMinutes || 60),
+        // stamp current branch on create; preserve original branch on edit
+        branch_id: m.mode === 'edit' ? m.form.branchId || null : currentBranchId && currentBranchId !== 'all' ? currentBranchId : null,
+        pool_id: m.form.poolId || null,
+        title: (m.form.title || '').trim() || null,
+        body: (m.form.body || '').trim() || null,
+        category_id: m.form.categoryId || null,
+        color: m.form.color || null
+      };
+      if (m.mode === 'edit' && m.id) {
+        await patchRows('programme_sessions', {
+          id: m.id
+        }, payload);
+      } else {
+        await insertRows('programme_sessions', payload);
+      }
+      await loadProgrammeSessions();
+      setProgrammeModal(null);
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to save programme session');
+    } finally {
+      setSaveBusy(false);
+    }
+  }
+  async function deleteProgrammeSession(id) {
+    if (!confirm('Delete this programme session? This cannot be undone.')) return;
+    try {
+      await deleteRows('programme_sessions', {
+        id
+      });
+      await loadProgrammeSessions();
+      setProgrammeModal(null);
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to delete programme session');
+    }
+  }
+  async function addProgrammeCategory({
+    name,
+    color
+  }) {
+    try {
+      const next = (programmeCategories || []).length + 1;
+      await insertRows('programme_categories', {
+        name,
+        color: color || null,
+        sort_order: next,
+        is_active: true
+      });
+      await loadProgrammeCategories();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to add category');
+    }
+  }
+  async function updateProgrammeCategory(id, patch) {
+    try {
+      await patchRows('programme_categories', {
+        id
+      }, patch);
+      await loadProgrammeCategories();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to update category');
+    }
+  }
+  async function deleteProgrammeCategory(id) {
+    if (!confirm('Delete this category?\n\nSessions using it keep their text but lose the category tag.')) return;
+    try {
+      await deleteRows('programme_categories', {
+        id
+      });
+      await Promise.all([loadProgrammeCategories(), loadProgrammeSessions()]);
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to delete category');
+    }
+  }
+
   // Reorder a settings list by reindexing sort_order across the whole list, so
   // the result is clean and gap-free regardless of the existing values.
   async function reorderOption(table, list, index, dir) {
@@ -3993,7 +4195,7 @@ function App() {
         borderColor: b.color,
         color: b.color
       } : {}
-    }, "\u25CF ", b.code || b.name) : null;
+    }, "● ", b.code || b.name) : null;
   })()), /*#__PURE__*/React.createElement("div", {
     className: "header-summary"
   }, /*#__PURE__*/React.createElement("span", {
@@ -4001,7 +4203,7 @@ function App() {
       color: 'var(--primary)',
       fontWeight: 800
     }
-  }, summary.totalStudents), " students \xB7 ", /*#__PURE__*/React.createElement("span", {
+  }, summary.totalStudents), " students · ", /*#__PURE__*/React.createElement("span", {
     style: {
       color: 'var(--primary)',
       fontWeight: 800
@@ -4016,26 +4218,32 @@ function App() {
   }, /*#__PURE__*/React.createElement("button", {
     className: `nav-btn ${view === 'schedule' ? 'active' : ''}`,
     onClick: () => setView('schedule')
-  }, "\uD83D\uDCC5 Schedule"), /*#__PURE__*/React.createElement("button", {
+  }, "📅 Schedule"), /*#__PURE__*/React.createElement("button", {
+    className: `nav-btn ${view === 'programme' ? 'active' : ''}`,
+    onClick: () => {
+      setView('programme');
+      setProgrammeSection('week');
+    }
+  }, "📋 Programme"), /*#__PURE__*/React.createElement("button", {
     className: `nav-btn ${view === 'accounts' ? 'active' : ''}`,
     onClick: () => {
       setView('accounts');
       setAccountSection('accounts');
     }
-  }, "\uD83D\uDC64 Accounts"), /*#__PURE__*/React.createElement("button", {
+  }, "👤 Accounts"), /*#__PURE__*/React.createElement("button", {
     className: `nav-btn ${view === 'enroll' ? 'active' : ''}`,
     onClick: () => setView('enroll')
-  }, "\uD83D\uDD0D Explore"), /*#__PURE__*/React.createElement("button", {
+  }, "🔍 Explore"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "nav-btn nav-btn-link",
     onClick: () => window.open('./intake.html', '_blank', 'noopener,noreferrer')
-  }, "\uD83D\uDCDD Intake \u2197"), /*#__PURE__*/React.createElement("button", {
+  }, "📝 Intake ↗"), /*#__PURE__*/React.createElement("button", {
     className: `nav-btn ${view === 'settings' ? 'active' : ''}`,
     onClick: () => {
       setView('settings');
       setAdminSection('pools');
     }
-  }, "\u2699\uFE0F Settings")))), !loading && view === 'schedule' && /*#__PURE__*/React.createElement("div", {
+  }, "⚙️ Settings")))), !loading && view === 'schedule' && /*#__PURE__*/React.createElement("div", {
     className: "sub-bar"
   }, /*#__PURE__*/React.createElement("div", {
     className: "sub-bar-inner"
@@ -4060,7 +4268,7 @@ function App() {
     onClick: () => setSelectedDate(addDays(selectedDate, -7)),
     title: "Previous week",
     "aria-label": "Previous week"
-  }, "\u2039"), /*#__PURE__*/React.createElement("div", {
+  }, "‹"), /*#__PURE__*/React.createElement("div", {
     className: "period-label",
     style: {
       fontSize: 12
@@ -4070,10 +4278,49 @@ function App() {
     onClick: () => setSelectedDate(addDays(selectedDate, 7)),
     title: "Next week",
     "aria-label": "Next week"
-  }, "\u203A")), /*#__PURE__*/React.createElement("button", {
+  }, "›")), /*#__PURE__*/React.createElement("button", {
     className: `today-btn ${selectedWeekStart === currentWeekStart ? 'is-current' : ''}`,
     disabled: selectedWeekStart === currentWeekStart,
     onClick: () => setSelectedDate(todayStr()),
+    style: {
+      marginLeft: 6
+    }
+  }, "This Week")))), !loading && view === 'programme' && /*#__PURE__*/React.createElement("div", {
+    className: "sub-bar"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "sub-bar-inner"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: `sub-tab ${programmeSection === 'week' ? 'active' : ''}`,
+    onClick: () => setProgrammeSection('week')
+  }, "Weekly"), /*#__PURE__*/React.createElement("button", {
+    className: `sub-tab ${programmeSection === 'month' ? 'active' : ''}`,
+    onClick: () => setProgrammeSection('month')
+  }, "Monthly"), programmeSection === 'week' && /*#__PURE__*/React.createElement("div", {
+    className: "sub-bar-spacer"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "period-stepper",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "step-btn",
+    onClick: () => setProgrammeDate(addDays(programmeDate, -7)),
+    title: "Previous week",
+    "aria-label": "Previous week"
+  }, "‹"), /*#__PURE__*/React.createElement("div", {
+    className: "period-label",
+    style: {
+      fontSize: 12
+    }
+  }, weekRangeLabel(programmeWeekStart)), /*#__PURE__*/React.createElement("button", {
+    className: "step-btn",
+    onClick: () => setProgrammeDate(addDays(programmeDate, 7)),
+    title: "Next week",
+    "aria-label": "Next week"
+  }, "›")), /*#__PURE__*/React.createElement("button", {
+    className: `today-btn ${programmeWeekStart === currentWeekStart ? 'is-current' : ''}`,
+    disabled: programmeWeekStart === currentWeekStart,
+    onClick: () => setProgrammeDate(todayStr()),
     style: {
       marginLeft: 6
     }
@@ -4135,6 +4382,9 @@ function App() {
     className: `sub-tab ${adminSection === 'lessonTypes' ? 'active' : ''}`,
     onClick: () => setAdminSection('lessonTypes')
   }, "Lesson Types"), /*#__PURE__*/React.createElement("button", {
+    className: `sub-tab ${adminSection === 'programme' ? 'active' : ''}`,
+    onClick: () => setAdminSection('programme')
+  }, "Programme"), /*#__PURE__*/React.createElement("button", {
     className: `sub-tab ${adminSection === 'invoiceSettings' ? 'active' : ''}`,
     onClick: () => setAdminSection('invoiceSettings')
   }, "Invoice Numbering"))), /*#__PURE__*/React.createElement("div", {
@@ -4150,7 +4400,7 @@ function App() {
       fontSize: 34,
       marginBottom: 10
     }
-  }, "\u23F3"), /*#__PURE__*/React.createElement("div", null, "Loading scheduler\u2026"), /*#__PURE__*/React.createElement("div", {
+  }, "⏳"), /*#__PURE__*/React.createElement("div", null, "Loading scheduler…"), /*#__PURE__*/React.createElement("div", {
     className: "small subtle",
     style: {
       marginTop: 6
@@ -4274,6 +4524,32 @@ function App() {
     setRemarkDraft: setRemarkDraft,
     saveRemark: saveRemark,
     selectedItems: selectedItems
+  }), !loading && view === 'programme' && programmeSection === 'week' && /*#__PURE__*/React.createElement(ProgrammeWeekView, {
+    programmeWeekDays: programmeWeekDays,
+    pools: activePools(),
+    selectedPoolId: programmePoolId,
+    setSelectedPoolId: setProgrammePoolId,
+    gridBounds: gridBounds,
+    categoryById: programmeCategoryById,
+    poolById: poolById,
+    onAdd: openProgrammeCreate,
+    onEdit: openProgrammeEdit,
+    selectedWeekStart: programmeWeekStart,
+    currentWeekStart: currentWeekStart,
+    onPrev: () => setProgrammeDate(addDays(programmeDate, -7)),
+    onNext: () => setProgrammeDate(addDays(programmeDate, 7)),
+    onToday: () => setProgrammeDate(todayStr()),
+    branchLabel: currentBranchId && currentBranchId !== 'all' ? branchById(currentBranchId)?.name || '' : 'All Branches'
+  }), !loading && view === 'programme' && programmeSection === 'month' && /*#__PURE__*/React.createElement(ProgrammeMonthView, {
+    monthCursor: programmeMonthCursor,
+    setMonthCursor: setProgrammeMonthCursor,
+    monthDates: programmeMonthDates,
+    selectedDate: programmeDate,
+    setSelectedDate: setProgrammeDate,
+    programmeSessionsForDate: programmeSessionsForDate,
+    categoryById: programmeCategoryById,
+    onAdd: openProgrammeCreate,
+    onEdit: openProgrammeEdit
   }), !loading && view === 'accounts' && (accountSection === 'accounts' || accountSection === 'familyGroups') && /*#__PURE__*/React.createElement(ParentsView, {
     externalSearchQ: accountSearchQ,
     branches: options.branches || [],
@@ -4495,6 +4771,11 @@ function App() {
     addBranch: addBranch,
     updateBranch: updateBranch,
     deleteBranch: deleteBranch
+  }), !loading && view === 'settings' && adminSection === 'programme' && /*#__PURE__*/React.createElement(ProgrammeCategoriesView, {
+    categories: programmeCategories,
+    addCategory: addProgrammeCategory,
+    updateCategory: updateProgrammeCategory,
+    deleteCategory: deleteProgrammeCategory
   }), !loading && view === 'settings' && adminSection === 'invoiceSettings' && /*#__PURE__*/React.createElement("div", {
     className: "card"
   }, /*#__PURE__*/React.createElement("div", {
@@ -4508,7 +4789,7 @@ function App() {
     style: {
       marginBottom: 16
     }
-  }, "These are sensitive settings. Invoice deletion is irreversible \u2014 enable the delete permission only for authorised users."), /*#__PURE__*/React.createElement(InvoiceSettingsPanel, {
+  }, "These are sensitive settings. Invoice deletion is irreversible — enable the delete permission only for authorised users."), /*#__PURE__*/React.createElement(InvoiceSettingsPanel, {
     settings: invoiceSettings,
     onSave: saveInvoiceSettings,
     formatInvoiceNumber: formatInvoiceNumber,
@@ -4566,6 +4847,15 @@ function App() {
     forwardClassToNextWeek: forwardClassToNextWeek,
     startFullClassMove: startFullClassMove,
     duplicateSessionForward: duplicateSessionForward
+  }) : null, programmeModal ? /*#__PURE__*/React.createElement(ProgrammeSessionModal, {
+    modal: programmeModal,
+    setModal: setProgrammeModal,
+    busy: saveBusy,
+    onSave: saveProgrammeSession,
+    onDelete: deleteProgrammeSession,
+    pools: activePools(),
+    categories: programmeCategories,
+    gridBounds: gridBounds
   }) : null);
 }
 
@@ -4804,7 +5094,7 @@ function WeekView(props) {
     className: "view-title"
   }, "Weekly View"), /*#__PURE__*/React.createElement("div", {
     className: "small subtle"
-  }, "Pool shown as a badge \u2014 use the pool tabs to focus one pool. Busy days widen and scroll sideways; the time axis stays pinned."))), /*#__PURE__*/React.createElement(PeriodNav, {
+  }, "Pool shown as a badge — use the pool tabs to focus one pool. Busy days widen and scroll sideways; the time axis stays pinned."))), /*#__PURE__*/React.createElement(PeriodNav, {
     rangeLabel: weekRangeLabel(selectedWeekStart),
     onPrev: onPrevWeek,
     onNext: onNextWeek,
@@ -4821,7 +5111,7 @@ function WeekView(props) {
     onClick: () => setPrintMenu(v => !v)
   }, "Print ", /*#__PURE__*/React.createElement("span", {
     className: "caret"
-  }, "\u25BE")), printMenu ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, "▾")), printMenu ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "menu-backdrop",
     onClick: () => setPrintMenu(false)
   }), /*#__PURE__*/React.createElement("div", {
@@ -4834,7 +5124,7 @@ function WeekView(props) {
     }
   }, "Weekly rundown ", /*#__PURE__*/React.createElement("span", {
     className: "drop-hint"
-  }, "A4 \xB7 per-day list")), /*#__PURE__*/React.createElement("button", {
+  }, "A4 · per-day list")), /*#__PURE__*/React.createElement("button", {
     className: "drop-item",
     onClick: () => {
       setPrintMenu(false);
@@ -4842,7 +5132,7 @@ function WeekView(props) {
     }
   }, "Weekly grid ", /*#__PURE__*/React.createElement("span", {
     className: "drop-hint"
-  }, "A3 \xB7 time table")))) : null), /*#__PURE__*/React.createElement("button", {
+  }, "A3 · time table")))) : null), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-print small-btn",
     onClick: onExportExcel,
     title: "Download this week as a multi-tab attendance roster"
@@ -4910,13 +5200,13 @@ function WeekView(props) {
   }, /*#__PURE__*/React.createElement("div", {
     className: "pending-move-icon",
     "aria-hidden": "true"
-  }, "\uD83D\uDCC5"), /*#__PURE__*/React.createElement("div", {
+  }, "📅"), /*#__PURE__*/React.createElement("div", {
     className: "pending-move-text"
   }, /*#__PURE__*/React.createElement("div", {
     className: "pending-move-title"
   }, "Pick a slot to place ", pendingMove.lessonTypeName), /*#__PURE__*/React.createElement("div", {
     className: "pending-move-sub"
-  }, "Moving from ", /*#__PURE__*/React.createElement("strong", null, pendingMove.sourceLabel), " \xB7 ", pendingMove.swimmerCount, " swimmer", pendingMove.swimmerCount === 1 ? '' : 's', " \u2014 click any time-cell in the grid below.")), /*#__PURE__*/React.createElement("button", {
+  }, "Moving from ", /*#__PURE__*/React.createElement("strong", null, pendingMove.sourceLabel), " · ", pendingMove.swimmerCount, " swimmer", pendingMove.swimmerCount === 1 ? '' : 's', " — click any time-cell in the grid below.")), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "btn btn-ghost small",
     onClick: onCancelPendingMove
@@ -4929,7 +5219,7 @@ function WeekView(props) {
     "aria-hidden": "true"
   }, "R"), /*#__PURE__*/React.createElement("div", {
     className: "pending-repl-title"
-  }, "Pending Replacements \xB7 ", weekPendingReplacements.length)), /*#__PURE__*/React.createElement("div", {
+  }, "Pending Replacements · ", weekPendingReplacements.length)), /*#__PURE__*/React.createElement("div", {
     className: "pending-repl-grid"
   }, weekPendingReplacements.map(p => {
     const stu = studentById ? studentById[p.student_id] : null;
@@ -4945,11 +5235,11 @@ function WeekView(props) {
       className: "repl-chip-age"
     }, " ", stu.age, "y") : null), /*#__PURE__*/React.createElement("div", {
       className: "repl-chip-meta"
-    }, lt ? lt.name : '—', " \xB7 ", p.original_session_label || '?'), datePassed && /*#__PURE__*/React.createElement("div", {
+    }, lt ? lt.name : '—', " · ", p.original_session_label || '?'), datePassed && /*#__PURE__*/React.createElement("div", {
       className: "repl-chip-warn"
-    }, "\u26A0 past date"), !stillExists && /*#__PURE__*/React.createElement("div", {
+    }, "⚠ past date"), !stillExists && /*#__PURE__*/React.createElement("div", {
       className: "repl-chip-warn"
-    }, "\u26A0 slot deleted"), /*#__PURE__*/React.createElement("button", {
+    }, "⚠ slot deleted"), /*#__PURE__*/React.createElement("button", {
       type: "button",
       className: "repl-chip-btn",
       onClick: () => onCancelPendingReplacement && onCancelPendingReplacement(p, {
@@ -5090,8 +5380,8 @@ function AgendaCard({
     }
   }, missingInst ? /*#__PURE__*/React.createElement("span", {
     className: "card-warn-corner",
-    title: "No instructor assigned \u2014 needs reassignment"
-  }, "\u26A0") : null, /*#__PURE__*/React.createElement("div", {
+    title: "No instructor assigned — needs reassignment"
+  }, "⚠") : null, /*#__PURE__*/React.createElement("div", {
     className: "wa-card-head"
   }, /*#__PURE__*/React.createElement("span", {
     className: "wa-card-title"
@@ -5111,12 +5401,12 @@ function AgendaCard({
   }, pool.name) : null, compactRange(block.startMinute, block.durationMinutes), isRescheduled ? /*#__PURE__*/React.createElement("span", {
     className: "reschedule-tag",
     title: `Rescheduled — was ${DAYS_S[block.rescheduledFromDay]} ${minuteToTime(block.rescheduledFromStartMinute)}`
-  }, "\u21C4") : null), /*#__PURE__*/React.createElement("div", {
+  }, "⇄") : null), /*#__PURE__*/React.createElement("div", {
     className: `wa-card-line wa-card-inst ${missingInst ? 'inst-missing' : ''}`
   }, missingInst ? /*#__PURE__*/React.createElement("span", {
     className: "warn-tri",
-    title: "Instructor was removed \u2014 pick a new one in the modal"
-  }, "\u26A0") : null, /*#__PURE__*/React.createElement("span", {
+    title: "Instructor was removed — pick a new one in the modal"
+  }, "⚠") : null, /*#__PURE__*/React.createElement("span", {
     className: missingInst ? 'inst-orphan' : ''
   }, instName || 'Unassigned'), missingInst ? /*#__PURE__*/React.createElement("span", {
     className: "inst-warn-chip"
@@ -5136,10 +5426,10 @@ function AgendaCard({
       className: "trial-mark"
     }, " (trial)") : null, bal ? /*#__PURE__*/React.createElement("span", {
       className: `credit-mark ${bal.remaining_balance <= 2 ? 'credit-low' : ''}`
-    }, " \xB7 ", bal.remaining_balance, "cr") : null, s.remark ? ` — ${s.remark}` : '');
+    }, " · ", bal.remaining_balance, "cr") : null, s.remark ? ` — ${s.remark}` : '');
   })) : /*#__PURE__*/React.createElement("div", {
     className: "wa-card-line wa-card-students-empty"
-  }, "\u2014"));
+  }, "—"));
 }
 
 // ============================================================================
@@ -5293,7 +5583,7 @@ function DailyView({
     key: ds,
     className: `daily-day-tab ${selectedDate === ds ? 'active' : ''}`,
     onClick: () => setSelectedDate(ds)
-  }, DAYS_S[idx], " \xB7 ", date.toLocaleDateString(undefined, {
+  }, DAYS_S[idx], " · ", date.toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric'
   })))), /*#__PURE__*/React.createElement("div", {
@@ -5396,10 +5686,10 @@ function DailyView({
         onDragStart: e => onDailyDragStart(e, it, rawItems, start),
         onClick: e => e.stopPropagation(),
         title: "Drag to reorder"
-      }, "\u283F"), missingInst ? /*#__PURE__*/React.createElement("span", {
+      }, "⠿"), missingInst ? /*#__PURE__*/React.createElement("span", {
         className: "card-warn-corner",
-        title: "No instructor assigned \u2014 needs reassignment"
-      }, "\u26A0") : null, /*#__PURE__*/React.createElement("div", {
+        title: "No instructor assigned — needs reassignment"
+      }, "⚠") : null, /*#__PURE__*/React.createElement("div", {
         className: "daily-event-top"
       }, /*#__PURE__*/React.createElement("div", {
         style: {
@@ -5418,14 +5708,14 @@ function DailyView({
         style: {
           marginLeft: 4
         }
-      }, "\uD83D\uDC6A") : null, isRescheduledIt ? /*#__PURE__*/React.createElement("span", {
+      }, "👪") : null, isRescheduledIt ? /*#__PURE__*/React.createElement("span", {
         className: "reschedule-tag",
         title: `Rescheduled — was ${DAYS_S[it.rescheduledFromDay]} ${minuteToTime(it.rescheduledFromStartMinute)}`
-      }, " \u21C4") : null), /*#__PURE__*/React.createElement("div", {
+      }, " ⇄") : null), /*#__PURE__*/React.createElement("div", {
         className: `daily-event-sub ${missingInst ? 'inst-missing' : ''}`
-      }, compactRange(it.startMinute, it.durationMinutes), " \xB7 ", missingInst ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+      }, compactRange(it.startMinute, it.durationMinutes), " · ", missingInst ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
         className: "warn-tri"
-      }, "\u26A0"), /*#__PURE__*/React.createElement("span", {
+      }, "⚠"), /*#__PURE__*/React.createElement("span", {
         className: "inst-orphan"
       }, instName || 'Unassigned'), /*#__PURE__*/React.createElement("span", {
         className: "inst-warn-chip"
@@ -5450,14 +5740,14 @@ function DailyView({
             className: "trial-mark"
           }, " (trial)") : null, bal ? /*#__PURE__*/React.createElement("span", {
             className: `credit-mark ${bal.remaining_balance <= 2 ? 'credit-low' : ''}`
-          }, " \xB7 ", bal.remaining_balance, "cr") : null);
+          }, " · ", bal.remaining_balance, "cr") : null);
         }));
       })() : /*#__PURE__*/React.createElement("div", {
         className: "daily-event-sub"
       }, "No students listed"), it.students.filter(s => s.remark).map((s, ri) => /*#__PURE__*/React.createElement("div", {
         key: ri,
         className: "daily-event-note"
-      }, "\uD83D\uDCDD ", shortName(s.name), ": ", s.remark))), /*#__PURE__*/React.createElement("div", {
+      }, "📝 ", shortName(s.name), ": ", s.remark))), /*#__PURE__*/React.createElement("div", {
         style: {
           display: 'flex',
           flexDirection: 'column',
@@ -5533,7 +5823,7 @@ function DailyView({
         className: "print-day-col"
       }, /*#__PURE__*/React.createElement("div", {
         className: "print-session-head"
-      }, shortRange(it.startMinute, it.durationMinutes), " \xB7 ", it.type), meta && /*#__PURE__*/React.createElement("div", {
+      }, shortRange(it.startMinute, it.durationMinutes), " · ", it.type), meta && /*#__PURE__*/React.createElement("div", {
         className: "print-session-meta"
       }, meta), /*#__PURE__*/React.createElement("div", {
         className: "print-session-students"
@@ -5545,7 +5835,7 @@ function DailyView({
       }, "No students")));
     })) : /*#__PURE__*/React.createElement("span", {
       className: "print-no-session"
-    }, "\u2014")));
+    }, "—")));
   })))));
 }
 
@@ -5617,7 +5907,7 @@ function MonthView({
   }, /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost",
     onClick: () => setMonthCursor(new Date(monthCursor.getFullYear(), monthCursor.getMonth() - 1, 1))
-  }, "\u2190"), /*#__PURE__*/React.createElement("select", {
+  }, "←"), /*#__PURE__*/React.createElement("select", {
     className: "select",
     style: {
       width: 240
@@ -5630,7 +5920,7 @@ function MonthView({
   }, options), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost",
     onClick: () => setMonthCursor(new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 1))
-  }, "\u2192"))), /*#__PURE__*/React.createElement("div", {
+  }, "→"))), /*#__PURE__*/React.createElement("div", {
     className: "month-grid"
   }, DAYS_S.map(d => /*#__PURE__*/React.createElement("div", {
     key: d,
@@ -5660,7 +5950,7 @@ function MonthView({
           borderLeftColor: c.bd,
           color: c.tx
         }
-      }, minuteToTime(ev.startMinute), " \xB7 ", ev.type);
+      }, minuteToTime(ev.startMinute), " · ", ev.type);
     }) : /*#__PURE__*/React.createElement("div", {
       className: "small subtle"
     }, "No sessions")));
@@ -5787,7 +6077,7 @@ function BranchesAdminView({
       fontWeight: 800,
       marginBottom: 4
     }
-  }, "\uD83C\uDFE2 Branches"), /*#__PURE__*/React.createElement("div", {
+  }, "🏢 Branches"), /*#__PURE__*/React.createElement("div", {
     className: "small subtle",
     style: {
       marginBottom: 14
@@ -5945,7 +6235,7 @@ function BranchesAdminView({
     }
   }) : /*#__PURE__*/React.createElement("span", {
     className: "subtle"
-  }, "\u2014")), /*#__PURE__*/React.createElement("td", null, b.is_active === false ? /*#__PURE__*/React.createElement("span", {
+  }, "—")), /*#__PURE__*/React.createElement("td", null, b.is_active === false ? /*#__PURE__*/React.createElement("span", {
     className: "pill",
     style: {
       background: '#FEF3C7',
@@ -5967,7 +6257,7 @@ function BranchesAdminView({
     style: {
       marginRight: 6
     }
-  }, "\u270E Edit"), /*#__PURE__*/React.createElement("button", {
+  }, "✎ Edit"), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
     onClick: () => updateBranch(b.id, {
       is_active: b.is_active === false
@@ -5978,7 +6268,7 @@ function BranchesAdminView({
   }, b.is_active === false ? 'Restore' : 'Archive'), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-danger small",
     onClick: () => deleteBranch(b.id)
-  }, "\uD83D\uDDD1 Delete")))))))));
+  }, "🗑 Delete")))))))));
 }
 function SummaryView({
   summary,
@@ -6274,7 +6564,7 @@ function SettingsView({
       onTouchStart: () => {
         dragRef.current.canDrag = true;
       }
-    }, "\u283F");
+    }, "⠿");
   }
   function dragProps(listKey, table, list, idx) {
     return {
@@ -6335,12 +6625,12 @@ function SettingsView({
       disabled: idx === 0,
       title: "Move up",
       onClick: () => reorderOption(table, list, idx, -1)
-    }, "\u2191"), /*#__PURE__*/React.createElement("button", {
+    }, "↑"), /*#__PURE__*/React.createElement("button", {
       className: "reorder-btn",
       disabled: idx === list.length - 1,
       title: "Move down",
       onClick: () => reorderOption(table, list, idx, 1)
-    }, "\u2193")));
+    }, "↓")));
   }
   const [newInstructor, setNewInstructor] = useState('');
   const [newInstructorGender, setNewInstructorGender] = useState(null);
@@ -6426,15 +6716,16 @@ function SettingsView({
     className: "settings-list"
   }, options.pools.length ? options.pools.map((r, idx) => {
     const isEditing = editingPoolId === r.id;
-    return /*#__PURE__*/React.createElement("div", _extends({
+    return /*#__PURE__*/React.createElement("div", {
       key: r.id,
       className: `row-item ${dragClass('pool', idx)}`,
       style: isEditing ? {
         flexDirection: 'column',
         alignItems: 'stretch',
         gap: 10
-      } : {}
-    }, dragProps('pool', 'pools', options.pools, idx)), isEditing ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      } : {},
+      ...dragProps('pool', 'pools', options.pools, idx)
+    }, isEditing ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
       style: {
         display: 'flex',
         gap: 8,
@@ -6553,7 +6844,7 @@ function SettingsView({
         });
         setEditingPoolId(r.id);
       }
-    }, "\u270E Edit"), /*#__PURE__*/React.createElement("button", {
+    }, "✎ Edit"), /*#__PURE__*/React.createElement("button", {
       className: "btn btn-ghost small",
       onClick: () => toggleOption('pools', r)
     }, r.is_active ? 'Hide' : 'Show'), /*#__PURE__*/React.createElement("button", {
@@ -6682,12 +6973,12 @@ function SettingsView({
     className: `gender-opt ${newInstructorGender === 'female' ? 'active' : ''}`,
     onClick: () => setNewInstructorGender(newInstructorGender === 'female' ? null : 'female'),
     title: "Female"
-  }, "\u2640 F"), /*#__PURE__*/React.createElement("button", {
+  }, "♀ F"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: `gender-opt ${newInstructorGender === 'male' ? 'active' : ''}`,
     onClick: () => setNewInstructorGender(newInstructorGender === 'male' ? null : 'male'),
     title: "Male"
-  }, "\u2642 M")), /*#__PURE__*/React.createElement("button", {
+  }, "♂ M")), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-primary",
     onClick: () => {
       const v = newInstructor.trim();
@@ -6717,10 +7008,11 @@ function SettingsView({
         patchOption('scheduler_instructors', r.id, patch);
         setEditingInstructorId(null);
       }
-    })) : /*#__PURE__*/React.createElement("div", _extends({
+    })) : /*#__PURE__*/React.createElement("div", {
       key: r.id,
-      className: `row-item ${dragClass('inst', idx)}`
-    }, dragProps('inst', 'scheduler_instructors', options.instructors, idx)), /*#__PURE__*/React.createElement("div", {
+      className: `row-item ${dragClass('inst', idx)}`,
+      ...dragProps('inst', 'scheduler_instructors', options.instructors, idx)
+    }, /*#__PURE__*/React.createElement("div", {
       style: {
         display: 'flex',
         alignItems: 'center',
@@ -6769,7 +7061,7 @@ function SettingsView({
           flexShrink: 0
         },
         title: `Primary branch: ${b.name}`
-      }, "\uD83C\uDFE2 ", b.code || b.name) : null;
+      }, "🏢 ", b.code || b.name) : null;
     })()), /*#__PURE__*/React.createElement("div", {
       style: {
         display: 'flex',
@@ -6888,10 +7180,11 @@ function SettingsView({
     const poolName = options.pools.find(p => p.id === r.default_pool_id)?.name;
     const editingThis = editingLessonId === r.id;
     const pkgPanelOpen = pkgPanelLtId === r.id;
-    return /*#__PURE__*/React.createElement("div", _extends({
+    return /*#__PURE__*/React.createElement("div", {
       key: r.id,
-      className: `lesson-row ${dragClass('lt', idx)}`
-    }, dragProps('lt', 'scheduler_lesson_types', options.lessonTypes, idx)), /*#__PURE__*/React.createElement("div", {
+      className: `lesson-row ${dragClass('lt', idx)}`,
+      ...dragProps('lt', 'scheduler_lesson_types', options.lessonTypes, idx)
+    }, /*#__PURE__*/React.createElement("div", {
       className: `lt-row-card ${!r.is_active ? 'lt-row-hidden' : ''}`
     }, /*#__PURE__*/React.createElement("div", {
       className: "lt-row-top"
@@ -7040,7 +7333,7 @@ function SettingsView({
       }
     }, /*#__PURE__*/React.createElement("option", {
       value: ""
-    }, "Move to\u2026"), options.lessonTypes.map(lt => /*#__PURE__*/React.createElement("option", {
+    }, "Move to…"), options.lessonTypes.map(lt => /*#__PURE__*/React.createElement("option", {
       key: lt.id,
       value: lt.id
     }, lt.name))), /*#__PURE__*/React.createElement("button", {
@@ -7147,7 +7440,7 @@ function CodesPanel({
       gap: 10,
       flexWrap: 'wrap'
     }
-  }, /*#__PURE__*/React.createElement("span", null, "\uD83C\uDF9F Referral & Discount Codes"), /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("span", null, "🎟 Referral & Discount Codes"), /*#__PURE__*/React.createElement("span", {
     className: "small subtle",
     style: {
       fontWeight: 400,
@@ -7336,7 +7629,7 @@ function CodesPanel({
         borderRadius: 5,
         border: '1px solid var(--green-bd)'
       }
-    }, "\uD83D\uDC65 Referral") : /*#__PURE__*/React.createElement("span", {
+    }, "👥 Referral") : /*#__PURE__*/React.createElement("span", {
       style: {
         display: 'inline-flex',
         gap: 5,
@@ -7349,7 +7642,7 @@ function CodesPanel({
         borderRadius: 5,
         border: '1px solid var(--amber-bd)'
       }
-    }, "\uD83C\uDFF7 Discount"), c.code_type === 'referral' && c.owner_student_id ? /*#__PURE__*/React.createElement("div", {
+    }, "🏷 Discount"), c.code_type === 'referral' && c.owner_student_id ? /*#__PURE__*/React.createElement("div", {
       className: "small subtle",
       style: {
         marginTop: 3
@@ -7367,7 +7660,7 @@ function CodesPanel({
         padding: '9px 10px',
         fontSize: 11
       }
-    }, c.valid_from || c.valid_until ? /*#__PURE__*/React.createElement("span", null, c.valid_from || '—', " \u2192 ", c.valid_until || 'open') : /*#__PURE__*/React.createElement("span", {
+    }, c.valid_from || c.valid_until ? /*#__PURE__*/React.createElement("span", null, c.valid_from || '—', " → ", c.valid_until || 'open') : /*#__PURE__*/React.createElement("span", {
       className: "subtle"
     }, "Always")), /*#__PURE__*/React.createElement("td", {
       style: {
@@ -7400,7 +7693,7 @@ function CodesPanel({
       onClick: () => {
         if (confirm(`Delete code "${c.code}"? This cannot be undone.`)) deleteCode(c.id);
       }
-    }, "\xD7"))), isEditing && /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
+    }, "×"))), isEditing && /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
       colSpan: 8,
       style: {
         padding: 0,
@@ -7489,11 +7782,11 @@ function CodeEditor({
     type: "button",
     className: `codes-type-toggle ${codeType === 'discount' ? 'active' : ''}`,
     onClick: () => setCodeType('discount')
-  }, "\uD83C\uDFF7 Discount"), /*#__PURE__*/React.createElement("button", {
+  }, "🏷 Discount"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: `codes-type-toggle ${codeType === 'referral' ? 'active' : ''}`,
     onClick: () => setCodeType('referral')
-  }, "\uD83D\uDC65 Referral"))), /*#__PURE__*/React.createElement("div", {
+  }, "👥 Referral"))), /*#__PURE__*/React.createElement("div", {
     className: "field"
   }, /*#__PURE__*/React.createElement("label", null, "Code ", /*#__PURE__*/React.createElement("span", {
     className: "req"
@@ -7535,7 +7828,7 @@ function CodeEditor({
     onChange: e => setOwnerStudentId(e.target.value)
   }, /*#__PURE__*/React.createElement("option", {
     value: ""
-  }, "\u2014 Select swimmer \u2014"), (students || []).filter(s => s.isActive !== false).map(s => /*#__PURE__*/React.createElement("option", {
+  }, "— Select swimmer —"), (students || []).filter(s => s.isActive !== false).map(s => /*#__PURE__*/React.createElement("option", {
     key: s.id,
     value: s.id
   }, s.name, s.guardianName ? ` (${s.guardianName})` : ''))))), /*#__PURE__*/React.createElement("div", {
@@ -7555,7 +7848,7 @@ function CodeEditor({
       color: '#1E40AF',
       marginBottom: 7
     }
-  }, "Redeemer Benefit \u2014 what the new customer gets"), /*#__PURE__*/React.createElement("div", {
+  }, "Redeemer Benefit — what the new customer gets"), /*#__PURE__*/React.createElement("div", {
     className: "form-grid",
     style: {
       gridTemplateColumns: '1fr 1fr'
@@ -7601,7 +7894,7 @@ function CodeEditor({
       color: '#065F46',
       marginBottom: 7
     }
-  }, "Referrer Reward \u2014 what the existing customer earns"), /*#__PURE__*/React.createElement("div", {
+  }, "Referrer Reward — what the existing customer earns"), /*#__PURE__*/React.createElement("div", {
     className: "form-grid",
     style: {
       gridTemplateColumns: '1fr 1fr'
@@ -7664,7 +7957,7 @@ function CodeEditor({
     className: "field"
   }, /*#__PURE__*/React.createElement("label", null, "Max Total Uses ", /*#__PURE__*/React.createElement("span", {
     className: "subtle small"
-  }, "(blank = \u221E)")), /*#__PURE__*/React.createElement("input", {
+  }, "(blank = ∞)")), /*#__PURE__*/React.createElement("input", {
     className: "input",
     type: "number",
     min: "0",
@@ -7798,11 +8091,11 @@ function InstructorEditor({
     type: "button",
     className: `gender-opt ${gender === 'female' ? 'active' : ''}`,
     onClick: () => setGender(gender === 'female' ? null : 'female')
-  }, "\u2640 Female"), /*#__PURE__*/React.createElement("button", {
+  }, "♀ Female"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: `gender-opt ${gender === 'male' ? 'active' : ''}`,
     onClick: () => setGender(gender === 'male' ? null : 'male')
-  }, "\u2642 Male"))), (branches || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "♂ Male"))), (branches || []).length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "field",
     style: {
       margin: 0,
@@ -7820,7 +8113,7 @@ function InstructorEditor({
     onChange: e => setPrimaryBranchId(e.target.value)
   }, /*#__PURE__*/React.createElement("option", {
     value: ""
-  }, "\u2014 None \u2014"), (branches || []).filter(b => b.is_active !== false).map(b => /*#__PURE__*/React.createElement("option", {
+  }, "— None —"), (branches || []).filter(b => b.is_active !== false).map(b => /*#__PURE__*/React.createElement("option", {
     key: b.id,
     value: b.id
   }, b.name, b.code ? ` (${b.code})` : '')))), /*#__PURE__*/React.createElement("div", {
@@ -7910,12 +8203,12 @@ function LessonTypePackages({
     disabled: i === 0,
     title: "Move up",
     onClick: () => reorderOption('packages', packages, i, -1)
-  }, "\u2191"), /*#__PURE__*/React.createElement("button", {
+  }, "↑"), /*#__PURE__*/React.createElement("button", {
     className: "reorder-btn",
     disabled: i === packages.length - 1,
     title: "Move down",
     onClick: () => reorderOption('packages', packages, i, 1)
-  }, "\u2193")), /*#__PURE__*/React.createElement("span", {
+  }, "↓")), /*#__PURE__*/React.createElement("span", {
     className: "pill",
     style: {
       background: r.is_active ? 'var(--primary-soft)' : '#F0F0F5',
@@ -7927,7 +8220,7 @@ function LessonTypePackages({
     }
   }, r.name), /*#__PURE__*/React.createElement("span", {
     className: "small subtle"
-  }, r.pax != null ? `${r.pax}${r.is_group ? ' pax req.' : ' pax'}` : '—', " \xB7 ", r.amount != null ? `RM${r.amount}${r.is_group ? ' bundle' : ''}` : 'no amount', billingText(r.billing_mode, r.billing_count) ? ` · ${billingText(r.billing_mode, r.billing_count)}` : '', r.is_group ? ` · 👪 family${r.fallback_per_pax != null ? `, RM${r.fallback_per_pax}/pax fallback` : ''}` : '')), /*#__PURE__*/React.createElement("div", {
+  }, r.pax != null ? `${r.pax}${r.is_group ? ' pax req.' : ' pax'}` : '—', " · ", r.amount != null ? `RM${r.amount}${r.is_group ? ' bundle' : ''}` : 'no amount', billingText(r.billing_mode, r.billing_count) ? ` · ${billingText(r.billing_mode, r.billing_count)}` : '', r.is_group ? ` · 👪 family${r.fallback_per_pax != null ? `, RM${r.fallback_per_pax}/pax fallback` : ''}` : '')), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6
@@ -8168,11 +8461,11 @@ function LessonTypeEditor({
     type: "button",
     className: `gender-opt ${draft.class_type === 'group' ? 'active' : ''}`,
     onClick: () => setF('class_type', 'group')
-  }, "\uD83D\uDC65 Group"), /*#__PURE__*/React.createElement("button", {
+  }, "👥 Group"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: `gender-opt ${draft.class_type === 'personal' ? 'active' : ''}`,
     onClick: () => setF('class_type', 'personal')
-  }, "\uD83E\uDDD1 Personal")), /*#__PURE__*/React.createElement("div", {
+  }, "🧑 Personal")), /*#__PURE__*/React.createElement("div", {
     className: "hint",
     style: {
       marginTop: 4
@@ -8438,7 +8731,7 @@ function EnrollView({
     type: "button",
     className: "enroll-pill-clear",
     onClick: () => setActiveLts(new Set())
-  }, "\u2715 Clear") : null)), /*#__PURE__*/React.createElement("div", {
+  }, "✕ Clear") : null)), /*#__PURE__*/React.createElement("div", {
     className: "enroll-filter-section"
   }, /*#__PURE__*/React.createElement("div", {
     className: "enroll-filter-label"
@@ -8480,7 +8773,7 @@ function EnrollView({
       color: '#1E3A8A'
     } : {},
     onClick: () => setGender('male')
-  }, "\u2642 Male"), /*#__PURE__*/React.createElement("button", {
+  }, "♂ Male"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: `enroll-pill ${genderMode === 'female' ? 'is-on' : ''}`,
     style: genderMode === 'female' ? {
@@ -8489,7 +8782,7 @@ function EnrollView({
       color: '#831843'
     } : {},
     onClick: () => setGender('female')
-  }, "\u2640 Female")), /*#__PURE__*/React.createElement("div", {
+  }, "♀ Female")), /*#__PURE__*/React.createElement("div", {
     className: "enroll-filter-pills"
   }, (instructors || []).map(inst => {
     const isOn = activeInsts.has(inst.name);
@@ -8564,7 +8857,7 @@ function EnrollView({
           e.stopPropagation();
           onEdit(info.s);
         }
-      }, "\u270E"))), /*#__PURE__*/React.createElement("div", {
+      }, "✎"))), /*#__PURE__*/React.createElement("div", {
         className: "enroll-mini-meta"
       }, minuteToTime(info.s.startMinute), info.instName ? ` · ${info.instName}` : ''));
     }), onAdd && /*#__PURE__*/React.createElement("div", {
@@ -8708,7 +9001,7 @@ function StudentSelect({
       title: `Pending replacement from ${pendingInfo.original_session_label}`
     }, "R-pending") : null, isTrial ? /*#__PURE__*/React.createElement("span", {
       className: "ssel-flag ssel-flag-trial",
-      title: "Trial swimmer \u2014 one-off booking for this lesson type"
+      title: "Trial swimmer — one-off booking for this lesson type"
     }, "trial") : null, /*#__PURE__*/React.createElement("span", {
       className: "ssel-item-name"
     }, s.name)), /*#__PURE__*/React.createElement("span", {
@@ -8744,7 +9037,7 @@ function StudentSelect({
       setQ('');
       setOpen(false);
     }
-  }, "\xD7") : /*#__PURE__*/React.createElement("span", {
+  }, "×") : /*#__PURE__*/React.createElement("span", {
     className: "ssel-caret",
     title: "Browse",
     onMouseDown: e => {
@@ -8752,9 +9045,9 @@ function StudentSelect({
       setOpen(o => !o);
       setQ('');
     }
-  }, "\u25BE")), conflict ? /*#__PURE__*/React.createElement("div", {
+  }, "▾")), conflict ? /*#__PURE__*/React.createElement("div", {
     className: "ssel-warn"
-  }, "\u26A0 Also booked ", conflict, " this week") : null, dropdown ? ReactDOM.createPortal(dropdown, document.body) : null);
+  }, "⚠ Also booked ", conflict, " this week") : null, dropdown ? ReactDOM.createPortal(dropdown, document.body) : null);
 }
 
 // Shared component used by both the register form and the editor — renders
@@ -8802,7 +9095,7 @@ function LessonsEditor({
       onChange: ev => update(i, 'lessonTypeId', ev.target.value)
     }, /*#__PURE__*/React.createElement("option", {
       value: ""
-    }, "\u2014 Lesson Type \u2014"), availableLts.map(lt => /*#__PURE__*/React.createElement("option", {
+    }, "— Lesson Type —"), availableLts.map(lt => /*#__PURE__*/React.createElement("option", {
       key: lt.id,
       value: lt.id
     }, lt.name))), /*#__PURE__*/React.createElement("select", {
@@ -8820,7 +9113,7 @@ function LessonsEditor({
       className: "lesson-row-x",
       onClick: () => remove(i),
       title: "Remove this lesson"
-    }, "\xD7") : /*#__PURE__*/React.createElement("span", {
+    }, "×") : /*#__PURE__*/React.createElement("span", {
       className: "lesson-row-x-spacer"
     }));
   })), /*#__PURE__*/React.createElement("button", {
@@ -9017,11 +9310,11 @@ function StudentEditor({
     type: "button",
     className: `gender-opt ${gender === 'female' ? 'active' : ''}`,
     onClick: () => setGender(gender === 'female' ? null : 'female')
-  }, "\u2640 F"), /*#__PURE__*/React.createElement("button", {
+  }, "♀ F"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: `gender-opt ${gender === 'male' ? 'active' : ''}`,
     onClick: () => setGender(gender === 'male' ? null : 'male')
-  }, "\u2642 M"))))), /*#__PURE__*/React.createElement("div", {
+  }, "♂ M"))))), /*#__PURE__*/React.createElement("div", {
     className: "student-form-section"
   }, /*#__PURE__*/React.createElement("div", {
     className: "student-form-section-title"
@@ -9036,7 +9329,7 @@ function StudentEditor({
     type: "checkbox",
     checked: adultSelf,
     onChange: e => handleAdultSelf(e.target.checked)
-  }), /*#__PURE__*/React.createElement("span", null, "Adult swimmer \u2014 I am my own guardian ", /*#__PURE__*/React.createElement("span", {
+  }), /*#__PURE__*/React.createElement("span", null, "Adult swimmer — I am my own guardian ", /*#__PURE__*/React.createElement("span", {
     className: "subtle small"
   }, "(pre-fill swimmer name with account holder name)"))), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -9111,7 +9404,7 @@ function BalanceAdjuster({
         setVal(String(currentBalance));
         setOpen(true);
       }
-    }, "\u2696 Adjust");
+    }, "⚖ Adjust");
   }
   return /*#__PURE__*/React.createElement("span", {
     className: "balance-adjust-form"
@@ -9232,7 +9525,7 @@ function CreditHistoryPanel({
     className: "credit-panel-head"
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "credit-panel-title"
-  }, "\uD83D\uDCB3 Credit ledger \xB7 ", swimmer.name), /*#__PURE__*/React.createElement("div", {
+  }, "💳 Credit ledger · ", swimmer.name), /*#__PURE__*/React.createElement("div", {
     className: "credit-panel-sub"
   }, "Every purchase recorded with its date. The running balance is purchases minus credits consumed by attendance.")), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
@@ -9256,7 +9549,7 @@ function CreditHistoryPanel({
     onChange: e => setLtId(e.target.value)
   }, /*#__PURE__*/React.createElement("option", {
     value: ""
-  }, "\u2014 select \u2014"), (lessonTypes || []).map(lt => /*#__PURE__*/React.createElement("option", {
+  }, "— select —"), (lessonTypes || []).map(lt => /*#__PURE__*/React.createElement("option", {
     key: lt.id,
     value: lt.id
   }, lt.name)))), /*#__PURE__*/React.createElement("div", {
@@ -9295,7 +9588,7 @@ function CreditHistoryPanel({
       letterSpacing: 0,
       fontWeight: 600
     }
-  }, "\xB7 optional")), /*#__PURE__*/React.createElement("input", {
+  }, "· optional")), /*#__PURE__*/React.createElement("input", {
     className: "input",
     value: notes,
     onChange: e => setNotes(e.target.value),
@@ -9315,7 +9608,7 @@ function CreditHistoryPanel({
     disabled: busy || !ltId || !Number(credits)
   }, busy ? 'Saving…' : '+ Record purchase'))), group ? /*#__PURE__*/React.createElement("div", {
     className: `credit-group-banner ${isBoundMember ? 'credit-group-banner-bound' : ''}`
-  }, isBoundMember ? /*#__PURE__*/React.createElement(React.Fragment, null, "\uD83D\uDD17 ", /*#__PURE__*/React.createElement("strong", null, group.name), " \xB7 bound group \u2014 all subscription changes happen at the group level. Individual purchase records are kept for the audit trail but no manual +/\u2212 adjustments are made here.") : /*#__PURE__*/React.createElement(React.Fragment, null, "\uD83D\uDC6A ", /*#__PURE__*/React.createElement("strong", null, group.name), " \xB7 discount group \u2014 subscriptions can be added at the group level (adds to all members) and balances can diverge per-swimmer based on attendance.")) : null, displayLts.length === 0 && /*#__PURE__*/React.createElement("div", {
+  }, isBoundMember ? /*#__PURE__*/React.createElement(React.Fragment, null, "🔗 ", /*#__PURE__*/React.createElement("strong", null, group.name), " · bound group — all subscription changes happen at the group level. Individual purchase records are kept for the audit trail but no manual +/− adjustments are made here.") : /*#__PURE__*/React.createElement(React.Fragment, null, "👪 ", /*#__PURE__*/React.createElement("strong", null, group.name), " · discount group — subscriptions can be added at the group level (adds to all members) and balances can diverge per-swimmer based on attendance.")) : null, displayLts.length === 0 && /*#__PURE__*/React.createElement("div", {
     className: "credit-panel-empty"
   }, "No lesson-type enrolments yet. Add one in Edit, then record a purchase here."), displayLts.map(lt => {
     const bal = creditByKey[`${swimmer.id}:${lt.id}`];
@@ -9349,7 +9642,7 @@ function CreditHistoryPanel({
       className: "subtle"
     }, "No balance row yet"), list.length > 0 && /*#__PURE__*/React.createElement("span", {
       className: "credit-lt-aggregate"
-    }, " \xB7 ", totalPurchased > 0 ? '+' : '', totalPurchased, " credits across ", list.length, " record", list.length === 1 ? '' : 's')), adjustBalanceTo && !isBoundMember && /*#__PURE__*/React.createElement(BalanceAdjuster, {
+    }, " · ", totalPurchased > 0 ? '+' : '', totalPurchased, " credits across ", list.length, " record", list.length === 1 ? '' : 's')), adjustBalanceTo && !isBoundMember && /*#__PURE__*/React.createElement(BalanceAdjuster, {
       currentBalance: bal ? Number(bal.remaining_balance) || 0 : 0,
       onApply: (target, notes) => adjustBalanceTo(swimmer.id, lt.id, target, notes)
     })), canQuickSub && null /* Quick subscription buttons removed — use Adjust or record via Pending Credits */, subs.length > 0 && /*#__PURE__*/React.createElement("div", {
@@ -9363,7 +9656,7 @@ function CreditHistoryPanel({
       className: "credit-sub-date"
     }, fmtDate(s.subscription_date)), /*#__PURE__*/React.createElement("span", {
       className: "credit-sub-amount"
-    }, "+", s.credits_per_swimmer, " \xD7 ", s.swimmer_count), /*#__PURE__*/React.createElement("span", {
+    }, "+", s.credits_per_swimmer, " × ", s.swimmer_count), /*#__PURE__*/React.createElement("span", {
       className: "credit-sub-subject"
     }, s.subject_type === 'family_group' ? `👪 ${group?.name || 'group'}` : '👤 individual'), /*#__PURE__*/React.createElement("span", {
       className: "credit-sub-meta subtle"
@@ -9408,7 +9701,7 @@ function CreditHistoryPanel({
       className: "btn btn-danger small",
       title: "Delete this purchase record",
       onClick: () => deleteCreditPurchase(p)
-    }, "\xD7")))))));
+    }, "×")))))));
   }));
 }
 
@@ -9722,7 +10015,7 @@ function ParentsView({
       fontSize: 18,
       fontWeight: 800
     }
-  }, "\uD83D\uDC64 Accounts \u2014 Administration"), /*#__PURE__*/React.createElement("div", {
+  }, "👤 Accounts — Administration"), /*#__PURE__*/React.createElement("div", {
     className: "small subtle",
     style: {
       marginTop: 3
@@ -9792,7 +10085,7 @@ function ParentsView({
       maxWidth: 420,
       display: 'none'
     },
-    placeholder: "Search by account name, email, phone, or swimmer name\u2026",
+    placeholder: "Search by account name, email, phone, or swimmer name…",
     value: searchQ,
     onChange: e => setSearchQ(e.target.value)
   }), /*#__PURE__*/React.createElement("div", {
@@ -9866,7 +10159,7 @@ function ParentsView({
     onClick: () => setSelectedAccountKeys(new Set())
   }, "Clear"))), archiveHits.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "cross-filter-notice"
-  }, /*#__PURE__*/React.createElement("span", null, "\uD83D\uDDC4 ", archiveHits.length, " ", archiveHits.length === 1 ? 'result' : 'results', " found in ", /*#__PURE__*/React.createElement("strong", null, "Archives"), archiveHits.length === 1 ? `: ${archiveHits[0].name}` : ': ' + archiveHits.map(p => p.name).join(', ')), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("span", null, "🗄 ", archiveHits.length, " ", archiveHits.length === 1 ? 'result' : 'results', " found in ", /*#__PURE__*/React.createElement("strong", null, "Archives"), archiveHits.length === 1 ? `: ${archiveHits[0].name}` : ': ' + archiveHits.map(p => p.name).join(', ')), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
     onClick: () => {
       setStatusFilter('archived');
@@ -9874,7 +10167,7 @@ function ParentsView({
     }
   }, archiveHits.length === 1 ? 'Go to account →' : 'Switch to Archives →')), activeHits.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "cross-filter-notice"
-  }, /*#__PURE__*/React.createElement("span", null, "\uD83D\uDC64 ", activeHits.length, " ", activeHits.length === 1 ? 'result' : 'results', " found in ", /*#__PURE__*/React.createElement("strong", null, "Active accounts"), activeHits.length === 1 ? `: ${activeHits[0].name}` : ': ' + activeHits.map(p => p.name).join(', ')), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("span", null, "👤 ", activeHits.length, " ", activeHits.length === 1 ? 'result' : 'results', " found in ", /*#__PURE__*/React.createElement("strong", null, "Active accounts"), activeHits.length === 1 ? `: ${activeHits[0].name}` : ': ' + activeHits.map(p => p.name).join(', ')), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
     onClick: () => {
       setStatusFilter('active');
@@ -9946,13 +10239,13 @@ function ParentsView({
     }, pg.displayCode), !pg.isActive && /*#__PURE__*/React.createElement("span", {
       className: "parent-archived-badge",
       title: "All swimmers under this parent are archived"
-    }, "\uD83D\uDCE6 Archived")), /*#__PURE__*/React.createElement("div", {
+    }, "📦 Archived")), /*#__PURE__*/React.createElement("div", {
       className: "parent-contact subtle small"
-    }, pg.email ? /*#__PURE__*/React.createElement("span", null, "\uD83D\uDCE7 ", pg.email) : null, pg.email && pg.phone ? /*#__PURE__*/React.createElement("span", null, " \xB7 ") : null, pg.phone ? /*#__PURE__*/React.createElement("span", null, "\uD83D\uDCDE ", pg.phone) : null, !pg.email && !pg.phone ? /*#__PURE__*/React.createElement("span", null, "(no contact recorded)") : null, pg.ic ? /*#__PURE__*/React.createElement("span", {
+    }, pg.email ? /*#__PURE__*/React.createElement("span", null, "📧 ", pg.email) : null, pg.email && pg.phone ? /*#__PURE__*/React.createElement("span", null, " · ") : null, pg.phone ? /*#__PURE__*/React.createElement("span", null, "📞 ", pg.phone) : null, !pg.email && !pg.phone ? /*#__PURE__*/React.createElement("span", null, "(no contact recorded)") : null, pg.ic ? /*#__PURE__*/React.createElement("span", {
       className: "parent-ic-tin"
-    }, " \xB7 \uD83E\uDEAA ", pg.ic) : null, pg.tin ? /*#__PURE__*/React.createElement("span", {
+    }, " · 🪪 ", pg.ic) : null, pg.tin ? /*#__PURE__*/React.createElement("span", {
       className: "parent-ic-tin"
-    }, " \xB7 \uD83E\uDDFE TIN ", pg.tin) : null, (pg.emergencyName || pg.emergencyPhone) && !pg.emergencySameAsGuardian ? /*#__PURE__*/React.createElement("span", null, " \xB7 \uD83D\uDEA8 ", pg.emergencyName || pg.emergencyPhone, pg.emergencyName && pg.emergencyPhone ? ` ${pg.emergencyPhone}` : '', pg.emergencyRelationship ? ` (${pg.emergencyRelationship})` : '') : null, parentGroupsInPlay.length > 0 && /*#__PURE__*/React.createElement("span", null, " \xB7 ", parentGroupsInPlay.map(g => {
+    }, " · 🧾 TIN ", pg.tin) : null, (pg.emergencyName || pg.emergencyPhone) && !pg.emergencySameAsGuardian ? /*#__PURE__*/React.createElement("span", null, " · 🚨 ", pg.emergencyName || pg.emergencyPhone, pg.emergencyName && pg.emergencyPhone ? ` ${pg.emergencyPhone}` : '', pg.emergencyRelationship ? ` (${pg.emergencyRelationship})` : '') : null, parentGroupsInPlay.length > 0 && /*#__PURE__*/React.createElement("span", null, " · ", parentGroupsInPlay.map(g => {
       const gp = g.packageId && packageById ? packageById(g.packageId) : null;
       return /*#__PURE__*/React.createElement("span", {
         key: g.id,
@@ -10009,7 +10302,7 @@ function ParentsView({
       className: "btn btn-print small",
       onClick: () => printAccountSummary(pg),
       title: "Print account summary with groups, enrolments, and class schedule"
-    }, "\uD83D\uDDA8 Print"), /*#__PURE__*/React.createElement("div", {
+    }, "🖨 Print"), /*#__PURE__*/React.createElement("div", {
       style: {
         marginLeft: 'auto',
         display: 'flex',
@@ -10026,7 +10319,7 @@ function ParentsView({
         deleteAccount(pg);
       },
       title: "Permanently delete this account and all its swimmers from the database"
-    }, "\uD83D\uDDD1 Delete Account"))), pg.key !== '__unassigned__' && (() => {
+    }, "🗑 Delete Account"))), pg.key !== '__unassigned__' && (() => {
       const accepted = pg.swimmers.find(sw => sw.tcAcceptedAt);
       return /*#__PURE__*/React.createElement("div", {
         className: "account-tc-summary"
@@ -10035,12 +10328,12 @@ function ParentsView({
       }, "Terms & Conditions:"), accepted ? /*#__PURE__*/React.createElement("span", {
         className: "account-tc-badge tc-ok",
         title: `Accepted ${new Date(accepted.tcAcceptedAt).toLocaleDateString()} · ID ${accepted.tcAcceptanceId} · covers all swimmers in this account`
-      }, "\u2705 Accepted \xB7 ", new Date(accepted.tcAcceptedAt).toLocaleDateString(undefined, {
+      }, "✅ Accepted · ", new Date(accepted.tcAcceptedAt).toLocaleDateString(undefined, {
         dateStyle: 'medium'
       })) : /*#__PURE__*/React.createElement("span", {
         className: "account-tc-badge tc-pending",
         title: "No swimmer in this account has T&C acceptance recorded"
-      }, "\u26A0 Pending"));
+      }, "⚠ Pending"));
     })(), billingKey === pg.key && /*#__PURE__*/React.createElement(BillingPreviewPanel, {
       pg: pg,
       lessonTypes: lessonTypes,
@@ -10146,7 +10439,7 @@ function ParentsView({
           color: acc.accent,
           fontSize: 14
         }
-      }, "\u25CF"), " ", /*#__PURE__*/React.createElement("strong", {
+      }, "●"), " ", /*#__PURE__*/React.createElement("strong", {
         style: {
           color: acc.text
         }
@@ -10154,11 +10447,11 @@ function ParentsView({
         className: "swimmer-display-code"
       }, pg.displayCode, "-", pg.swimmers.indexOf(sw) + 1), sw.age != null ? /*#__PURE__*/React.createElement("span", {
         className: "subtle"
-      }, " \xB7 ", sw.age, "y") : null, sw.gender ? /*#__PURE__*/React.createElement("span", {
+      }, " · ", sw.age, "y") : null, sw.gender ? /*#__PURE__*/React.createElement("span", {
         className: "subtle"
-      }, " \xB7 ", sw.gender === 'female' ? '♀' : '♂') : null, grp ? /*#__PURE__*/React.createElement("span", {
+      }, " · ", sw.gender === 'female' ? '♀' : '♂') : null, grp ? /*#__PURE__*/React.createElement("span", {
         className: "subtle"
-      }, " \xB7 ", isBound ? '🔗' : '👪', " ", grp.name) : null), /*#__PURE__*/React.createElement("div", {
+      }, " · ", isBound ? '🔗' : '👪', " ", grp.name) : null), /*#__PURE__*/React.createElement("div", {
         className: "parent-swimmer-actions"
       }, /*#__PURE__*/React.createElement("button", {
         className: "btn btn-ghost small",
@@ -10186,7 +10479,7 @@ function ParentsView({
         }
       })), (sw.lessonTypeIds || []).length === 0 ? /*#__PURE__*/React.createElement("div", {
         className: "parent-swimmer-empty subtle small"
-      }, "No lesson type enrolments yet \u2014 click \u270E Edit to add one.") : /*#__PURE__*/React.createElement("table", {
+      }, "No lesson type enrolments yet — click ✎ Edit to add one.") : /*#__PURE__*/React.createElement("table", {
         className: "lt-mini-table"
       }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Lesson Type"), /*#__PURE__*/React.createElement("th", null, "Package"), /*#__PURE__*/React.createElement("th", null, "Scheduled Session"), /*#__PURE__*/React.createElement("th", null, "Credits"), /*#__PURE__*/React.createElement("th", null))), /*#__PURE__*/React.createElement("tbody", null, (sw.lessonTypeIds || []).map(ltId => {
         const lt = lessonTypeById ? lessonTypeById(ltId) : null;
@@ -10220,7 +10513,7 @@ function ParentsView({
           className: "col-pkg"
         }, pkg ? pkg.name : /*#__PURE__*/React.createElement("em", {
           className: "subtle"
-        }, "\u2014")), /*#__PURE__*/React.createElement("td", {
+        }, "—")), /*#__PURE__*/React.createElement("td", {
           className: `col-session${schedLabel ? '' : ' no-sched'}`
         }, ltSessions.length ? ltSessions.map((s, si) => /*#__PURE__*/React.createElement("span", {
           key: s.id,
@@ -10233,14 +10526,14 @@ function ParentsView({
           className: remaining <= 2 ? 'credit-low' : ''
         }, remaining, " cr") : /*#__PURE__*/React.createElement("em", {
           className: "subtle"
-        }, "\u2014")), /*#__PURE__*/React.createElement("td", {
+        }, "—")), /*#__PURE__*/React.createElement("td", {
           className: "col-actions"
         }, !isBound && adjustBalanceTo ? /*#__PURE__*/React.createElement(BalanceAdjuster, {
           currentBalance: remaining,
           onApply: (target, notes) => adjustBalanceTo(sw.id, ltId, target, notes)
         }) : isBound ? /*#__PURE__*/React.createElement("span", {
           className: "subtle small"
-        }, "\uD83D\uDD17 group") : null));
+        }, "🔗 group") : null));
       }))));
     }), parentSubs.length > 0 && /*#__PURE__*/React.createElement("div", {
       className: "parent-sub-log"
@@ -10257,7 +10550,7 @@ function ParentsView({
         className: "credit-sub-date"
       }, s.subscription_date), /*#__PURE__*/React.createElement("span", {
         className: "credit-sub-amount"
-      }, "+", s.credits_per_swimmer, " \xD7 ", s.swimmer_count), /*#__PURE__*/React.createElement("span", {
+      }, "+", s.credits_per_swimmer, " × ", s.swimmer_count), /*#__PURE__*/React.createElement("span", {
         className: "credit-sub-subject"
       }, lt?.name || '—'), /*#__PURE__*/React.createElement("span", {
         className: "credit-sub-meta subtle"
@@ -10379,7 +10672,7 @@ function FamilyGroupsAdminView({
       fontSize: 18,
       fontWeight: 800
     }
-  }, "\uD83D\uDC6A Family Groups \u2014 Administration"), /*#__PURE__*/React.createElement("div", {
+  }, "👪 Family Groups — Administration"), /*#__PURE__*/React.createElement("div", {
     className: "small subtle",
     style: {
       marginTop: 3
@@ -10437,7 +10730,7 @@ function FamilyGroupsAdminView({
       minWidth: 240,
       maxWidth: 420
     },
-    placeholder: "Search by group, package, lesson type, account, or member name\u2026",
+    placeholder: "Search by group, package, lesson type, account, or member name…",
     value: searchQ,
     onChange: e => setSearchQ(e.target.value)
   }), /*#__PURE__*/React.createElement("div", {
@@ -10537,7 +10830,7 @@ function FamilyGroupsAdminView({
     }, "Save"), /*#__PURE__*/React.createElement("button", {
       className: "btn btn-ghost small",
       onClick: () => setEditingNameId(null)
-    }, "\u2715")) : /*#__PURE__*/React.createElement("span", {
+    }, "✕")) : /*#__PURE__*/React.createElement("span", {
       style: {
         display: 'inline-flex',
         alignItems: 'center',
@@ -10554,13 +10847,13 @@ function FamilyGroupsAdminView({
         setEditingNameId(g.id);
         setEditingNameVal(g.name || '');
       }
-    }, "\u270E"))), /*#__PURE__*/React.createElement("div", {
+    }, "✎"))), /*#__PURE__*/React.createElement("div", {
       className: "fga-meta"
     }, g.isConfigured ? /*#__PURE__*/React.createElement("span", {
       className: "fga-pkg-tag"
-    }, g.ltName || '?', " \xB7 ", g.pkgName) : /*#__PURE__*/React.createElement("span", {
+    }, g.ltName || '?', " · ", g.pkgName) : /*#__PURE__*/React.createElement("span", {
       className: "fga-pkg-tag fga-pkg-warn"
-    }, "\u26A0 no package set"), /*#__PURE__*/React.createElement("span", {
+    }, "⚠ no package set"), /*#__PURE__*/React.createElement("span", {
       className: `fga-count ${g.isEmpty ? 'is-empty' : ''}`
     }, g.memberCount, " member", g.memberCount === 1 ? '' : 's'), g.accountNames.length > 0 ? /*#__PURE__*/React.createElement("span", {
       className: "fga-accounts"
@@ -10925,7 +11218,7 @@ function BillingPreviewPanel({
       alignItems: 'center',
       gap: 8
     }
-  }, /*#__PURE__*/React.createElement("span", null, "\uD83E\uDDFE Invoice Preview \u2014 ", pg.name), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("span", null, "🧾 Invoice Preview — ", pg.name), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
     onClick: onClose
   }, "Close")), /*#__PURE__*/React.createElement("div", {
@@ -10933,16 +11226,16 @@ function BillingPreviewPanel({
     style: {
       marginBottom: 10
     }
-  }, "Tick the items to include on this invoice. Untick anything not being billed this cycle. Click ", /*#__PURE__*/React.createElement("strong", null, "Generate Invoice"), " to create a draft invoice in Admin \u2192 Invoices."), !hasAny && unconfiguredGroups.length === 0 && /*#__PURE__*/React.createElement("div", {
+  }, "Tick the items to include on this invoice. Untick anything not being billed this cycle. Click ", /*#__PURE__*/React.createElement("strong", null, "Generate Invoice"), " to create a draft invoice in Admin → Invoices."), !hasAny && unconfiguredGroups.length === 0 && /*#__PURE__*/React.createElement("div", {
     className: "empty",
     style: {
       padding: 20
     }
-  }, "No billable items \u2014 no swimmers have package enrolments yet."), unconfiguredGroups.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "No billable items — no swimmers have package enrolments yet."), unconfiguredGroups.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "billing-warning-box"
   }, /*#__PURE__*/React.createElement("div", {
     className: "billing-warning-title"
-  }, "\u26A0 ", unconfiguredGroups.length, " group", unconfiguredGroups.length === 1 ? '' : 's', " missing a package"), /*#__PURE__*/React.createElement("div", {
+  }, "⚠ ", unconfiguredGroups.length, " group", unconfiguredGroups.length === 1 ? '' : 's', " missing a package"), /*#__PURE__*/React.createElement("div", {
     className: "billing-warning-body"
   }, "Open ", /*#__PURE__*/React.createElement("strong", null, "Manage Group"), " and set a package on: ", unconfiguredGroups.map(u => /*#__PURE__*/React.createElement("strong", {
     key: u.id
@@ -10972,7 +11265,7 @@ function BillingPreviewPanel({
     }
   }, it.groupType === 'bound' ? '🔗' : '👪', " ", it.groupName), /*#__PURE__*/React.createElement("div", {
     className: "small subtle"
-  }, it.lessonTypeName, " \xB7 ", it.packageName), /*#__PURE__*/React.createElement("div", {
+  }, it.lessonTypeName, " · ", it.packageName), /*#__PURE__*/React.createElement("div", {
     className: "small subtle"
   }, it.memberNames)), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("span", {
     className: "billing-type-chip group"
@@ -10991,7 +11284,7 @@ function BillingPreviewPanel({
     }
   }, it.swimmerName), /*#__PURE__*/React.createElement("div", {
     className: "small subtle"
-  }, it.lessonTypeName, " \xB7 ", it.packageName)), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("span", {
+  }, it.lessonTypeName, " · ", it.packageName)), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("span", {
     className: "billing-type-chip individual"
   }, "Individual")), /*#__PURE__*/React.createElement("td", {
     className: "num"
@@ -11223,15 +11516,15 @@ function ParentGroupManager({
       }
     }, /*#__PURE__*/React.createElement("strong", null, isBound ? '🔗' : '👪', " ", g.name), pkgInfo ? /*#__PURE__*/React.createElement("span", {
       className: "parent-group-tag",
-      title: "Group package \u2014 only swimmers with this package are eligible"
-    }, pkgInfo.ltName, " \xB7 ", pkgInfo.pkgName) : /*#__PURE__*/React.createElement("span", {
+      title: "Group package — only swimmers with this package are eligible"
+    }, pkgInfo.ltName, " · ", pkgInfo.pkgName) : /*#__PURE__*/React.createElement("span", {
       className: "parent-group-tag",
       style: {
         background: '#fef3c7',
         borderColor: '#fde68a',
         color: '#854d0e'
       }
-    }, "\u26A0 no package set"), /*#__PURE__*/React.createElement("button", {
+    }, "⚠ no package set"), /*#__PURE__*/React.createElement("button", {
       className: "btn btn-ghost small",
       onClick: () => {
         if (isEditingPkg) {
@@ -11287,7 +11580,7 @@ function ParentGroupManager({
       }
     }, /*#__PURE__*/React.createElement("option", {
       value: ""
-    }, "\u2014 Select lesson type \u2014"), lessonTypes.map(lt => /*#__PURE__*/React.createElement("option", {
+    }, "— Select lesson type —"), lessonTypes.map(lt => /*#__PURE__*/React.createElement("option", {
       key: lt.id,
       value: lt.id
     }, lt.name)))), /*#__PURE__*/React.createElement("div", {
@@ -11321,7 +11614,7 @@ function ParentGroupManager({
       style: {
         marginTop: 6
       }
-    }, "Setting the package activates bundle billing for this group \u2014 all members enrolled in this (lesson type, package) pair are billed once via the group bundle.")), /*#__PURE__*/React.createElement("div", {
+    }, "Setting the package activates bundle billing for this group — all members enrolled in this (lesson type, package) pair are billed once via the group bundle.")), /*#__PURE__*/React.createElement("div", {
       className: "parent-group-members"
     }, eligibleHere.length === 0 ? /*#__PURE__*/React.createElement("span", {
       className: "subtle small"
@@ -11353,7 +11646,7 @@ function ParentGroupManager({
         }
       }), " ", sw.name, locked ? /*#__PURE__*/React.createElement("span", {
         className: "subtle small"
-      }, " \xB7 in ", other.name) : null);
+      }, " · in ", other.name) : null);
     }), g.packageId && pg.swimmers.filter(s => !eligibleHere.includes(s)).map(sw => /*#__PURE__*/React.createElement("label", {
       key: sw.id,
       className: "parent-group-member",
@@ -11405,7 +11698,7 @@ function ParentGroupManager({
     }
   }, /*#__PURE__*/React.createElement("option", {
     value: ""
-  }, "\u2014 Select lesson type \u2014"), lessonTypes.map(lt => /*#__PURE__*/React.createElement("option", {
+  }, "— Select lesson type —"), lessonTypes.map(lt => /*#__PURE__*/React.createElement("option", {
     key: lt.id,
     value: lt.id
   }, lt.name)))), /*#__PURE__*/React.createElement("div", {
@@ -11448,7 +11741,7 @@ function ParentGroupManager({
       fontSize: 11
     },
     onClick: () => setCreatingType('discount')
-  }, "\uD83D\uDC6A Discount"), /*#__PURE__*/React.createElement("button", {
+  }, "👪 Discount"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: `tab ${creatingType === 'bound' ? 'active' : ''}`,
     style: {
@@ -11456,7 +11749,7 @@ function ParentGroupManager({
       fontSize: 11
     },
     onClick: () => setCreatingType('bound')
-  }, "\uD83D\uDD17 Bound")))), creatingPkgId && (() => {
+  }, "🔗 Bound")))), creatingPkgId && (() => {
     const free = previewEligible.filter(sw => !conflictingGroupFor(sw.id, creatingPkgId, null));
     const conflicted = previewEligible.filter(sw => !!conflictingGroupFor(sw.id, creatingPkgId, null));
     const lacking = pg.swimmers.filter(s => !previewEligible.includes(s));
@@ -11476,7 +11769,7 @@ function ParentGroupManager({
       }
     }, /*#__PURE__*/React.createElement("strong", null, "Eligible swimmers"), /*#__PURE__*/React.createElement("span", {
       className: "subtle small"
-    }, free.length, " free \xB7 ", conflicted.length, " already in another group \xB7 ", lacking.length, " no matching enrolment"), /*#__PURE__*/React.createElement("div", {
+    }, free.length, " free · ", conflicted.length, " already in another group · ", lacking.length, " no matching enrolment"), /*#__PURE__*/React.createElement("div", {
       style: {
         marginLeft: 'auto',
         display: 'flex',
@@ -11494,7 +11787,7 @@ function ParentGroupManager({
       className: "parent-group-members"
     }, free.length === 0 && conflicted.length === 0 && lacking.length === pg.swimmers.length ? /*#__PURE__*/React.createElement("span", {
       className: "subtle small"
-    }, "No swimmers in this family have the selected package. Add the enrolment to a swimmer first via \u270E Edit on their row.") : null, free.map(sw => {
+    }, "No swimmers in this family have the selected package. Add the enrolment to a swimmer first via ✎ Edit on their row.") : null, free.map(sw => {
       const checked = creatingMemberIds.has(sw.id);
       return /*#__PURE__*/React.createElement("label", {
         key: sw.id,
@@ -11518,14 +11811,14 @@ function ParentGroupManager({
         disabled: true
       }), " ", sw.name, " ", /*#__PURE__*/React.createElement("span", {
         className: "subtle small"
-      }, "\xB7 already in ", other?.name));
+      }, "· already in ", other?.name));
     }), lacking.map(sw => /*#__PURE__*/React.createElement("label", {
       key: sw.id,
       className: "parent-group-member",
       style: {
         opacity: .45
       },
-      title: "Does not have the selected package \u2014 add the enrolment to make eligible"
+      title: "Does not have the selected package — add the enrolment to make eligible"
     }, /*#__PURE__*/React.createElement("input", {
       type: "checkbox",
       disabled: true
@@ -11602,7 +11895,7 @@ function PendingCreditsView({
       fontSize: 18,
       fontWeight: 800
     }
-  }, "\u23F3 Pending Credits"), /*#__PURE__*/React.createElement("div", {
+  }, "⏳ Pending Credits"), /*#__PURE__*/React.createElement("div", {
     className: "small subtle"
   }, "Credits held in escrow after payment is recorded. Confirm to allocate lesson credits to the account. Reverse to reject (e.g. bounced payment).")), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -11969,14 +12262,14 @@ function DashboardReport({
       fontSize: 13,
       fontWeight: 800
     }
-  }, "\u26A0\uFE0F At-risk swimmers (", atRisk.length, ")"), /*#__PURE__*/React.createElement("div", {
+  }, "⚠️ At-risk swimmers (", atRisk.length, ")"), /*#__PURE__*/React.createElement("div", {
     className: "small subtle"
-  }, "No class in 30+ days \xB7 low credit")), atRisk.length === 0 && /*#__PURE__*/React.createElement("div", {
+  }, "No class in 30+ days · low credit")), atRisk.length === 0 && /*#__PURE__*/React.createElement("div", {
     className: "small subtle",
     style: {
       padding: '12px 0'
     }
-  }, "None \u2014 every active swimmer attended recently or has credit remaining."), atRisk.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "None — every active swimmer attended recently or has credit remaining."), atRisk.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "table-wrap",
     style: {
       maxHeight: 260,
@@ -11998,7 +12291,7 @@ function DashboardReport({
     }
   }, r.swimmer.name), /*#__PURE__*/React.createElement("div", {
     className: "small subtle"
-  }, r.swimmer.guardianName || '—', " \xB7 ", r.swimmer.guardianPhone || r.swimmer.guardianEmail || '—')), /*#__PURE__*/React.createElement("td", {
+  }, r.swimmer.guardianName || '—', " · ", r.swimmer.guardianPhone || r.swimmer.guardianEmail || '—')), /*#__PURE__*/React.createElement("td", {
     style: {
       textAlign: 'right',
       color: r.daysSince >= 90 ? 'var(--red-tx)' : r.daysSince >= 60 ? '#F97316' : 'var(--amber-tx)',
@@ -12019,7 +12312,7 @@ function DashboardReport({
       marginTop: 8,
       fontStyle: 'italic'
     }
-  }, "\uD83D\uDCDE A friendly call this week recovers most of these. They haven't decided to quit yet \u2014 they just got busy.")), /*#__PURE__*/React.createElement("div", {
+  }, "📞 A friendly call this week recovers most of these. They haven't decided to quit yet — they just got busy.")), /*#__PURE__*/React.createElement("div", {
     className: "card"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -12033,14 +12326,14 @@ function DashboardReport({
       fontSize: 13,
       fontWeight: 800
     }
-  }, "\uD83D\uDCCB Overdue invoices (", overdueInvs.length, ")"), /*#__PURE__*/React.createElement("div", {
+  }, "📋 Overdue invoices (", overdueInvs.length, ")"), /*#__PURE__*/React.createElement("div", {
     className: "small subtle"
   }, rm(overdueInvs.reduce((s, r) => s + r.owed, 0)), " total")), overdueInvs.length === 0 && /*#__PURE__*/React.createElement("div", {
     className: "small subtle",
     style: {
       padding: '12px 0'
     }
-  }, "None \u2014 all invoices either current or paid."), overdueInvs.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "None — all invoices either current or paid."), overdueInvs.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "table-wrap",
     style: {
       maxHeight: 260,
@@ -12062,7 +12355,7 @@ function DashboardReport({
     }
   }, r.inv.account_name), /*#__PURE__*/React.createElement("div", {
     className: "small subtle"
-  }, r.inv.invoice_number, " \xB7 due ", r.inv.due_date)), /*#__PURE__*/React.createElement("td", {
+  }, r.inv.invoice_number, " · due ", r.inv.due_date)), /*#__PURE__*/React.createElement("td", {
     style: {
       textAlign: 'right',
       fontWeight: 700,
@@ -12088,7 +12381,7 @@ function DashboardReport({
       fontWeight: 800,
       marginBottom: 10
     }
-  }, "\uD83D\uDCB0 Cash collected by method \xB7 last 30 days"), methodRows.length === 0 && /*#__PURE__*/React.createElement("div", {
+  }, "💰 Cash collected by method · last 30 days"), methodRows.length === 0 && /*#__PURE__*/React.createElement("div", {
     className: "small subtle"
   }, "No payments recorded in the last 30 days."), methodRows.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
@@ -12330,17 +12623,17 @@ function RetentionReport({
       fontSize: 13,
       fontWeight: 800
     }
-  }, "Cohort retention \u2014 % of swimmers still attending each month after signup"), /*#__PURE__*/React.createElement("div", {
+  }, "Cohort retention — % of swimmers still attending each month after signup"), /*#__PURE__*/React.createElement("div", {
     className: "small subtle",
     style: {
       marginTop: 3
     }
-  }, "Healthy benchmarks: 75%+ at month 3 (green) \xB7 50\u201375% (yellow) \xB7 below 50% needs intervention (red). Last 12 cohorts shown.")), cohortRows.length === 0 && /*#__PURE__*/React.createElement("div", {
+  }, "Healthy benchmarks: 75%+ at month 3 (green) · 50–75% (yellow) · below 50% needs intervention (red). Last 12 cohorts shown.")), cohortRows.length === 0 && /*#__PURE__*/React.createElement("div", {
     className: "empty",
     style: {
       padding: 24
     }
-  }, "No cohort data yet \u2014 need swimmer signup dates and recorded attendance."), cohortRows.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "No cohort data yet — need swimmer signup dates and recorded attendance."), cohortRows.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       overflow: 'auto'
     }
@@ -12741,12 +13034,12 @@ function AgingReportView({
     style: {
       color: 'var(--amber-tx)'
     }
-  }, "1\u201330d"), /*#__PURE__*/React.createElement("th", {
+  }, "1–30d"), /*#__PURE__*/React.createElement("th", {
     className: "num",
     style: {
       color: '#F97316'
     }
-  }, "31\u201360d"), /*#__PURE__*/React.createElement("th", {
+  }, "31–60d"), /*#__PURE__*/React.createElement("th", {
     className: "num",
     style: {
       color: 'var(--red-tx)'
@@ -12898,12 +13191,12 @@ function ReceiptsView({
       fontSize: 18,
       fontWeight: 800
     }
-  }, "\uD83D\uDCB0 Receipts"), /*#__PURE__*/React.createElement("div", {
+  }, "💰 Receipts"), /*#__PURE__*/React.createElement("div", {
     className: "small subtle",
     style: {
       marginTop: 3
     }
-  }, "All recorded payments. Click \uD83D\uDDA8 to print a receipt.")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, "All recorded payments. Click 🖨 to print a receipt.")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "small subtle"
   }, "Total collected", branchFilter ? ' (filtered)' : ''), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -12924,7 +13217,7 @@ function ReceiptsView({
       flex: 1,
       maxWidth: 320
     },
-    placeholder: "Search receipt #, invoice #, account, method\u2026",
+    placeholder: "Search receipt #, invoice #, account, method…",
     value: searchQ,
     onChange: e => setSearchQ(e.target.value)
   }), /*#__PURE__*/React.createElement(BranchFilterPills, {
@@ -13008,7 +13301,7 @@ function ReceiptsView({
       className: "btn btn-ghost small",
       title: "Print receipt",
       onClick: () => printReceipt(p, inv)
-    }, "\uD83D\uDDA8")));
+    }, "🖨")));
   }))))));
 }
 function StudentsView({
@@ -13216,7 +13509,7 @@ function StudentsView({
       flex: '1 1 240px',
       maxWidth: 380
     },
-    placeholder: "Search swimmer name, parent, phone\u2026",
+    placeholder: "Search swimmer name, parent, phone…",
     value: q,
     onChange: e => setQ(e.target.value)
   }), /*#__PURE__*/React.createElement("div", {
@@ -13305,11 +13598,11 @@ function StudentsView({
     const emergencyBits = s.emergencySameAsGuardian ? /*#__PURE__*/React.createElement("span", {
       className: "subtle small",
       title: "Same as guardian"
-    }, "\u2197 as guardian") : s.emergencyPhone ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, s.emergencyPhone), s.emergencyRelationship ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("span", {
+    }, "↗ as guardian") : s.emergencyPhone ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, s.emergencyPhone), s.emergencyRelationship ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("span", {
       className: "subtle small"
     }, s.emergencyRelationship)) : null) : /*#__PURE__*/React.createElement("span", {
       className: "subtle"
-    }, "\u2014");
+    }, "—");
     return /*#__PURE__*/React.createElement(React.Fragment, {
       key: s.id
     }, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
@@ -13334,7 +13627,7 @@ function StudentsView({
       className: "subtle"
     }, s.guardianPhone) : null) : /*#__PURE__*/React.createElement("span", {
       className: "subtle"
-    }, "\u2014")), /*#__PURE__*/React.createElement("td", {
+    }, "—")), /*#__PURE__*/React.createElement("td", {
       style: {
         fontSize: 11
       }
@@ -13359,7 +13652,7 @@ function StudentsView({
       }, c.name);
     }) : /*#__PURE__*/React.createElement("span", {
       className: "subtle"
-    }, "\u2014"))), /*#__PURE__*/React.createElement("td", {
+    }, "—"))), /*#__PURE__*/React.createElement("td", {
       style: {
         fontSize: 12
       }
@@ -13384,13 +13677,13 @@ function StudentsView({
       className: rem != null && rem <= 2 ? 'credit-low' : ''
     }, rem != null ? rem : '—')) : null)) : /*#__PURE__*/React.createElement("span", {
       className: "subtle"
-    }, "\u2014")), /*#__PURE__*/React.createElement("td", null, tcOk ? /*#__PURE__*/React.createElement("span", {
+    }, "—")), /*#__PURE__*/React.createElement("td", null, tcOk ? /*#__PURE__*/React.createElement("span", {
       className: "tc-badge-ok",
       title: `Accepted ${new Date(s.tcAcceptedAt).toLocaleDateString()} · ID: ${s.tcAcceptanceId}`
-    }, "\u2705") : /*#__PURE__*/React.createElement("span", {
+    }, "✅") : /*#__PURE__*/React.createElement("span", {
       className: "tc-badge-pending",
       title: "Terms & Conditions not yet accepted"
-    }, "\u26A0")), /*#__PURE__*/React.createElement("td", {
+    }, "⚠")), /*#__PURE__*/React.createElement("td", {
       style: {
         fontSize: 11
       }
@@ -13415,7 +13708,7 @@ function StudentsView({
       }, g.times.join(', ')), /*#__PURE__*/React.createElement("span", {
         className: "swimmer-sched-arrow",
         "aria-hidden": "true"
-      }, "\u2197")) : /*#__PURE__*/React.createElement("div", {
+      }, "↗")) : /*#__PURE__*/React.createElement("div", {
         key: gi,
         style: {
           marginBottom: 2
@@ -13589,7 +13882,7 @@ ${TC_COMPANY} Administration`);
     }
   }, "Terms & Conditions"), /*#__PURE__*/React.createElement("div", {
     className: "small subtle"
-  }, TC_COMPANY, " \xB7 Swimming Lesson Enrolment Agreement"), /*#__PURE__*/React.createElement("div", {
+  }, TC_COMPANY, " · Swimming Lesson Enrolment Agreement"), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 14,
       display: 'flex',
@@ -13628,14 +13921,14 @@ ${TC_COMPANY} Administration`);
     className: "small subtle"
   }, "Email:"), " ", /*#__PURE__*/React.createElement("strong", null, student.guardianEmail || /*#__PURE__*/React.createElement("span", {
     className: "tc-warn"
-  }, "\u26A0 No email \u2014 add in Swimmers tab"))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
+  }, "⚠ No email — add in Swimmers tab"))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
     className: "small subtle"
   }, "Lesson Type:"), " ", /*#__PURE__*/React.createElement("strong", null, lt?.name || '—')))), alreadySigned && /*#__PURE__*/React.createElement("div", {
     className: "tc-status-row tc-accepted",
     style: {
       marginTop: 12
     }
-  }, "\u2705 T&C already accepted for ", student.name, " \xB7 ID: ", student.tcAcceptanceId, " \xB7 ", new Date(student.tcAcceptedAt).toLocaleDateString(undefined, {
+  }, "✅ T&C already accepted for ", student.name, " · ID: ", student.tcAcceptanceId, " · ", new Date(student.tcAcceptedAt).toLocaleDateString(undefined, {
     dateStyle: 'long'
   }))), /*#__PURE__*/React.createElement("div", {
     className: "card",
@@ -13649,7 +13942,7 @@ ${TC_COMPANY} Administration`);
     className: "tc-h1"
   }, TC_COMPANY), /*#__PURE__*/React.createElement("h2", {
     className: "tc-h2"
-  }, "Swimming Lesson Enrolment \u2014 Terms & Conditions"), TC_CONTENT.map((sec, i) => /*#__PURE__*/React.createElement("div", {
+  }, "Swimming Lesson Enrolment — Terms & Conditions"), TC_CONTENT.map((sec, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
     className: "tc-section"
   }, /*#__PURE__*/React.createElement("h3", {
@@ -13659,7 +13952,7 @@ ${TC_COMPANY} Administration`);
     className: "tc-para"
   }, p)))), !scrolled && /*#__PURE__*/React.createElement("div", {
     className: "tc-scroll-hint"
-  }, "\u2193 Scroll to the bottom to enable acceptance"))), done ? /*#__PURE__*/React.createElement("div", {
+  }, "↓ Scroll to the bottom to enable acceptance"))), done ? /*#__PURE__*/React.createElement("div", {
     className: "card tc-success"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -13667,7 +13960,7 @@ ${TC_COMPANY} Administration`);
       fontWeight: 800,
       marginBottom: 6
     }
-  }, "\u2705 Accepted \u2014 ", done.studentName), /*#__PURE__*/React.createElement("div", {
+  }, "✅ Accepted — ", done.studentName), /*#__PURE__*/React.createElement("div", {
     className: "small"
   }, "Acceptance ID: ", /*#__PURE__*/React.createElement("strong", null, done.acceptanceId)), /*#__PURE__*/React.createElement("div", {
     className: "small subtle",
@@ -13729,7 +14022,7 @@ ${TC_COMPANY} Administration`);
       marginTop: 6,
       textAlign: 'right'
     }
-  }, "\u26A0 A guardian email address is required before accepting.")));
+  }, "⚠ A guardian email address is required before accepting.")));
 }
 function SessionModal({
   modal,
@@ -14145,9 +14438,9 @@ function SessionModal({
     },
     "aria-label": "Close",
     title: "Close (Esc)"
-  }, "\u2715")), escWarn && /*#__PURE__*/React.createElement("div", {
+  }, "✕")), escWarn && /*#__PURE__*/React.createElement("div", {
     className: "esc-warn-bar"
-  }, /*#__PURE__*/React.createElement("span", null, "\u26A0 You have unsaved changes."), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("span", null, "⚠ You have unsaved changes."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6,
@@ -14194,7 +14487,7 @@ function SessionModal({
   }, "(no pool)"), pools.map(p => /*#__PURE__*/React.createElement("option", {
     key: p.id,
     value: p.id
-  }, p.name, " \xB7 cap ", p.capacity_total)))), /*#__PURE__*/React.createElement("div", {
+  }, p.name, " · cap ", p.capacity_total)))), /*#__PURE__*/React.createElement("div", {
     className: "field"
   }, /*#__PURE__*/React.createElement("label", null, "Instructor"), /*#__PURE__*/React.createElement("select", {
     className: "select",
@@ -14221,9 +14514,9 @@ function SessionModal({
     style: {
       gridColumn: '1 / -1'
     }
-  }, /*#__PURE__*/React.createElement("span", null, "\u23F1 ", /*#__PURE__*/React.createElement("strong", null, formatRange(modal.startMinute, modal.form.durationMinutes))), previewMax > 0 ? /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("span", null, "⏱ ", /*#__PURE__*/React.createElement("strong", null, formatRange(modal.startMinute, modal.form.durationMinutes))), previewMax > 0 ? /*#__PURE__*/React.createElement("span", {
     className: previewStatus === 'over' ? 'meta-warn' : ''
-  }, "\uD83D\uDC65 ", /*#__PURE__*/React.createElement("strong", null, previewStudents, " / ", previewMax), previewStatus === 'over' ? ' Over' : previewStatus === 'full' ? ' Full' : previewStatus === 'tight' ? ' Tight' : '') : /*#__PURE__*/React.createElement("span", null, "\uD83D\uDC65 ", /*#__PURE__*/React.createElement("strong", null, previewStudents))), /*#__PURE__*/React.createElement("div", {
+  }, "👥 ", /*#__PURE__*/React.createElement("strong", null, previewStudents, " / ", previewMax), previewStatus === 'over' ? ' Over' : previewStatus === 'full' ? ' Full' : previewStatus === 'tight' ? ' Tight' : '') : /*#__PURE__*/React.createElement("span", null, "👥 ", /*#__PURE__*/React.createElement("strong", null, previewStudents))), /*#__PURE__*/React.createElement("div", {
     className: "field",
     style: {
       gridColumn: '1 / -1'
@@ -14274,7 +14567,7 @@ function SessionModal({
       title: `Enrolled package for ${currentLt?.name}`
     }, pkgLabel) : null, isTrial ? /*#__PURE__*/React.createElement("span", {
       className: "trial-pill",
-      title: "Trial package \u2014 one-off booking."
+      title: "Trial package — one-off booking."
     }, "trial") : null, canMarkReplacement ? /*#__PURE__*/React.createElement("button", {
       type: "button",
       className: "repl-mark-btn",
@@ -14293,7 +14586,7 @@ function SessionModal({
           setModal(null);
         }
       }
-    }, "\u2192 R") : null, r.studentId || (r.name || '').trim() ? /*#__PURE__*/React.createElement("div", {
+    }, "→ R") : null, r.studentId || (r.name || '').trim() ? /*#__PURE__*/React.createElement("div", {
       className: "att-seg",
       role: "group",
       "aria-label": "Attendance"
@@ -14302,17 +14595,17 @@ function SessionModal({
       className: `att-btn att-pending ${(r.attendance || 'pending') === 'pending' ? 'is-on' : ''}`,
       onClick: () => setAttendance(i, 'pending'),
       title: "Not yet marked"
-    }, "\u23F3"), /*#__PURE__*/React.createElement("button", {
+    }, "⏳"), /*#__PURE__*/React.createElement("button", {
       type: "button",
       className: `att-btn att-attended ${r.attendance === 'attended' ? 'is-on' : ''}`,
       onClick: () => setAttendance(i, 'attended'),
-      title: "Attended \u2014 \u22121 credit on save"
-    }, "\u2713"), /*#__PURE__*/React.createElement("button", {
+      title: "Attended — −1 credit on save"
+    }, "✓"), /*#__PURE__*/React.createElement("button", {
       type: "button",
       className: `att-btn att-absent ${r.attendance === 'absent' ? 'is-on' : ''}`,
       onClick: () => setAttendance(i, 'absent'),
-      title: "Absent \u2014 \u22121 credit on save"
-    }, "\u2717")) : null, /*#__PURE__*/React.createElement("input", {
+      title: "Absent — −1 credit on save"
+    }, "✗")) : null, /*#__PURE__*/React.createElement("input", {
       className: "input stu-remark",
       placeholder: "Remark",
       value: r.remark || '',
@@ -14322,7 +14615,7 @@ function SessionModal({
       className: "stu-x",
       title: "Clear this slot (bound-group members prompt a group-remove)",
       onClick: () => removeRow(i)
-    }, "\xD7") : null));
+    }, "×") : null));
   })))), !isPersonal && /*#__PURE__*/React.createElement("div", {
     className: "repl-section"
   }, /*#__PURE__*/React.createElement("div", {
@@ -14430,7 +14723,7 @@ function SessionModal({
       style: {
         fontWeight: 400
       }
-    }, "\xB7 trials need credit \xB7 pending shown for next 4 weeks")), /*#__PURE__*/React.createElement("div", {
+    }, "· trials need credit · pending shown for next 4 weeks")), /*#__PURE__*/React.createElement("div", {
       style: {
         display: 'flex',
         gap: 3,
@@ -14576,18 +14869,18 @@ function SessionModal({
       type: "button",
       className: `att-btn att-pending ${(r.attendance || 'pending') === 'pending' ? 'is-on' : ''}`,
       onClick: () => setReplAttendance(i, 'pending'),
-      title: "Not yet marked \u2014 credit untouched"
-    }, "\u23F3"), /*#__PURE__*/React.createElement("button", {
+      title: "Not yet marked — credit untouched"
+    }, "⏳"), /*#__PURE__*/React.createElement("button", {
       type: "button",
       className: `att-btn att-attended ${r.attendance === 'attended' ? 'is-on' : ''}`,
       onClick: () => setReplAttendance(i, 'attended'),
-      title: "Attended \u2014 lesson delivered (\u22121 credit on save)"
-    }, "\u2713"), /*#__PURE__*/React.createElement("button", {
+      title: "Attended — lesson delivered (−1 credit on save)"
+    }, "✓"), /*#__PURE__*/React.createElement("button", {
       type: "button",
       className: `att-btn att-absent ${r.attendance === 'absent' ? 'is-on' : ''}`,
       onClick: () => setReplAttendance(i, 'absent'),
-      title: "Absent \u2014 counts as a delivered lesson, no replacement entitled (\u22121 credit on save)"
-    }, "\u2717")) : null, /*#__PURE__*/React.createElement("button", {
+      title: "Absent — counts as a delivered lesson, no replacement entitled (−1 credit on save)"
+    }, "✗")) : null, /*#__PURE__*/React.createElement("button", {
       className: "btn btn-ghost small",
       style: {
         flexShrink: 0
@@ -14614,14 +14907,14 @@ function SessionModal({
           }
         });
       }
-    }, "\xD7"));
+    }, "×"));
   })), isPersonal && /*#__PURE__*/React.createElement("div", {
     className: "repl-section"
   }, isRescheduled && /*#__PURE__*/React.createElement("div", {
     className: "reschedule-notice"
   }, /*#__PURE__*/React.createElement("span", {
     className: "reschedule-from-badge"
-  }, "\u21C4 Rescheduled this week \u2014 was originally ", DAYS_F[modal.rescheduledFromDay], " at ", minuteToTime(modal.rescheduledFromStartMinute)), /*#__PURE__*/React.createElement("button", {
+  }, "⇄ Rescheduled this week — was originally ", DAYS_F[modal.rescheduledFromDay], " at ", minuteToTime(modal.rescheduledFromStartMinute)), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
     onClick: () => setModal({
       ...modal,
@@ -14634,7 +14927,7 @@ function SessionModal({
     className: "reschedule-head"
   }, /*#__PURE__*/React.createElement("span", {
     className: "repl-section-title"
-  }, "\u21C4 Reschedule this week only"), /*#__PURE__*/React.createElement("button", {
+  }, "⇄ Reschedule this week only"), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
     onClick: () => {
       setReschedDay(modal.day);
@@ -14712,7 +15005,7 @@ function SessionModal({
       className: "credit-row-name"
     }, r.name || 'Student', lastPurchaseLabel ? /*#__PURE__*/React.createElement("span", {
       className: "credit-row-last"
-    }, " \xB7 last ", lastPurchaseLabel) : null), bal ? /*#__PURE__*/React.createElement("div", {
+    }, " · last ", lastPurchaseLabel) : null), bal ? /*#__PURE__*/React.createElement("div", {
       className: "credit-controls"
     }, /*#__PURE__*/React.createElement("span", {
       className: `credit-count ${bal.remaining_balance <= 2 ? 'credit-low' : ''}`
@@ -14720,7 +15013,7 @@ function SessionModal({
       className: "credit-btn",
       title: "Deduct 1 credit (class attended)",
       onClick: () => adjustCredit(r.studentId, currentLt.id, -1)
-    }, "\u2212"), /*#__PURE__*/React.createElement("button", {
+    }, "−"), /*#__PURE__*/React.createElement("button", {
       className: "credit-btn",
       title: "Add 1 credit (credit returned)",
       onClick: () => adjustCredit(r.studentId, currentLt.id, +1)
@@ -14770,7 +15063,7 @@ function SessionModal({
     type: "button",
     className: `cancel-class-toggle ${cancelClassOpen ? 'is-open' : ''}`,
     onClick: () => setCancelClassOpen(o => !o)
-  }, /*#__PURE__*/React.createElement("span", null, "\uD83D\uDEAB Cancel entire class for this week"), /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("span", null, "🚫 Cancel entire class for this week"), /*#__PURE__*/React.createElement("span", {
     className: "cancel-class-chev"
   }, cancelClassOpen ? '▴' : '▾')), cancelClassOpen && /*#__PURE__*/React.createElement("div", {
     className: "cancel-class-options"
@@ -14787,7 +15080,7 @@ function SessionModal({
     }
   }, /*#__PURE__*/React.createElement("div", {
     className: "cancel-class-opt-title"
-  }, "\u23ED Forward to next week"), /*#__PURE__*/React.createElement("div", {
+  }, "⏭ Forward to next week"), /*#__PURE__*/React.createElement("div", {
     className: "cancel-class-opt-sub"
   }, "Cancels this week's run and recreates the same class next week (same day, time, swimmers). Any credits already consumed this week are refunded. If next week already has this class, it merges in instead of duplicating.")), /*#__PURE__*/React.createElement("button", {
     type: "button",
@@ -14807,9 +15100,9 @@ function SessionModal({
     }
   }, /*#__PURE__*/React.createElement("div", {
     className: "cancel-class-opt-title"
-  }, "\uD83D\uDCC5 Reschedule to another slot"), /*#__PURE__*/React.createElement("div", {
+  }, "📅 Reschedule to another slot"), /*#__PURE__*/React.createElement("div", {
     className: "cancel-class-opt-sub"
-  }, "Pick a day & time on the weekly grid. Same swimmers, same instructor, same pool \u2014 just a different slot this week."))))), modal.id && duplicateSessionForward && /*#__PURE__*/React.createElement("div", {
+  }, "Pick a day & time on the weekly grid. Same swimmers, same instructor, same pool — just a different slot this week."))))), modal.id && duplicateSessionForward && /*#__PURE__*/React.createElement("div", {
     className: "cancel-class-panel"
   }, /*#__PURE__*/React.createElement("button", {
     type: "button",
@@ -14820,7 +15113,7 @@ function SessionModal({
       borderColor: '#BFDBFE',
       color: '#1E40AF'
     }
-  }, /*#__PURE__*/React.createElement("span", null, "\u23E9 Duplicate this session to future weeks"), /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("span", null, "⏩ Duplicate this session to future weeks"), /*#__PURE__*/React.createElement("span", {
     className: "cancel-class-chev",
     style: {
       color: '#1E40AF'
@@ -14851,7 +15144,7 @@ function SessionModal({
       const n = Math.max(1, Math.min(52, parseInt(v, 10) || 0));
       if (n > 0) duplicateSessionForward(modal.id, n);
     }
-  }, "Custom\u2026"))))), /*#__PURE__*/React.createElement("div", {
+  }, "Custom…"))))), /*#__PURE__*/React.createElement("div", {
     className: "modal-foot"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -14948,7 +15241,7 @@ function PrintWeeklyTableSection({
           className: "wt-sess-type"
         }, block.type), /*#__PURE__*/React.createElement("div", {
           className: "wt-sess-meta"
-        }, block.instructors[0]?.name || block.legacyInstructor || '—', " \xB7 ", block.durationMinutes, "\u2009min", block._poolName ? ` · ${block._poolName}` : ''), block.students.length > 0 ? /*#__PURE__*/React.createElement("div", {
+        }, block.instructors[0]?.name || block.legacyInstructor || '—', " · ", block.durationMinutes, "\u2009min", block._poolName ? ` · ${block._poolName}` : ''), block.students.length > 0 ? /*#__PURE__*/React.createElement("div", {
           className: "wt-sess-students"
         }, block.students.map(studentLabel).join(', ')) : null)));
       }
@@ -14974,12 +15267,12 @@ function PrintWeeklyTableSection({
     className: "wt-title"
   }, "Weekly Schedule", branchLabel ? ` — ${branchLabel}` : ''), /*#__PURE__*/React.createElement("div", {
     className: "wt-meta"
-  }, "Week of ", selectedWeekStart, " \xA0\xB7\xA0 ", wb.start.toLocaleDateString(undefined, {
+  }, "Week of ", selectedWeekStart, " \xA0·\xA0 ", wb.start.toLocaleDateString(undefined, {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
     day: 'numeric'
-  }), " \u2013 ", wb.end.toLocaleDateString(undefined, {
+  }), " – ", wb.end.toLocaleDateString(undefined, {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
@@ -15274,7 +15567,7 @@ function InvoicesView({
       fontSize: 18,
       fontWeight: 800
     }
-  }, "\uD83E\uDDFE Invoices"), /*#__PURE__*/React.createElement("div", {
+  }, "🧾 Invoices"), /*#__PURE__*/React.createElement("div", {
     className: "small subtle",
     style: {
       marginTop: 3
@@ -15311,7 +15604,7 @@ function InvoicesView({
       flex: 1,
       maxWidth: 340
     },
-    placeholder: "Search invoice # or account\u2026",
+    placeholder: "Search invoice # or account…",
     value: searchQ,
     onChange: e => setSearchQ(e.target.value)
   }), /*#__PURE__*/React.createElement("label", {
@@ -15341,7 +15634,7 @@ function InvoicesView({
   }, "Mark Sent (", selDraft, ")"), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
     onClick: bulkPrint
-  }, "\uD83D\uDDA8 Print Selected"), /*#__PURE__*/React.createElement("button", {
+  }, "🖨 Print Selected"), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
     onClick: () => setSelectedIds(new Set())
   }, "Clear"))), filtered.length === 0 && /*#__PURE__*/React.createElement("div", {
@@ -15512,7 +15805,7 @@ function InvoiceDetailPanel({
     className: "inv-detail"
   }, isOverdue && /*#__PURE__*/React.createElement("div", {
     className: "inv-overdue-banner"
-  }, "\u26A0 This invoice is overdue. Due date was ", invoice.due_date, "."), /*#__PURE__*/React.createElement("div", {
+  }, "⚠ This invoice is overdue. Due date was ", invoice.due_date, "."), /*#__PURE__*/React.createElement("div", {
     className: "inv-detail-head"
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "small subtle"
@@ -15544,13 +15837,13 @@ function InvoiceDetailPanel({
   }, "Mark Part Paid"), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
     onClick: () => printInvoice(invoice, lines, membersByGroup)
-  }, "\uD83D\uDDA8 Print Invoice"), (invoice.status === 'paid' || outstanding <= 0) && pmts && pmts.length > 0 && /*#__PURE__*/React.createElement("button", {
+  }, "🖨 Print Invoice"), (invoice.status === 'paid' || outstanding <= 0) && pmts && pmts.length > 0 && /*#__PURE__*/React.createElement("button", {
     className: "btn btn-primary small",
     onClick: () => {
       const lastPmt = [...pmts].sort((a, b) => (b.payment_date || '').localeCompare(a.payment_date || ''))[0];
       printInvoiceAndReceipt(invoice, lines, lastPmt, membersByGroup);
     }
-  }, "\uD83D\uDDA8 Print Invoice & Receipt"), invoice.status !== 'void' && invoice.status !== 'paid' && /*#__PURE__*/React.createElement("button", {
+  }, "🖨 Print Invoice & Receipt"), invoice.status !== 'void' && invoice.status !== 'paid' && /*#__PURE__*/React.createElement("button", {
     className: "btn btn-danger small",
     onClick: onVoid
   }, "Void"), onDelete && /*#__PURE__*/React.createElement("button", {
@@ -15559,7 +15852,7 @@ function InvoiceDetailPanel({
     style: {
       marginLeft: 'auto'
     }
-  }, "\uD83D\uDDD1 Delete Invoice"))), /*#__PURE__*/React.createElement("div", {
+  }, "🗑 Delete Invoice"))), /*#__PURE__*/React.createElement("div", {
     className: "table-wrap",
     style: {
       margin: '10px 0'
@@ -15637,12 +15930,12 @@ function InvoiceDetailPanel({
     className: "btn btn-ghost small",
     title: "Print receipt",
     onClick: () => printReceipt(p, invoice)
-  }, "\uD83D\uDDA8 Receipt"))))))), /*#__PURE__*/React.createElement("div", {
+  }, "🖨 Receipt"))))))), /*#__PURE__*/React.createElement("div", {
     className: "small subtle",
     style: {
       marginTop: 4
     }
-  }, "Paid RM ", Number(invoice.amount_paid || 0).toFixed(2), " \xB7 Outstanding RM ", outstanding.toFixed(2))), !showPayForm && outstanding > 0 && invoice.status !== 'void' && /*#__PURE__*/React.createElement("button", {
+  }, "Paid RM ", Number(invoice.amount_paid || 0).toFixed(2), " · Outstanding RM ", outstanding.toFixed(2))), !showPayForm && outstanding > 0 && invoice.status !== 'void' && /*#__PURE__*/React.createElement("button", {
     className: "btn btn-primary small",
     onClick: () => {
       setPayAmt(outstanding.toFixed(2));
@@ -15791,7 +16084,7 @@ function InvoiceSettingsPanel({
     style: {
       fontWeight: 700
     }
-  }, "\u2699 Invoice Numbering"), /*#__PURE__*/React.createElement("div", {
+  }, "⚙ Invoice Numbering"), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 8
@@ -15806,7 +16099,7 @@ function InvoiceSettingsPanel({
         }
       }
     }
-  }, "\u21BA Reset"), /*#__PURE__*/React.createElement("button", {
+  }, "↺ Reset"), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-primary small",
     onClick: handleSave,
     disabled: saving
@@ -15852,7 +16145,7 @@ function InvoiceSettingsPanel({
     value: "MM"
   }, "Month only (06)"), /*#__PURE__*/React.createElement("option", {
     value: "none"
-  }, "None \u2014 sequence only"))), /*#__PURE__*/React.createElement("div", {
+  }, "None — sequence only"))), /*#__PURE__*/React.createElement("div", {
     className: "field"
   }, /*#__PURE__*/React.createElement("label", null, "Leading Zeros"), /*#__PURE__*/React.createElement("select", {
     className: "select",
@@ -15861,7 +16154,7 @@ function InvoiceSettingsPanel({
   }, [1, 2, 3, 4, 5].map(n => /*#__PURE__*/React.createElement("option", {
     key: n,
     value: n
-  }, n, " \u2014 e.g. ", String(1).padStart(n, '0'))))), /*#__PURE__*/React.createElement("div", {
+  }, n, " — e.g. ", String(1).padStart(n, '0'))))), /*#__PURE__*/React.createElement("div", {
     className: "field"
   }, /*#__PURE__*/React.createElement("label", null, "Next Invoice #"), /*#__PURE__*/React.createElement("input", {
     className: "input",
@@ -15916,7 +16209,7 @@ function InvoiceSettingsPanel({
       fontSize: 13,
       marginBottom: 4
     }
-  }, "\uD83D\uDD10 Invoice Permissions"), /*#__PURE__*/React.createElement("div", {
+  }, "🔐 Invoice Permissions"), /*#__PURE__*/React.createElement("div", {
     className: "small subtle",
     style: {
       marginBottom: 12
@@ -16203,6 +16496,709 @@ ${pmt ? `<div class="block">
     w.document.write(html);
     w.document.close();
   }
+}
+
+// ============================================================================
+// Programme module — event & workout planning calendar (Weekly + Monthly)
+// ============================================================================
+
+// Soft tint from a hex; falls back to a neutral slate card.
+function programmeCardColors(hex) {
+  if (!hex) return {
+    bg: '#F1F5F9',
+    bd: '#CBD5E1',
+    tx: '#0F172A'
+  };
+  return {
+    bg: hex + '1A',
+    bd: hex,
+    tx: '#0F172A'
+  };
+}
+function ProgrammeCard({
+  s,
+  categoryById,
+  poolById,
+  showPoolBadge,
+  onEdit
+}) {
+  const cat = s.categoryId ? categoryById(s.categoryId) : null;
+  const tint = s.color || cat && cat.color || null;
+  const c = programmeCardColors(tint);
+  const pool = s.poolId ? poolById(s.poolId) : null;
+  const heading = s.title || cat && cat.name || 'Session';
+  return /*#__PURE__*/React.createElement("div", {
+    className: "wa-card prog-card",
+    onClick: e => {
+      e.stopPropagation();
+      onEdit(s);
+    },
+    style: {
+      background: c.bg,
+      borderLeft: `3px solid ${c.bd}`,
+      color: c.tx
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wa-card-head"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "wa-card-title"
+  }, heading)), /*#__PURE__*/React.createElement("div", {
+    className: "wa-card-line"
+  }, compactRange(s.startMinute, s.durationMinutes), showPoolBadge && pool ? /*#__PURE__*/React.createElement("span", {
+    className: "event-pool-pill",
+    style: {
+      marginLeft: 4
+    }
+  }, pool.name) : null), cat ? /*#__PURE__*/React.createElement("div", {
+    className: "prog-cat-chip",
+    style: {
+      background: (cat.color || '#64748B') + '22',
+      color: cat.color || '#475569',
+      borderColor: cat.color || '#94A3B8'
+    }
+  }, cat.name) : null, s.body ? /*#__PURE__*/React.createElement("div", {
+    className: "prog-card-body"
+  }, s.body) : /*#__PURE__*/React.createElement("div", {
+    className: "wa-card-students-empty"
+  }, "— no notes yet —"));
+}
+function ProgrammeWeekView({
+  programmeWeekDays,
+  pools,
+  selectedPoolId,
+  setSelectedPoolId,
+  gridBounds,
+  categoryById,
+  poolById,
+  onAdd,
+  onEdit,
+  selectedWeekStart,
+  currentWeekStart,
+  onPrev,
+  onNext,
+  onToday,
+  branchLabel
+}) {
+  const wb = weekBounds(selectedWeekStart);
+  const startHour = Math.floor(gridBounds.startMin / 60) * 60;
+  const hours = [];
+  for (let h = startHour; h < gridBounds.endMin; h += 60) hours.push(h);
+  const showPoolBadge = !selectedPoolId && pools.length > 1;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 16
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "view-head"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "view-title"
+  }, "Programme — Weekly"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle"
+  }, "Structure workouts, teaching focus and activities per slot. Click any empty cell to add a session.", branchLabel ? ` · ${branchLabel}` : ''))), /*#__PURE__*/React.createElement(PeriodNav, {
+    rangeLabel: weekRangeLabel(selectedWeekStart),
+    onPrev: onPrev,
+    onNext: onNext,
+    onToday: onToday,
+    isCurrent: selectedWeekStart === currentWeekStart
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "pool-tabs",
+    style: {
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: `pool-tab ${selectedPoolId === null ? 'active' : ''}`,
+    onClick: () => setSelectedPoolId(null)
+  }, "All"), pools.map(p => /*#__PURE__*/React.createElement("button", {
+    key: p.id,
+    className: `pool-tab ${selectedPoolId === p.id ? 'active' : ''}`,
+    onClick: () => setSelectedPoolId(p.id)
+  }, p.name))), /*#__PURE__*/React.createElement("div", {
+    className: "wagenda"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wa-corner"
+  }), DAYS_S.map((d, di) => {
+    const dateObj = new Date(wb.start);
+    dateObj.setDate(wb.start.getDate() + di);
+    const dateStr = dateObj.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric'
+    });
+    return /*#__PURE__*/React.createElement("div", {
+      key: 'h' + di,
+      className: "wa-dayhead"
+    }, /*#__PURE__*/React.createElement("div", null, d), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '10px',
+        fontWeight: 600,
+        color: '#94A3B8'
+      }
+    }, dateStr));
+  }), hours.map(h => /*#__PURE__*/React.createElement(React.Fragment, {
+    key: h
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wa-time"
+  }, hourLabel(h)), DAYS_S.map((_, di) => {
+    const cell = (programmeWeekDays[di] || []).filter(s => s.startMinute >= h && s.startMinute < h + 60);
+    return /*#__PURE__*/React.createElement("div", {
+      key: di + '-' + h,
+      className: "wa-cell",
+      onClick: () => onAdd(di, h, selectedPoolId || undefined)
+    }, cell.map(s => /*#__PURE__*/React.createElement(ProgrammeCard, {
+      key: s.id,
+      s: s,
+      categoryById: categoryById,
+      poolById: poolById,
+      showPoolBadge: showPoolBadge,
+      onEdit: onEdit
+    })));
+  })))));
+}
+function ProgrammeMonthView({
+  monthCursor,
+  setMonthCursor,
+  monthDates,
+  selectedDate,
+  setSelectedDate,
+  programmeSessionsForDate,
+  categoryById,
+  onAdd,
+  onEdit
+}) {
+  const monthOpts = [];
+  for (let y = 2025; y <= 2032; y++) for (let m = 0; m < 12; m++) {
+    const d = new Date(y, m, 1);
+    monthOpts.push(/*#__PURE__*/React.createElement("option", {
+      key: `${y}-${m}`,
+      value: monthKey(d)
+    }, d.toLocaleDateString(undefined, {
+      month: 'long',
+      year: 'numeric'
+    })));
+  }
+  const items = programmeSessionsForDate(selectedDate);
+  const di = (fromDateStr(selectedDate).getDay() + 6) % 7;
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 12,
+      flexWrap: 'wrap',
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 18,
+      fontWeight: 800
+    }
+  }, "Programme — Monthly"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle"
+  }, "Monday-first overview. Click a day to view and edit its programme below.")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 12,
+      alignItems: 'center',
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: () => setMonthCursor(new Date(monthCursor.getFullYear(), monthCursor.getMonth() - 1, 1))
+  }, "←"), /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    style: {
+      width: 240
+    },
+    value: monthKey(monthCursor),
+    onChange: e => {
+      const [y, m] = e.target.value.split('-').map(Number);
+      setMonthCursor(new Date(y, m - 1, 1));
+    }
+  }, monthOpts), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: () => setMonthCursor(new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 1))
+  }, "→"))), /*#__PURE__*/React.createElement("div", {
+    className: "month-grid"
+  }, DAYS_S.map(d => /*#__PURE__*/React.createElement("div", {
+    key: d,
+    className: "month-dow"
+  }, d)), monthDates.map(d => {
+    const ds = toDateStr(d),
+      inMonth = d.getMonth() === monthCursor.getMonth(),
+      dayItems = programmeSessionsForDate(ds);
+    return /*#__PURE__*/React.createElement("div", {
+      key: ds,
+      className: `day-box ${inMonth ? '' : 'outside'} ${selectedDate === ds ? 'selected' : ''}`,
+      onClick: () => setSelectedDate(ds)
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "day-top"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "day-num"
+    }, d.getDate())), /*#__PURE__*/React.createElement("div", null, dayItems.length ? dayItems.slice(0, 3).map(s => {
+      const cat = s.categoryId ? categoryById(s.categoryId) : null;
+      const c = programmeCardColors(s.color || cat && cat.color);
+      return /*#__PURE__*/React.createElement("div", {
+        key: s.id,
+        className: "mini-item",
+        style: {
+          background: c.bg,
+          borderLeftColor: c.bd,
+          color: c.tx
+        }
+      }, minuteToTime(s.startMinute), " · ", s.title || cat && cat.name || 'Session');
+    }) : /*#__PURE__*/React.createElement("div", {
+      className: "small subtle"
+    }, "—"), dayItems.length > 3 ? /*#__PURE__*/React.createElement("div", {
+      className: "small subtle",
+      style: {
+        marginTop: 2
+      }
+    }, "+", dayItems.length - 3, " more") : null));
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginTop: 16
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 12,
+      flexWrap: 'wrap',
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 18,
+      fontWeight: 800
+    }
+  }, longDate(selectedDate)), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle"
+  }, items.length, " session", items.length === 1 ? '' : 's', " planned")), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary small",
+    onClick: () => onAdd(di, 540, undefined)
+  }, "+ Create session")), items.length ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 8
+    }
+  }, items.map(s => {
+    const cat = s.categoryId ? categoryById(s.categoryId) : null;
+    const c = programmeCardColors(s.color || cat && cat.color);
+    return /*#__PURE__*/React.createElement("div", {
+      key: s.id,
+      className: "prog-row",
+      onClick: () => onEdit(s),
+      style: {
+        borderLeft: `3px solid ${c.bd}`
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "prog-row-time"
+    }, compactRange(s.startMinute, s.durationMinutes)), /*#__PURE__*/React.createElement("div", {
+      className: "prog-row-main"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "prog-row-title"
+    }, s.title || cat && cat.name || 'Session', cat ? /*#__PURE__*/React.createElement("span", {
+      className: "prog-cat-chip",
+      style: {
+        marginLeft: 6,
+        background: (cat.color || '#64748B') + '22',
+        color: cat.color || '#475569',
+        borderColor: cat.color || '#94A3B8'
+      }
+    }, cat.name) : null), s.body ? /*#__PURE__*/React.createElement("div", {
+      className: "prog-row-body"
+    }, s.body) : /*#__PURE__*/React.createElement("div", {
+      className: "small subtle"
+    }, "— no notes —")));
+  })) : /*#__PURE__*/React.createElement("div", {
+    className: "empty"
+  }, "No programme sessions for this day. Click “+ Create session” to add one.")));
+}
+function ProgrammeSessionModal({
+  modal,
+  setModal,
+  busy,
+  onSave,
+  onDelete,
+  pools,
+  categories,
+  gridBounds
+}) {
+  const f = modal.form;
+  function set(patch) {
+    setModal({
+      ...modal,
+      form: {
+        ...modal.form,
+        ...patch
+      }
+    });
+  }
+  const timeOpts = [];
+  for (let m = gridBounds.startMin; m < gridBounds.endMin; m += 30) timeOpts.push(m);
+  const durOpts = [30, 45, 60, 75, 90, 105, 120, 150, 180];
+  return /*#__PURE__*/React.createElement("div", {
+    className: "modal-backdrop",
+    onClick: () => setModal(null)
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "modal-card",
+    onClick: e => e.stopPropagation(),
+    style: {
+      width: 'min(560px,100%)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '14px 18px',
+      borderBottom: '1px solid var(--border)',
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 800,
+      fontSize: 16
+    }
+  }, modal.mode === 'edit' ? 'Edit Programme Session' : 'New Programme Session'), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => setModal(null)
+  }, "✕")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '16px 18px',
+      overflowY: 'auto',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 10,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      flex: '1 1 130px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field-label"
+  }, "Day"), /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    value: f.weekday,
+    onChange: e => set({
+      weekday: Number(e.target.value)
+    })
+  }, DAYS_F.map((d, i) => /*#__PURE__*/React.createElement("option", {
+    key: i,
+    value: i
+  }, d)))), /*#__PURE__*/React.createElement("label", {
+    style: {
+      flex: '1 1 120px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field-label"
+  }, "Start time"), /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    value: f.startMinute,
+    onChange: e => set({
+      startMinute: Number(e.target.value)
+    })
+  }, timeOpts.map(m => /*#__PURE__*/React.createElement("option", {
+    key: m,
+    value: m
+  }, minuteToTime(m))))), /*#__PURE__*/React.createElement("label", {
+    style: {
+      flex: '1 1 110px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field-label"
+  }, "Duration"), /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    value: f.durationMinutes,
+    onChange: e => set({
+      durationMinutes: Number(e.target.value)
+    })
+  }, durOpts.map(m => /*#__PURE__*/React.createElement("option", {
+    key: m,
+    value: m
+  }, m, " min"))))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 10,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      flex: '1 1 160px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field-label"
+  }, "Pool ", /*#__PURE__*/React.createElement("span", {
+    className: "subtle"
+  }, "(optional)")), /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    value: f.poolId || '',
+    onChange: e => set({
+      poolId: e.target.value || null
+    })
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "— None —"), pools.map(p => /*#__PURE__*/React.createElement("option", {
+    key: p.id,
+    value: p.id
+  }, p.name)))), /*#__PURE__*/React.createElement("label", {
+    style: {
+      flex: '1 1 160px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field-label"
+  }, "Swim Group Category ", /*#__PURE__*/React.createElement("span", {
+    className: "subtle"
+  }, "(optional)")), /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    value: f.categoryId || '',
+    onChange: e => set({
+      categoryId: e.target.value || null
+    })
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "— None —"), (categories || []).filter(c => c.is_active !== false).map(c => /*#__PURE__*/React.createElement("option", {
+    key: c.id,
+    value: c.id
+  }, c.name))))), /*#__PURE__*/React.createElement("label", null, /*#__PURE__*/React.createElement("div", {
+    className: "field-label"
+  }, "Title ", /*#__PURE__*/React.createElement("span", {
+    className: "subtle"
+  }, "(shown on the card)")), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: f.title,
+    onChange: e => set({
+      title: e.target.value
+    }),
+    placeholder: "e.g. Squad A — Endurance set"
+  })), /*#__PURE__*/React.createElement("label", null, /*#__PURE__*/React.createElement("div", {
+    className: "field-label"
+  }, "Programme notes"), /*#__PURE__*/React.createElement("textarea", {
+    className: "textarea",
+    style: {
+      minHeight: 160
+    },
+    value: f.body,
+    onChange: e => set({
+      body: e.target.value
+    }),
+    placeholder: "Free text for coaches — workout, teaching focus, drills, activities…"
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '12px 18px',
+      borderTop: '1px solid var(--border)',
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("div", null, modal.mode === 'edit' ? /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    style: {
+      color: '#DC2626'
+    },
+    onClick: () => onDelete(modal.id)
+  }, "Delete") : null), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: () => setModal(null)
+  }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary",
+    onClick: onSave,
+    disabled: busy
+  }, busy ? 'Saving…' : 'Save session')))));
+}
+function ProgrammeCategoriesView({
+  categories,
+  addCategory,
+  updateCategory,
+  deleteCategory
+}) {
+  const [name, setName] = useState('');
+  const [color, setColor] = useState('#0EA5E9');
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({
+    name: '',
+    color: ''
+  });
+  function startEdit(c) {
+    setEditingId(c.id);
+    setEditForm({
+      name: c.name || '',
+      color: c.color || '#0EA5E9'
+    });
+  }
+  async function saveEdit() {
+    if (!editForm.name.trim()) return;
+    await updateCategory(editingId, {
+      name: editForm.name.trim(),
+      color: editForm.color || null
+    });
+    setEditingId(null);
+  }
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 18,
+      fontWeight: 800,
+      marginBottom: 4
+    }
+  }, "🏊 Swim Group Categories"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginBottom: 14
+    }
+  }, "Categories for the Programme planner. They appear as a dropdown when creating a programme session and tint the session cards. Shared across all branches."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      flexWrap: 'wrap',
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: {
+      flex: '1 1 220px',
+      maxWidth: 280
+    },
+    placeholder: "Category name (e.g. Squad, Learn-to-Swim)",
+    value: name,
+    onChange: e => setName(e.target.value)
+  }), /*#__PURE__*/React.createElement("input", {
+    type: "color",
+    className: "input",
+    style: {
+      width: 64,
+      padding: 2
+    },
+    value: color,
+    onChange: e => setColor(e.target.value),
+    title: "Category tint"
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary small",
+    disabled: !name.trim(),
+    onClick: async () => {
+      if (!name.trim()) return;
+      await addCategory({
+        name: name.trim(),
+        color
+      });
+      setName('');
+      setColor('#0EA5E9');
+    }
+  }, "+ Add Category"))), /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      padding: 0,
+      overflow: 'hidden'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "table-wrap",
+    style: {
+      border: 'none',
+      borderRadius: 0
+    }
+  }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: '55%'
+    }
+  }, "Name"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 90
+    }
+  }, "Color"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 200,
+      textAlign: 'right'
+    }
+  }, "Actions"))), /*#__PURE__*/React.createElement("tbody", null, (categories || []).length === 0 && /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
+    colSpan: 3,
+    className: "empty"
+  }, "No categories yet. Add one above to get started.")), (categories || []).map(c => editingId === c.id ? /*#__PURE__*/React.createElement("tr", {
+    key: c.id
+  }, /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: editForm.name,
+    onChange: e => setEditForm({
+      ...editForm,
+      name: e.target.value
+    })
+  })), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("input", {
+    type: "color",
+    className: "input",
+    style: {
+      width: 50,
+      padding: 2
+    },
+    value: editForm.color,
+    onChange: e => setEditForm({
+      ...editForm,
+      color: e.target.value
+    })
+  })), /*#__PURE__*/React.createElement("td", {
+    style: {
+      textAlign: 'right'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary small",
+    onClick: saveEdit,
+    style: {
+      marginRight: 6
+    }
+  }, "Save"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => setEditingId(null)
+  }, "Cancel"))) : /*#__PURE__*/React.createElement("tr", {
+    key: c.id
+  }, /*#__PURE__*/React.createElement("td", {
+    style: {
+      fontWeight: 600
+    }
+  }, c.name), /*#__PURE__*/React.createElement("td", null, c.color ? /*#__PURE__*/React.createElement("span", {
+    style: {
+      display: 'inline-block',
+      width: 24,
+      height: 24,
+      borderRadius: 6,
+      background: c.color,
+      border: '1px solid var(--border)'
+    }
+  }) : /*#__PURE__*/React.createElement("span", {
+    className: "subtle"
+  }, "—")), /*#__PURE__*/React.createElement("td", {
+    style: {
+      textAlign: 'right'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => startEdit(c),
+    style: {
+      marginRight: 6
+    }
+  }, "✎ Edit"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    style: {
+      color: '#DC2626'
+    },
+    onClick: () => deleteCategory(c.id)
+  }, "Delete")))))))));
 }
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────
