@@ -129,6 +129,12 @@ const TC_CONTENT = [{
   h: '10. Acceptance & Governing Law',
   body: `This Agreement is governed by the laws of Malaysia. By electronically accepting, you confirm you have read and agree to all clauses above on behalf of yourself and/or the enrolled swimmer.`
 }];
+
+// Flatten the default T&C into one text blob — fallback when a branch has no
+// custom terms_content set.
+function defaultTermsText() {
+  return TC_CONTENT.map(s => `${s.h}\n${s.body}`).join('\n\n').replace(/\\n/g, '\n');
+}
 function IntakeForm() {
   // Parent / guardian (shared across all children registered in this submission)
   const [gName, setGName] = useState('');
@@ -335,7 +341,7 @@ function IntakeForm() {
       className: "success-card"
     }, /*#__PURE__*/React.createElement("div", {
       className: "success-icon"
-    }, "\u2705"), /*#__PURE__*/React.createElement("div", {
+    }, "✅"), /*#__PURE__*/React.createElement("div", {
       className: "success-title"
     }, "Thank you, ", done.guardianName, "!"), /*#__PURE__*/React.createElement("div", {
       className: "success-sub"
@@ -344,12 +350,12 @@ function IntakeForm() {
     }, done.children.map((c, i) => /*#__PURE__*/React.createElement("div", {
       key: i,
       className: "success-list-item"
-    }, "\u2022 ", c.name, " \u2014 ", ageDisplay(c.age), " \xB7 T&C signed (ID: ", c.acceptanceId, ")"))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
+    }, "• ", c.name, " — ", ageDisplay(c.age), " · T&C signed (ID: ", c.acceptanceId, ")"))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
       className: "success-reset",
       onClick: resetForm
     }, "Register Another Family"))), /*#__PURE__*/React.createElement("div", {
       className: "footer-note"
-    }, TC_COMPANY, " \xB7 Swimmer Registration"));
+    }, TC_COMPANY, " · Swimmer Registration"));
   }
   return /*#__PURE__*/React.createElement("div", {
     className: "page"
@@ -363,9 +369,9 @@ function IntakeForm() {
     className: "brand-title"
   }, "Swimmer Registration"), /*#__PURE__*/React.createElement("div", {
     className: "brand-sub"
-  }, TC_COMPANY, " \xB7 Welcome \u2014 please fill in your details below")), err ? /*#__PURE__*/React.createElement("div", {
+  }, TC_COMPANY, " · Welcome — please fill in your details below")), err ? /*#__PURE__*/React.createElement("div", {
     className: "err-banner"
-  }, "\u26A0 ", err) : null, /*#__PURE__*/React.createElement("div", {
+  }, "⚠ ", err) : null, /*#__PURE__*/React.createElement("div", {
     className: "card"
   }, /*#__PURE__*/React.createElement("div", {
     className: "section-title"
@@ -454,7 +460,7 @@ function IntakeForm() {
     className: "child-remove",
     onClick: () => removeChild(i),
     title: "Remove this swimmer"
-  }, "\xD7") : null), /*#__PURE__*/React.createElement("div", {
+  }, "×") : null), /*#__PURE__*/React.createElement("div", {
     className: "field"
   }, /*#__PURE__*/React.createElement("label", null, "Full Name", /*#__PURE__*/React.createElement("span", {
     className: "req"
@@ -498,11 +504,11 @@ function IntakeForm() {
     type: "button",
     className: `gender-opt ${c.gender === 'female' ? 'active' : ''}`,
     onClick: () => setChildAt(i, 'gender', c.gender === 'female' ? null : 'female')
-  }, "\u2640 F"), /*#__PURE__*/React.createElement("button", {
+  }, "♀ F"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: `gender-opt ${c.gender === 'male' ? 'active' : ''}`,
     onClick: () => setChildAt(i, 'gender', c.gender === 'male' ? null : 'male')
-  }, "\u2642 M")))))), /*#__PURE__*/React.createElement("button", {
+  }, "♂ M")))))), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "add-child-btn",
     onClick: addChild
@@ -518,7 +524,7 @@ function IntakeForm() {
     onChange: e => setSameAsGuardian(e.target.checked)
   }), /*#__PURE__*/React.createElement("span", {
     className: "check-row-text"
-  }, /*#__PURE__*/React.createElement("strong", null, "Same as Parent / Guardian"), " \u2014 use the contact details above (you won't need to re-enter them)")), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("strong", null, "Same as Parent / Guardian"), " — use the contact details above (you won't need to re-enter them)")), /*#__PURE__*/React.createElement("div", {
     className: "field"
   }, /*#__PURE__*/React.createElement("label", null, "Emergency Contact Name", sameAsGuardian ? '' : /*#__PURE__*/React.createElement("span", {
     className: "req"
@@ -560,7 +566,7 @@ function IntakeForm() {
     className: "referral-text"
   }, /*#__PURE__*/React.createElement("div", {
     className: "referral-title"
-  }, "\uD83C\uDF9F Referral / Discount Code ", /*#__PURE__*/React.createElement("span", {
+  }, "🎟 Referral / Discount Code ", /*#__PURE__*/React.createElement("span", {
     className: "optional-tag"
   }, "optional")), /*#__PURE__*/React.createElement("div", {
     className: "referral-hint"
@@ -584,14 +590,17 @@ function IntakeForm() {
   }, tcOpen ? '▴' : '▾')), tcOpen && /*#__PURE__*/React.createElement("div", {
     className: "tc-doc",
     tabIndex: 0
-  }, /*#__PURE__*/React.createElement("h1", null, TC_COMPANY), /*#__PURE__*/React.createElement("h2", null, "Swimming Lesson Enrolment \u2014 Terms & Conditions"), TC_CONTENT.map((sec, si) => /*#__PURE__*/React.createElement("div", {
-    key: si,
-    style: {
-      marginBottom: 14
-    }
-  }, /*#__PURE__*/React.createElement("h3", null, sec.h), sec.body.split('\n\n').map((p, pi) => /*#__PURE__*/React.createElement("p", {
-    key: pi
-  }, p))))), /*#__PURE__*/React.createElement("label", {
+  }, /*#__PURE__*/React.createElement("h1", null, TC_COMPANY), /*#__PURE__*/React.createElement("h2", null, "Swimming Lesson Enrolment — Terms & Conditions"), (() => {
+    const b = branches.find(x => x.id === branchId);
+    const raw = b && b.terms_content && b.terms_content.trim() ? b.terms_content : defaultTermsText();
+    const txt = raw.replace(/\\n/g, '\n');
+    return txt.split('\n\n').map((para, pi) => /*#__PURE__*/React.createElement("p", {
+      key: pi,
+      style: {
+        whiteSpace: 'pre-wrap'
+      }
+    }, para));
+  })()), /*#__PURE__*/React.createElement("label", {
     className: `check-row ${tcAccepted ? 'is-on' : ''}`
   }, /*#__PURE__*/React.createElement("input", {
     type: "checkbox",
@@ -606,7 +615,7 @@ function IntakeForm() {
     disabled: submitting
   }, submitting ? 'Submitting…' : 'Submit Registration'), /*#__PURE__*/React.createElement("div", {
     className: "footer-note"
-  }, TC_COMPANY, " \xB7 Information you provide is used solely for class administration and emergency purposes."), /*#__PURE__*/React.createElement("div", {
+  }, TC_COMPANY, " · Information you provide is used solely for class administration and emergency purposes."), /*#__PURE__*/React.createElement("div", {
     className: "print-pdf-row"
   }, /*#__PURE__*/React.createElement("button", {
     type: "button",
@@ -616,9 +625,9 @@ function IntakeForm() {
       // form.html auto-triggers window.print() on load — the user sees
       // the print dialog immediately without needing to click again.
     }
-  }, "\uD83D\uDDA8 Print PDF version of this form"), /*#__PURE__*/React.createElement("span", {
+  }, "🖨 Print PDF version of this form"), /*#__PURE__*/React.createElement("span", {
     className: "print-pdf-hint"
-  }, "Hard-copy registration \xB7 opens print dialog automatically")));
+  }, "Hard-copy registration · opens print dialog automatically")));
 }
 window.addEventListener('error', ev => {
   const root = document.getElementById('root');

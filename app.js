@@ -1501,7 +1501,11 @@ function App(){
 
   function activeInstructors(){ return options.instructors.filter(x => x.is_active !== false); }
   function activeDurations(){ return options.durations.filter(x => x.is_active !== false); }
-  function activeLessonTypes(){ return options.lessonTypes.filter(x => x.is_active !== false); }
+  function activeLessonTypes(){
+    const list = options.lessonTypes.filter(x => x.is_active !== false);
+    if(currentBranchId && currentBranchId !== 'all') return list.filter(t => !t.branch_id || t.branch_id === currentBranchId);
+    return list;
+  }
   function activePools(){
     let pools = options.pools.filter(x => x.is_active !== false);
     // Branch filter: when a branch is selected, only that branch's pools.
@@ -1514,7 +1518,11 @@ function App(){
   function allActivePools(){ return options.pools.filter(x => x.is_active !== false); }
   function activeBranches(){ return (options.branches||[]).filter(x => x.is_active !== false); }
   function branchById(id){ return (options.branches||[]).find(b => b.id === id) || null; }
-  function activePackages(){ return options.packages.filter(x => x.is_active !== false); }
+  function activePackages(){
+    const list = options.packages.filter(x => x.is_active !== false);
+    if(currentBranchId && currentBranchId !== 'all') return list.filter(p => !p.branch_id || p.branch_id === currentBranchId);
+    return list;
+  }
   function packageById(id){ return options.packages.find(p => p.id === id) || null; }
 
   function lessonTypeByName(name){ return options.lessonTypes.find(t => t.name === name) || null; }
@@ -1622,7 +1630,7 @@ function App(){
     if(enabledTypes === null) return true;
     const names = activeLessonTypes().map(t => t.name);
     return names.length > 0 && names.every(n => enabledTypes.has(n));
-  }, [enabledTypes, options.lessonTypes]);
+  }, [enabledTypes, options.lessonTypes, currentBranchId]);
   function isTypeEnabled(name){ return enabledTypes === null ? true : enabledTypes.has(name); }
   function toggleType(name){
     setEnabledTypes(prev => {
@@ -2058,15 +2066,16 @@ function App(){
       if(kind === 'instructor') await insertRows('scheduler_instructors', { name: extra.name, gender: extra.gender || null, sort_order: options.instructors.length + 1, is_active:true });
       if(kind === 'duration') await insertRows('scheduler_durations', { label: extra.label, slots: Number(extra.slots), sort_order: options.durations.length + 1, is_active:true });
       if(kind === 'lessonType'){
-        const inserted = await insertRows('scheduler_lesson_types', { name: extra.name, bg_color: extra.bg, border_color: extra.bd, text_color: extra.tx, sort_order: options.lessonTypes.length + 1, is_active:true });
+        const ltBranch = extra.branchId || (currentBranchId && currentBranchId !== 'all' ? currentBranchId : null);
+        const inserted = await insertRows('scheduler_lesson_types', { name: extra.name, bg_color: extra.bg, border_color: extra.bd, text_color: extra.tx, branch_id: ltBranch, sort_order: options.lessonTypes.length + 1, is_active:true });
         const newId = inserted?.[0]?.id;
         if(newId){
           // Auto-relink: any decoupled sessions that still carry this exact name (and no link) reattach to the new type.
           await rest(`weekly_sessions?lesson_type=eq.${encodeURIComponent(extra.name)}&lesson_type_id=is.null`, { method:'PATCH', headers:{ Prefer:'return=minimal' }, body: JSON.stringify({ lesson_type_id: newId }) });
-          // Seed the two default packages every lesson type ships with.
+          // Seed the two default packages every lesson type ships with — inherit the type's branch.
           await insertRows('packages', [
-            { lesson_type_id: newId, name: 'Normal', sort_order: 1, is_active: true, billing_mode: 'monthly' },
-            { lesson_type_id: newId, name: 'Trial',  sort_order: 2, is_active: true, billing_mode: 'monthly' }
+            { lesson_type_id: newId, name: 'Normal', branch_id: ltBranch, sort_order: 1, is_active: true, billing_mode: 'monthly' },
+            { lesson_type_id: newId, name: 'Trial',  branch_id: ltBranch, sort_order: 2, is_active: true, billing_mode: 'monthly' }
           ]);
         }
         await loadSessions();
@@ -2074,8 +2083,10 @@ function App(){
       if(kind === 'pool') await insertRows('pools', { name: extra.name, capacity_total: Number(extra.capacity), sort_order: options.pools.length + 1, is_active:true });
       if(kind === 'package'){
         const ltId = extra.lessonTypeId || null;
+        const parentLt = ltId ? options.lessonTypes.find(t => t.id === ltId) : null;
+        const pkgBranch = (parentLt && parentLt.branch_id) || (currentBranchId && currentBranchId !== 'all' ? currentBranchId : null);
         const siblings = ltId ? options.packages.filter(p => p.lesson_type_id === ltId) : options.packages.filter(p => !p.lesson_type_id);
-        await insertRows('packages', { lesson_type_id: ltId, name: extra.name, pax: (extra.pax === '' || extra.pax == null) ? null : Number(extra.pax), amount: (extra.amount === '' || extra.amount == null) ? null : Number(extra.amount), billing_mode: extra.billingMode || 'monthly', billing_count: (extra.billingCount === '' || extra.billingCount == null) ? null : Number(extra.billingCount), is_group: !!extra.isGroup, fallback_per_pax: (extra.fallbackPerPax === '' || extra.fallbackPerPax == null) ? null : Number(extra.fallbackPerPax), sort_order: siblings.length + 1, is_active:true });
+        await insertRows('packages', { lesson_type_id: ltId, branch_id: pkgBranch, name: extra.name, pax: (extra.pax === '' || extra.pax == null) ? null : Number(extra.pax), amount: (extra.amount === '' || extra.amount == null) ? null : Number(extra.amount), billing_mode: extra.billingMode || 'monthly', billing_count: (extra.billingCount === '' || extra.billingCount == null) ? null : Number(extra.billingCount), is_group: !!extra.isGroup, fallback_per_pax: (extra.fallbackPerPax === '' || extra.fallbackPerPax == null) ? null : Number(extra.fallbackPerPax), sort_order: siblings.length + 1, is_active:true });
       }
       await loadOptions();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to add option'); }
@@ -2090,9 +2101,23 @@ function App(){
       if(patch.name && patch.name !== row.name){
         await rest(`weekly_sessions?lesson_type_id=eq.${encodeURIComponent(row.id)}`, { method:'PATCH', headers:{ Prefer:'return=minimal' }, body: JSON.stringify({ lesson_type: patch.name }) });
       }
+      // Keep this type's packages aligned to the same branch if it was reassigned.
+      if('branch_id' in patch && patch.branch_id !== row.branch_id){
+        await patchRows('packages', { lesson_type_id: row.id }, { branch_id: patch.branch_id || null });
+      }
       await loadOptions();
       await loadSessions();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to update lesson type'); }
+  }
+
+  // Save a branch's custom Terms & Conditions. Empty/blank → NULL, which makes
+  // the branch fall back to the default T&C on the intake page.
+  async function saveBranchTerms(branchId, content){
+    try{
+      const val = (content && content.trim()) ? content : null;
+      await patchRows('branches', { id: branchId }, { terms_content: val });
+      await loadOptions();
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to save terms'); }
   }
 
   // Delete a lesson type but keep its classes. Sessions are decoupled
@@ -2983,6 +3008,7 @@ function App(){
       <button className={`sub-tab ${adminSection==='instructors'?'active':''}`} onClick={()=>setAdminSection('instructors')}>Instructors</button>
       <button className={`sub-tab ${adminSection==='lessonTypes'?'active':''}`} onClick={()=>setAdminSection('lessonTypes')}>Lesson Types</button>
       <button className={`sub-tab ${adminSection==='programme'?'active':''}`} onClick={()=>setAdminSection('programme')}>Programme</button>
+      <button className={`sub-tab ${adminSection==='terms'?'active':''}`} onClick={()=>setAdminSection('terms')}>Terms</button>
       <button className={`sub-tab ${adminSection==='invoiceSettings'?'active':''}`} onClick={()=>setAdminSection('invoiceSettings')}>Invoice Numbering</button>
     </div></div>}
 
@@ -3291,6 +3317,12 @@ function App(){
         updateCategory={updateProgrammeCategory}
         deleteCategory={deleteProgrammeCategory}
       />}
+      {!loading && view==='settings' && adminSection==='terms' && <TermsAdminView
+        branches={options.branches||[]}
+        currentBranchId={currentBranchId}
+        defaultTerms={defaultTermsText()}
+        onSave={saveBranchTerms}
+      />}
       {!loading && view==='settings' && adminSection==='invoiceSettings' && <div className="card">
         <div style={{fontWeight:800,fontSize:18,marginBottom:4}}>Invoice Numbering &amp; Permissions</div>
         <div className="small subtle" style={{marginBottom:16}}>These are sensitive settings. Invoice deletion is irreversible — enable the delete permission only for authorised users.</div>
@@ -3299,6 +3331,7 @@ function App(){
       {!loading && view==='settings' && (adminSection==='pools'||adminSection==='instructors'||adminSection==='lessonTypes') && <SettingsView
         section={adminSection}
         options={options}
+        currentBranchId={currentBranchId}
         addOption={addOption}
         toggleOption={toggleOption}
         deleteOption={deleteOption}
@@ -4078,7 +4111,7 @@ function PackageEditor({ row, onSave, onCancel }){
   </div>;
 }
 
-function SettingsView({ section, options, status, addOption, toggleOption, deleteOption, deleteInstructor, patchOption, reorderOption, moveOption, saveLessonType, deleteLessonType, lessonTypeCounts, codes, students, packages, addCode, updateCode, deleteCode }){
+function SettingsView({ section, options, currentBranchId, status, addOption, toggleOption, deleteOption, deleteInstructor, patchOption, reorderOption, moveOption, saveLessonType, deleteLessonType, lessonTypeCounts, codes, students, packages, addCode, updateCode, deleteCode }){
   const dragRef = React.useRef({ canDrag:false });
   const [drag, setDrag] = useState({ key:null, idx:null });
   const [over, setOver] = useState(null);
@@ -4106,6 +4139,12 @@ function SettingsView({ section, options, status, addOption, toggleOption, delet
   const [newInstructorGender, setNewInstructorGender] = useState(null);
   const [editingInstructorId, setEditingInstructorId] = useState(null);
   const [newTypeName, setNewTypeName] = useState('');
+  const [newTypeBranchId, setNewTypeBranchId] = useState(() => {
+    if(currentBranchId && currentBranchId !== 'all') return currentBranchId;
+    const first = (options.branches||[]).find(b => b.is_active !== false);
+    return first ? first.id : '';
+  });
+  React.useEffect(() => { if(currentBranchId && currentBranchId !== 'all') setNewTypeBranchId(currentBranchId); }, [currentBranchId]);
   const [bg, setBg] = useState('#DBEAFE');
   const [bd, setBd] = useState('#3B82F6');
   const [tx, setTx] = useState('#1E40AF');
@@ -4238,27 +4277,35 @@ function SettingsView({ section, options, status, addOption, toggleOption, delet
     </div>}
 
     {/* ── Lesson Types ─────────────────────────────────────────────── */}
-    {section === 'lessonTypes' && <><div className="card">
+    {section === 'lessonTypes' && (() => {
+      const branchTypes = (currentBranchId && currentBranchId !== 'all')
+        ? options.lessonTypes.filter(t => !t.branch_id || t.branch_id === currentBranchId)
+        : options.lessonTypes;
+      const branchById = id => (options.branches||[]).find(b => b.id === id) || null;
+      const activeBranches = (options.branches||[]).filter(b => b.is_active !== false);
+      const showBranchTag = !currentBranchId || currentBranchId === 'all';
+      return <><div className="card">
       <div style={{fontSize:18,fontWeight:800}}>Lesson Types</div>
-      <div className="small subtle" style={{marginTop:4}}>Create a type and pick its colors. Click Edit on a row to rename it, set age range, ratio, billing, and default pool. Renaming or recoloring updates every class on the schedule.</div>
+      <div className="small subtle" style={{marginTop:4}}>Create a type for a branch and pick its colors. Lesson types and their packages are branch-specific — the list below shows the active branch's types. Click Edit on a row to rename it, set age range, ratio, billing, and default pool.</div>
 
-      <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) 78px 78px 78px 132px auto',gap:10,alignItems:'end',marginTop:14}}>
+      <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) 150px 78px 78px 78px auto',gap:10,alignItems:'end',marginTop:14}}>
         <div className="field" style={{margin:0}}><label>Name</label><input className="input" placeholder="e.g. LTS Group" value={newTypeName} onChange={(e)=>setNewTypeName(e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Branch</label><select className="select" value={newTypeBranchId} onChange={(e)=>setNewTypeBranchId(e.target.value)}>{activeBranches.map(b => <option key={b.id} value={b.id}>{b.name}{b.code?` (${b.code})`:''}</option>)}</select></div>
         <div className="field" style={{margin:0}}><label>Background</label><input className="swatch" type="color" value={bg} onChange={(e)=>setBg(e.target.value)} /></div>
         <div className="field" style={{margin:0}}><label>Border</label><input className="swatch" type="color" value={bd} onChange={(e)=>setBd(e.target.value)} /></div>
         <div className="field" style={{margin:0}}><label>Text</label><input className="swatch" type="color" value={tx} onChange={(e)=>setTx(e.target.value)} /></div>
-        <div className="field" style={{margin:0}}><label>Preview</label><span className="chip" style={{display:'inline-flex',alignItems:'center',justifyContent:'center',height:38,background:bg,borderColor:bd,color:tx,fontWeight:800}}>{newTypeName.trim() || 'Sample'}</span></div>
-        <button className="btn btn-primary" style={{height:38}} onClick={()=>{ const v = newTypeName.trim(); if(!v) return; addOption('lessonType', { name:v, bg, bd, tx }); setNewTypeName(''); }}>Add</button>
+        <button className="btn btn-primary" style={{height:38}} disabled={!newTypeBranchId} onClick={()=>{ const v = newTypeName.trim(); if(!v || !newTypeBranchId) return; addOption('lessonType', { name:v, bg, bd, tx, branchId:newTypeBranchId }); setNewTypeName(''); }}>Add</button>
       </div>
 
       <div className="settings-list">
-        {options.lessonTypes.length ? options.lessonTypes.map((r, idx) => { const n = counts[r.id] || 0; const pkgCount = (options.packages||[]).filter(p=>p.lesson_type_id===r.id).length; const poolName = (options.pools.find(p=>p.id===r.default_pool_id)?.name); const editingThis = editingLessonId===r.id; const pkgPanelOpen = pkgPanelLtId===r.id; return <div key={r.id}
-          className={`lesson-row ${dragClass('lt', idx)}`} {...dragProps('lt', 'scheduler_lesson_types', options.lessonTypes, idx)}>
+        {branchTypes.length ? branchTypes.map((r, idx) => { const n = counts[r.id] || 0; const pkgCount = (options.packages||[]).filter(p=>p.lesson_type_id===r.id).length; const poolName = (options.pools.find(p=>p.id===r.default_pool_id)?.name); const editingThis = editingLessonId===r.id; const pkgPanelOpen = pkgPanelLtId===r.id; const rBranch = showBranchTag ? branchById(r.branch_id) : null; return <div key={r.id}
+          className={`lesson-row ${dragClass('lt', idx)}`} {...dragProps('lt', 'scheduler_lesson_types', branchTypes, idx)}>
           <div className={`lt-row-card ${!r.is_active ? 'lt-row-hidden' : ''}`}>
             <div className="lt-row-top">
               <div className="lt-row-lead">
-                {reorderCluster('lt', 'scheduler_lesson_types', options.lessonTypes, idx)}
+                {reorderCluster('lt', 'scheduler_lesson_types', branchTypes, idx)}
                 <span className="lt-name-chip" style={{background:r.bg_color,borderColor:r.border_color,color:r.text_color}}>{r.name}</span>
+                {rBranch ? <span className="lt-branch-tag" style={rBranch.color?{background:rBranch.color+'1A',borderColor:rBranch.color,color:rBranch.color}:{}}>{rBranch.code || rBranch.name}</span> : null}
                 <span className={`lt-type-badge lt-type-${r.class_type||'group'}`}>{r.class_type==='personal'?'🧑 Personal':'👥 Group'}</span>
                 <span className="lt-classes-pill" title="Classes on the schedule using this type">{n} {n===1?'class':'classes'}</span>
               </div>
@@ -4331,7 +4378,7 @@ function SettingsView({ section, options, status, addOption, toggleOption, delet
         </div>)}</div>
       </div>;
     })()}
-    </>}
+    </>; })()}
 
     {/* ── Referral & Discount Codes ─────────────────────────────────── */}
     {section === 'codes' && addCode && <CodesPanel codes={codes||[]} students={students||[]} packages={packages||[]} addCode={addCode} updateCode={updateCode} deleteCode={deleteCode} />}
@@ -7699,6 +7746,76 @@ const TC_CONTENT = [
 10.3 This School-led photography consent is distinct from the third-party photography restrictions described in clause 2.4. Visitors and other guardians remain prohibited from photographing or recording any swimmer (including their own child within shared pool areas) without prior written consent from ${TC_COMPANY} and the relevant guardians of every swimmer present.` },
   { h: '11. Acceptance & Governing Law', body: `This Agreement is governed by the laws of Malaysia. Any dispute shall be subject to the jurisdiction of the courts of Malaysia. By electronically accepting, you confirm you have read and agree to all clauses above on behalf of yourself and/or the enrolled swimmer.` }
 ];
+
+// Flatten the structured default T&C into one editable text blob. Used to seed
+// the per-branch editor and as the fallback when a branch has no custom terms.
+function defaultTermsText(){ return TC_CONTENT.map(s => `${s.h}\n${s.body}`).join('\n\n').replace(/\\n/g, '\n'); }
+
+// Settings › Terms — edit each branch's Terms & Conditions (one free-text blob).
+// Empty/blank stores NULL and the branch falls back to the default wording.
+function TermsAdminView({ branches, currentBranchId, defaultTerms, onSave }){
+  const active = (branches||[]).filter(b => b.is_active !== false);
+  const initialBranch = (currentBranchId && currentBranchId !== 'all') ? currentBranchId : (active[0]?.id || '');
+  const [branchId, setBranchId] = useState(initialBranch);
+  const [text, setText] = useState('');
+  const [usingDefault, setUsingDefault] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const branch = (branches||[]).find(b => b.id === branchId) || null;
+
+  React.useEffect(() => {
+    const b = (branches||[]).find(x => x.id === branchId);
+    const hasCustom = !!(b && b.terms_content && b.terms_content.trim());
+    setText(hasCustom ? b.terms_content : defaultTerms);
+    setUsingDefault(!hasCustom);
+  }, [branchId, branches]); // eslint-disable-line
+
+  const dirty = (() => {
+    const b = (branches||[]).find(x => x.id === branchId);
+    const stored = (b && b.terms_content && b.terms_content.trim()) ? b.terms_content : defaultTerms;
+    return text !== stored;
+  })();
+
+  async function save(){ setBusy(true); try{ await onSave(branchId, text); } finally { setBusy(false); } }
+  async function reset(){ if(!confirm('Reset this branch to the default Terms & Conditions?')) return; setBusy(true); try{ await onSave(branchId, ''); } finally { setBusy(false); } }
+
+  return <>
+    <div className="card" style={{marginBottom:12}}>
+      <div style={{fontSize:18,fontWeight:800,marginBottom:4}}>📄 Terms &amp; Conditions</div>
+      <div className="small subtle" style={{marginBottom:14}}>Each branch has its own Terms &amp; Conditions, shown to parents on that branch's intake form. Leave it on the default wording, or customise the full text for this branch. Blank resets it to the shared default.</div>
+      <div style={{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
+        <div className="field" style={{margin:0,minWidth:220}}><label>Branch</label>
+          <select className="select" value={branchId} onChange={e=>setBranchId(e.target.value)}>{active.map(b => <option key={b.id} value={b.id}>{b.name}{b.code?` (${b.code})`:''}</option>)}</select>
+        </div>
+        <span className="pill" style={usingDefault?{background:'#FEF3C7',color:'#92400E'}:{background:'#D1FAE5',color:'#065F46'}}>{usingDefault ? 'Using default wording' : 'Custom terms set'}</span>
+      </div>
+    </div>
+
+    <div className="settings-cols" style={{gridTemplateColumns:'1fr 1fr',gap:16}}>
+      <div className="card">
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+          <div style={{fontWeight:800}}>Editor</div>
+          <div className="small subtle">{(text||'').length} chars</div>
+        </div>
+        <textarea className="textarea" style={{minHeight:460,fontFamily:'inherit',lineHeight:1.5}} value={text} onChange={e=>setText(e.target.value)} placeholder="Enter this branch's full Terms & Conditions…" />
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:10,gap:8}}>
+          <button className="btn btn-ghost small" onClick={reset} disabled={busy || usingDefault}>Reset to default</button>
+          <div style={{display:'flex',gap:8}}>
+            <button className="btn btn-ghost small" onClick={()=>setText(defaultTerms)} disabled={busy}>Load default text</button>
+            <button className="btn btn-primary" onClick={save} disabled={busy || !dirty}>{busy ? 'Saving…' : 'Save terms'}</button>
+          </div>
+        </div>
+      </div>
+      <div className="card">
+        <div style={{fontWeight:800,marginBottom:8}}>Preview <span className="small subtle" style={{fontWeight:400}}>· how parents will see it{branch?` · ${branch.name}`:''}</span></div>
+        <div className="tc-doc-scroll" style={{maxHeight:480}}>
+          <h1 className="tc-h1">{TC_COMPANY}</h1>
+          <h2 className="tc-h2">Swimming Lesson Enrolment — Terms &amp; Conditions</h2>
+          {(text||'').split('\n\n').map((para, i) => <p key={i} className="tc-para" style={{whiteSpace:'pre-wrap'}}>{para}</p>)}
+        </div>
+      </div>
+    </div>
+  </>;
+}
 
 function TCView({ students, lessonTypes, lessonTypeById, onSaveAcceptance }){
   const [studentId, setStudentId] = useState('');

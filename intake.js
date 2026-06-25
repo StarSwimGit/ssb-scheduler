@@ -83,6 +83,10 @@ const TC_CONTENT = [
   { h: '10. Acceptance & Governing Law', body: `This Agreement is governed by the laws of Malaysia. By electronically accepting, you confirm you have read and agree to all clauses above on behalf of yourself and/or the enrolled swimmer.` }
 ];
 
+// Flatten the default T&C into one text blob — fallback when a branch has no
+// custom terms_content set.
+function defaultTermsText(){ return TC_CONTENT.map(s => `${s.h}\n${s.body}`).join('\n\n').replace(/\\n/g, '\n'); }
+
 function IntakeForm(){
   // Parent / guardian (shared across all children registered in this submission)
   const [gName, setGName] = useState('');
@@ -326,10 +330,12 @@ function IntakeForm(){
       {tcOpen && <div className="tc-doc" tabIndex={0}>
         <h1>{TC_COMPANY}</h1>
         <h2>Swimming Lesson Enrolment — Terms &amp; Conditions</h2>
-        {TC_CONTENT.map((sec, si) => <div key={si} style={{marginBottom:14}}>
-          <h3>{sec.h}</h3>
-          {sec.body.split('\n\n').map((p, pi) => <p key={pi}>{p}</p>)}
-        </div>)}
+        {(() => {
+          const b = branches.find(x => x.id === branchId);
+          const raw = (b && b.terms_content && b.terms_content.trim()) ? b.terms_content : defaultTermsText();
+          const txt = raw.replace(/\\n/g, '\n');
+          return txt.split('\n\n').map((para, pi) => <p key={pi} style={{whiteSpace:'pre-wrap'}}>{para}</p>);
+        })()}
       </div>}
       <label className={`check-row ${tcAccepted?'is-on':''}`}>
         <input type="checkbox" checked={tcAccepted} onChange={e=>setTcAccepted(e.target.checked)} />

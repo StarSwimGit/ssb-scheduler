@@ -2179,7 +2179,9 @@ function App() {
     return options.durations.filter(x => x.is_active !== false);
   }
   function activeLessonTypes() {
-    return options.lessonTypes.filter(x => x.is_active !== false);
+    const list = options.lessonTypes.filter(x => x.is_active !== false);
+    if (currentBranchId && currentBranchId !== 'all') return list.filter(t => !t.branch_id || t.branch_id === currentBranchId);
+    return list;
   }
   function activePools() {
     let pools = options.pools.filter(x => x.is_active !== false);
@@ -2200,7 +2202,9 @@ function App() {
     return (options.branches || []).find(b => b.id === id) || null;
   }
   function activePackages() {
-    return options.packages.filter(x => x.is_active !== false);
+    const list = options.packages.filter(x => x.is_active !== false);
+    if (currentBranchId && currentBranchId !== 'all') return list.filter(p => !p.branch_id || p.branch_id === currentBranchId);
+    return list;
   }
   function packageById(id) {
     return options.packages.find(p => p.id === id) || null;
@@ -2332,7 +2336,7 @@ function App() {
     if (enabledTypes === null) return true;
     const names = activeLessonTypes().map(t => t.name);
     return names.length > 0 && names.every(n => enabledTypes.has(n));
-  }, [enabledTypes, options.lessonTypes]);
+  }, [enabledTypes, options.lessonTypes, currentBranchId]);
   function isTypeEnabled(name) {
     return enabledTypes === null ? true : enabledTypes.has(name);
   }
@@ -2923,11 +2927,13 @@ function App() {
         is_active: true
       });
       if (kind === 'lessonType') {
+        const ltBranch = extra.branchId || (currentBranchId && currentBranchId !== 'all' ? currentBranchId : null);
         const inserted = await insertRows('scheduler_lesson_types', {
           name: extra.name,
           bg_color: extra.bg,
           border_color: extra.bd,
           text_color: extra.tx,
+          branch_id: ltBranch,
           sort_order: options.lessonTypes.length + 1,
           is_active: true
         });
@@ -2943,16 +2949,18 @@ function App() {
               lesson_type_id: newId
             })
           });
-          // Seed the two default packages every lesson type ships with.
+          // Seed the two default packages every lesson type ships with — inherit the type's branch.
           await insertRows('packages', [{
             lesson_type_id: newId,
             name: 'Normal',
+            branch_id: ltBranch,
             sort_order: 1,
             is_active: true,
             billing_mode: 'monthly'
           }, {
             lesson_type_id: newId,
             name: 'Trial',
+            branch_id: ltBranch,
             sort_order: 2,
             is_active: true,
             billing_mode: 'monthly'
@@ -2968,9 +2976,12 @@ function App() {
       });
       if (kind === 'package') {
         const ltId = extra.lessonTypeId || null;
+        const parentLt = ltId ? options.lessonTypes.find(t => t.id === ltId) : null;
+        const pkgBranch = parentLt && parentLt.branch_id || (currentBranchId && currentBranchId !== 'all' ? currentBranchId : null);
         const siblings = ltId ? options.packages.filter(p => p.lesson_type_id === ltId) : options.packages.filter(p => !p.lesson_type_id);
         await insertRows('packages', {
           lesson_type_id: ltId,
+          branch_id: pkgBranch,
           name: extra.name,
           pax: extra.pax === '' || extra.pax == null ? null : Number(extra.pax),
           amount: extra.amount === '' || extra.amount == null ? null : Number(extra.amount),
@@ -3008,11 +3019,36 @@ function App() {
           })
         });
       }
+      // Keep this type's packages aligned to the same branch if it was reassigned.
+      if ('branch_id' in patch && patch.branch_id !== row.branch_id) {
+        await patchRows('packages', {
+          lesson_type_id: row.id
+        }, {
+          branch_id: patch.branch_id || null
+        });
+      }
       await loadOptions();
       await loadSessions();
     } catch (err) {
       handleErr(err);
       alert(err.message || 'Failed to update lesson type');
+    }
+  }
+
+  // Save a branch's custom Terms & Conditions. Empty/blank → NULL, which makes
+  // the branch fall back to the default T&C on the intake page.
+  async function saveBranchTerms(branchId, content) {
+    try {
+      const val = content && content.trim() ? content : null;
+      await patchRows('branches', {
+        id: branchId
+      }, {
+        terms_content: val
+      });
+      await loadOptions();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to save terms');
     }
   }
 
@@ -4433,6 +4469,9 @@ function App() {
     className: `sub-tab ${adminSection === 'programme' ? 'active' : ''}`,
     onClick: () => setAdminSection('programme')
   }, "Programme"), /*#__PURE__*/React.createElement("button", {
+    className: `sub-tab ${adminSection === 'terms' ? 'active' : ''}`,
+    onClick: () => setAdminSection('terms')
+  }, "Terms"), /*#__PURE__*/React.createElement("button", {
     className: `sub-tab ${adminSection === 'invoiceSettings' ? 'active' : ''}`,
     onClick: () => setAdminSection('invoiceSettings')
   }, "Invoice Numbering"))), /*#__PURE__*/React.createElement("div", {
@@ -4826,6 +4865,11 @@ function App() {
     addCategory: addProgrammeCategory,
     updateCategory: updateProgrammeCategory,
     deleteCategory: deleteProgrammeCategory
+  }), !loading && view === 'settings' && adminSection === 'terms' && /*#__PURE__*/React.createElement(TermsAdminView, {
+    branches: options.branches || [],
+    currentBranchId: currentBranchId,
+    defaultTerms: defaultTermsText(),
+    onSave: saveBranchTerms
   }), !loading && view === 'settings' && adminSection === 'invoiceSettings' && /*#__PURE__*/React.createElement("div", {
     className: "card"
   }, /*#__PURE__*/React.createElement("div", {
@@ -4847,6 +4891,7 @@ function App() {
   })), !loading && view === 'settings' && (adminSection === 'pools' || adminSection === 'instructors' || adminSection === 'lessonTypes') && /*#__PURE__*/React.createElement(SettingsView, {
     section: adminSection,
     options: options,
+    currentBranchId: currentBranchId,
     addOption: addOption,
     toggleOption: toggleOption,
     deleteOption: deleteOption,
@@ -6580,6 +6625,7 @@ function PackageEditor({
 function SettingsView({
   section,
   options,
+  currentBranchId,
   status,
   addOption,
   toggleOption,
@@ -6688,6 +6734,14 @@ function SettingsView({
   const [newInstructorGender, setNewInstructorGender] = useState(null);
   const [editingInstructorId, setEditingInstructorId] = useState(null);
   const [newTypeName, setNewTypeName] = useState('');
+  const [newTypeBranchId, setNewTypeBranchId] = useState(() => {
+    if (currentBranchId && currentBranchId !== 'all') return currentBranchId;
+    const first = (options.branches || []).find(b => b.is_active !== false);
+    return first ? first.id : '';
+  });
+  React.useEffect(() => {
+    if (currentBranchId && currentBranchId !== 'all') setNewTypeBranchId(currentBranchId);
+  }, [currentBranchId]);
   const [bg, setBg] = useState('#DBEAFE');
   const [bd, setBd] = useState('#3B82F6');
   const [tx, setTx] = useState('#1E40AF');
@@ -7131,268 +7185,279 @@ function SettingsView({
     }, "Delete")));
   }) : /*#__PURE__*/React.createElement("div", {
     className: "empty"
-  }, "No instructors"))), section === 'lessonTypes' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "card"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 18,
-      fontWeight: 800
-    }
-  }, "Lesson Types"), /*#__PURE__*/React.createElement("div", {
-    className: "small subtle",
-    style: {
-      marginTop: 4
-    }
-  }, "Create a type and pick its colors. Click Edit on a row to rename it, set age range, ratio, billing, and default pool. Renaming or recoloring updates every class on the schedule."), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'grid',
-      gridTemplateColumns: 'minmax(0,1fr) 78px 78px 78px 132px auto',
-      gap: 10,
-      alignItems: 'end',
-      marginTop: 14
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "field",
-    style: {
-      margin: 0
-    }
-  }, /*#__PURE__*/React.createElement("label", null, "Name"), /*#__PURE__*/React.createElement("input", {
-    className: "input",
-    placeholder: "e.g. LTS Group",
-    value: newTypeName,
-    onChange: e => setNewTypeName(e.target.value)
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "field",
-    style: {
-      margin: 0
-    }
-  }, /*#__PURE__*/React.createElement("label", null, "Background"), /*#__PURE__*/React.createElement("input", {
-    className: "swatch",
-    type: "color",
-    value: bg,
-    onChange: e => setBg(e.target.value)
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "field",
-    style: {
-      margin: 0
-    }
-  }, /*#__PURE__*/React.createElement("label", null, "Border"), /*#__PURE__*/React.createElement("input", {
-    className: "swatch",
-    type: "color",
-    value: bd,
-    onChange: e => setBd(e.target.value)
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "field",
-    style: {
-      margin: 0
-    }
-  }, /*#__PURE__*/React.createElement("label", null, "Text"), /*#__PURE__*/React.createElement("input", {
-    className: "swatch",
-    type: "color",
-    value: tx,
-    onChange: e => setTx(e.target.value)
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "field",
-    style: {
-      margin: 0
-    }
-  }, /*#__PURE__*/React.createElement("label", null, "Preview"), /*#__PURE__*/React.createElement("span", {
-    className: "chip",
-    style: {
-      display: 'inline-flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      height: 38,
-      background: bg,
-      borderColor: bd,
-      color: tx,
-      fontWeight: 800
-    }
-  }, newTypeName.trim() || 'Sample')), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-primary",
-    style: {
-      height: 38
-    },
-    onClick: () => {
-      const v = newTypeName.trim();
-      if (!v) return;
-      addOption('lessonType', {
-        name: v,
-        bg,
-        bd,
-        tx
-      });
-      setNewTypeName('');
-    }
-  }, "Add")), /*#__PURE__*/React.createElement("div", {
-    className: "settings-list"
-  }, options.lessonTypes.length ? options.lessonTypes.map((r, idx) => {
-    const n = counts[r.id] || 0;
-    const pkgCount = (options.packages || []).filter(p => p.lesson_type_id === r.id).length;
-    const poolName = options.pools.find(p => p.id === r.default_pool_id)?.name;
-    const editingThis = editingLessonId === r.id;
-    const pkgPanelOpen = pkgPanelLtId === r.id;
-    return /*#__PURE__*/React.createElement("div", {
-      key: r.id,
-      className: `lesson-row ${dragClass('lt', idx)}`,
-      ...dragProps('lt', 'scheduler_lesson_types', options.lessonTypes, idx)
-    }, /*#__PURE__*/React.createElement("div", {
-      className: `lt-row-card ${!r.is_active ? 'lt-row-hidden' : ''}`
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "lt-row-top"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "lt-row-lead"
-    }, reorderCluster('lt', 'scheduler_lesson_types', options.lessonTypes, idx), /*#__PURE__*/React.createElement("span", {
-      className: "lt-name-chip",
-      style: {
-        background: r.bg_color,
-        borderColor: r.border_color,
-        color: r.text_color
-      }
-    }, r.name), /*#__PURE__*/React.createElement("span", {
-      className: `lt-type-badge lt-type-${r.class_type || 'group'}`
-    }, r.class_type === 'personal' ? '🧑 Personal' : '👥 Group'), /*#__PURE__*/React.createElement("span", {
-      className: "lt-classes-pill",
-      title: "Classes on the schedule using this type"
-    }, n, " ", n === 1 ? 'class' : 'classes')), /*#__PURE__*/React.createElement("div", {
-      className: "lt-row-actions"
-    }, /*#__PURE__*/React.createElement("button", {
-      className: `btn-packages ${pkgPanelOpen ? 'active' : ''}`,
-      onClick: () => setPkgPanelLtId(pkgPanelOpen ? null : r.id),
-      title: "Manage packages nested under this lesson type"
-    }, "Packages ", /*#__PURE__*/React.createElement("span", {
-      className: "pkg-count-badge"
-    }, pkgCount)), /*#__PURE__*/React.createElement("button", {
-      className: `btn btn-ghost small ${editingThis ? 'btn-active' : ''}`,
-      onClick: () => setEditingLessonId(editingThis ? null : r.id)
-    }, editingThis ? 'Close' : 'Edit'), /*#__PURE__*/React.createElement("button", {
-      className: "btn btn-ghost small",
-      onClick: () => toggleOption('scheduler_lesson_types', r)
-    }, r.is_active ? 'Hide' : 'Show'), /*#__PURE__*/React.createElement("button", {
-      className: "btn btn-danger small",
-      onClick: () => deleteLessonType(r)
-    }, "Delete"))), /*#__PURE__*/React.createElement("div", {
-      className: "lt-row-meta"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "lt-meta-tile"
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "lt-meta-label"
-    }, "Ratio"), /*#__PURE__*/React.createElement("span", {
-      className: `lt-meta-value ${r.students_per_instructor ? '' : 'lt-meta-empty'}`
-    }, r.students_per_instructor ? `1:${r.students_per_instructor}` : '—')), /*#__PURE__*/React.createElement("div", {
-      className: "lt-meta-tile"
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "lt-meta-label"
-    }, "Duration"), /*#__PURE__*/React.createElement("span", {
-      className: `lt-meta-value ${r.default_duration_minutes ? '' : 'lt-meta-empty'}`
-    }, r.default_duration_minutes ? `${r.default_duration_minutes} min` : '—')), /*#__PURE__*/React.createElement("div", {
-      className: "lt-meta-tile"
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "lt-meta-label"
-    }, "Billing"), /*#__PURE__*/React.createElement("span", {
-      className: `lt-meta-value ${r.billing_model ? '' : 'lt-meta-empty'}`
-    }, r.billing_model || '—')), /*#__PURE__*/React.createElement("div", {
-      className: "lt-meta-tile"
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "lt-meta-label"
-    }, "Default Pool"), /*#__PURE__*/React.createElement("span", {
-      className: `lt-meta-value ${poolName ? '' : 'lt-meta-empty'}`
-    }, poolName || 'None set')), /*#__PURE__*/React.createElement("div", {
-      className: "lt-meta-tile"
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "lt-meta-label"
-    }, "Age"), /*#__PURE__*/React.createElement("span", {
-      className: `lt-meta-value ${r.age_min_months != null || r.age_max_months != null ? '' : 'lt-meta-empty'}`
-    }, r.age_min_months != null || r.age_max_months != null ? `${r.age_min_months != null ? Math.floor(r.age_min_months / 12) + 'y' : '·'}–${r.age_max_months != null ? Math.floor(r.age_max_months / 12) + 'y' : '·'}` : 'Any age')))), editingLessonId === r.id ? /*#__PURE__*/React.createElement(LessonTypeEditor, {
-      row: r,
-      pools: options.pools,
-      onSave: patch => {
-        saveLessonType(r, patch);
-        setEditingLessonId(null);
-      }
-    }) : null, pkgPanelLtId === r.id ? /*#__PURE__*/React.createElement(LessonTypePackages, {
-      lessonType: r,
-      packages: (options.packages || []).filter(p => p.lesson_type_id === r.id).slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)),
-      editPkgId: editPkgId,
-      setEditPkgId: setEditPkgId,
-      addOption: addOption,
-      toggleOption: toggleOption,
-      deleteOption: deleteOption,
-      patchOption: patchOption,
-      reorderOption: reorderOption
-    }) : null);
-  }) : /*#__PURE__*/React.createElement("div", {
-    className: "empty"
-  }, "No lesson types"))), (() => {
-    const orphans = (options.packages || []).filter(p => !p.lesson_type_id);
-    if (!orphans.length) return null;
-    return /*#__PURE__*/React.createElement("div", {
-      className: "card",
-      style: {
-        marginTop: 16
-      }
+  }, "No instructors"))), section === 'lessonTypes' && (() => {
+    const branchTypes = currentBranchId && currentBranchId !== 'all' ? options.lessonTypes.filter(t => !t.branch_id || t.branch_id === currentBranchId) : options.lessonTypes;
+    const branchById = id => (options.branches || []).find(b => b.id === id) || null;
+    const activeBranches = (options.branches || []).filter(b => b.is_active !== false);
+    const showBranchTag = !currentBranchId || currentBranchId === 'all';
+    return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      className: "card"
     }, /*#__PURE__*/React.createElement("div", {
       style: {
-        fontSize: 16,
+        fontSize: 18,
         fontWeight: 800
       }
-    }, "Legacy Packages"), /*#__PURE__*/React.createElement("div", {
+    }, "Lesson Types"), /*#__PURE__*/React.createElement("div", {
       className: "small subtle",
       style: {
         marginTop: 4
       }
-    }, "These packages exist from before packages were nested under lesson types. Assign each to a lesson type, or delete it. Swimmers and family groups on these still work until you reassign."), /*#__PURE__*/React.createElement("div", {
-      className: "settings-list",
+    }, "Create a type for a branch and pick its colors. Lesson types and their packages are branch-specific — the list below shows the active branch's types. Click Edit on a row to rename it, set age range, ratio, billing, and default pool."), /*#__PURE__*/React.createElement("div", {
       style: {
-        marginTop: 10
+        display: 'grid',
+        gridTemplateColumns: 'minmax(0,1fr) 150px 78px 78px 78px auto',
+        gap: 10,
+        alignItems: 'end',
+        marginTop: 14
       }
-    }, orphans.map(r => /*#__PURE__*/React.createElement("div", {
-      key: r.id,
-      className: "row-item"
     }, /*#__PURE__*/React.createElement("div", {
+      className: "field",
       style: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        flexWrap: 'wrap'
+        margin: 0
       }
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "pill",
+    }, /*#__PURE__*/React.createElement("label", null, "Name"), /*#__PURE__*/React.createElement("input", {
+      className: "input",
+      placeholder: "e.g. LTS Group",
+      value: newTypeName,
+      onChange: e => setNewTypeName(e.target.value)
+    })), /*#__PURE__*/React.createElement("div", {
+      className: "field",
       style: {
-        background: '#FEF3C7',
-        color: '#92400E',
-        borderColor: '#FCD34D'
+        margin: 0
       }
-    }, "Unassigned"), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontWeight: 700
-      }
-    }, r.name), /*#__PURE__*/React.createElement("span", {
-      className: "small subtle"
-    }, r.pax != null ? `${r.pax} pax` : '—', r.amount != null ? ` · RM${r.amount}` : '', billingText(r.billing_mode, r.billing_count) ? ` · ${billingText(r.billing_mode, r.billing_count)}` : '', r.is_group ? ' · 👪 family' : '')), /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        gap: 6,
-        alignItems: 'center'
-      }
-    }, /*#__PURE__*/React.createElement("select", {
+    }, /*#__PURE__*/React.createElement("label", null, "Branch"), /*#__PURE__*/React.createElement("select", {
       className: "select",
-      defaultValue: "",
-      onChange: e => {
-        if (e.target.value) patchOption('packages', r.id, {
-          lesson_type_id: e.target.value
-        });
+      value: newTypeBranchId,
+      onChange: e => setNewTypeBranchId(e.target.value)
+    }, activeBranches.map(b => /*#__PURE__*/React.createElement("option", {
+      key: b.id,
+      value: b.id
+    }, b.name, b.code ? ` (${b.code})` : '')))), /*#__PURE__*/React.createElement("div", {
+      className: "field",
+      style: {
+        margin: 0
       }
-    }, /*#__PURE__*/React.createElement("option", {
-      value: ""
-    }, "Move to…"), options.lessonTypes.map(lt => /*#__PURE__*/React.createElement("option", {
-      key: lt.id,
-      value: lt.id
-    }, lt.name))), /*#__PURE__*/React.createElement("button", {
-      className: "btn btn-danger small",
-      onClick: () => deleteOption('packages', r, r.name)
-    }, "Delete"))))));
-  })()), section === 'codes' && addCode && /*#__PURE__*/React.createElement(CodesPanel, {
+    }, /*#__PURE__*/React.createElement("label", null, "Background"), /*#__PURE__*/React.createElement("input", {
+      className: "swatch",
+      type: "color",
+      value: bg,
+      onChange: e => setBg(e.target.value)
+    })), /*#__PURE__*/React.createElement("div", {
+      className: "field",
+      style: {
+        margin: 0
+      }
+    }, /*#__PURE__*/React.createElement("label", null, "Border"), /*#__PURE__*/React.createElement("input", {
+      className: "swatch",
+      type: "color",
+      value: bd,
+      onChange: e => setBd(e.target.value)
+    })), /*#__PURE__*/React.createElement("div", {
+      className: "field",
+      style: {
+        margin: 0
+      }
+    }, /*#__PURE__*/React.createElement("label", null, "Text"), /*#__PURE__*/React.createElement("input", {
+      className: "swatch",
+      type: "color",
+      value: tx,
+      onChange: e => setTx(e.target.value)
+    })), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-primary",
+      style: {
+        height: 38
+      },
+      disabled: !newTypeBranchId,
+      onClick: () => {
+        const v = newTypeName.trim();
+        if (!v || !newTypeBranchId) return;
+        addOption('lessonType', {
+          name: v,
+          bg,
+          bd,
+          tx,
+          branchId: newTypeBranchId
+        });
+        setNewTypeName('');
+      }
+    }, "Add")), /*#__PURE__*/React.createElement("div", {
+      className: "settings-list"
+    }, branchTypes.length ? branchTypes.map((r, idx) => {
+      const n = counts[r.id] || 0;
+      const pkgCount = (options.packages || []).filter(p => p.lesson_type_id === r.id).length;
+      const poolName = options.pools.find(p => p.id === r.default_pool_id)?.name;
+      const editingThis = editingLessonId === r.id;
+      const pkgPanelOpen = pkgPanelLtId === r.id;
+      const rBranch = showBranchTag ? branchById(r.branch_id) : null;
+      return /*#__PURE__*/React.createElement("div", {
+        key: r.id,
+        className: `lesson-row ${dragClass('lt', idx)}`,
+        ...dragProps('lt', 'scheduler_lesson_types', branchTypes, idx)
+      }, /*#__PURE__*/React.createElement("div", {
+        className: `lt-row-card ${!r.is_active ? 'lt-row-hidden' : ''}`
+      }, /*#__PURE__*/React.createElement("div", {
+        className: "lt-row-top"
+      }, /*#__PURE__*/React.createElement("div", {
+        className: "lt-row-lead"
+      }, reorderCluster('lt', 'scheduler_lesson_types', branchTypes, idx), /*#__PURE__*/React.createElement("span", {
+        className: "lt-name-chip",
+        style: {
+          background: r.bg_color,
+          borderColor: r.border_color,
+          color: r.text_color
+        }
+      }, r.name), rBranch ? /*#__PURE__*/React.createElement("span", {
+        className: "lt-branch-tag",
+        style: rBranch.color ? {
+          background: rBranch.color + '1A',
+          borderColor: rBranch.color,
+          color: rBranch.color
+        } : {}
+      }, rBranch.code || rBranch.name) : null, /*#__PURE__*/React.createElement("span", {
+        className: `lt-type-badge lt-type-${r.class_type || 'group'}`
+      }, r.class_type === 'personal' ? '🧑 Personal' : '👥 Group'), /*#__PURE__*/React.createElement("span", {
+        className: "lt-classes-pill",
+        title: "Classes on the schedule using this type"
+      }, n, " ", n === 1 ? 'class' : 'classes')), /*#__PURE__*/React.createElement("div", {
+        className: "lt-row-actions"
+      }, /*#__PURE__*/React.createElement("button", {
+        className: `btn-packages ${pkgPanelOpen ? 'active' : ''}`,
+        onClick: () => setPkgPanelLtId(pkgPanelOpen ? null : r.id),
+        title: "Manage packages nested under this lesson type"
+      }, "Packages ", /*#__PURE__*/React.createElement("span", {
+        className: "pkg-count-badge"
+      }, pkgCount)), /*#__PURE__*/React.createElement("button", {
+        className: `btn btn-ghost small ${editingThis ? 'btn-active' : ''}`,
+        onClick: () => setEditingLessonId(editingThis ? null : r.id)
+      }, editingThis ? 'Close' : 'Edit'), /*#__PURE__*/React.createElement("button", {
+        className: "btn btn-ghost small",
+        onClick: () => toggleOption('scheduler_lesson_types', r)
+      }, r.is_active ? 'Hide' : 'Show'), /*#__PURE__*/React.createElement("button", {
+        className: "btn btn-danger small",
+        onClick: () => deleteLessonType(r)
+      }, "Delete"))), /*#__PURE__*/React.createElement("div", {
+        className: "lt-row-meta"
+      }, /*#__PURE__*/React.createElement("div", {
+        className: "lt-meta-tile"
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "lt-meta-label"
+      }, "Ratio"), /*#__PURE__*/React.createElement("span", {
+        className: `lt-meta-value ${r.students_per_instructor ? '' : 'lt-meta-empty'}`
+      }, r.students_per_instructor ? `1:${r.students_per_instructor}` : '—')), /*#__PURE__*/React.createElement("div", {
+        className: "lt-meta-tile"
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "lt-meta-label"
+      }, "Duration"), /*#__PURE__*/React.createElement("span", {
+        className: `lt-meta-value ${r.default_duration_minutes ? '' : 'lt-meta-empty'}`
+      }, r.default_duration_minutes ? `${r.default_duration_minutes} min` : '—')), /*#__PURE__*/React.createElement("div", {
+        className: "lt-meta-tile"
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "lt-meta-label"
+      }, "Billing"), /*#__PURE__*/React.createElement("span", {
+        className: `lt-meta-value ${r.billing_model ? '' : 'lt-meta-empty'}`
+      }, r.billing_model || '—')), /*#__PURE__*/React.createElement("div", {
+        className: "lt-meta-tile"
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "lt-meta-label"
+      }, "Default Pool"), /*#__PURE__*/React.createElement("span", {
+        className: `lt-meta-value ${poolName ? '' : 'lt-meta-empty'}`
+      }, poolName || 'None set')), /*#__PURE__*/React.createElement("div", {
+        className: "lt-meta-tile"
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "lt-meta-label"
+      }, "Age"), /*#__PURE__*/React.createElement("span", {
+        className: `lt-meta-value ${r.age_min_months != null || r.age_max_months != null ? '' : 'lt-meta-empty'}`
+      }, r.age_min_months != null || r.age_max_months != null ? `${r.age_min_months != null ? Math.floor(r.age_min_months / 12) + 'y' : '·'}–${r.age_max_months != null ? Math.floor(r.age_max_months / 12) + 'y' : '·'}` : 'Any age')))), editingLessonId === r.id ? /*#__PURE__*/React.createElement(LessonTypeEditor, {
+        row: r,
+        pools: options.pools,
+        onSave: patch => {
+          saveLessonType(r, patch);
+          setEditingLessonId(null);
+        }
+      }) : null, pkgPanelLtId === r.id ? /*#__PURE__*/React.createElement(LessonTypePackages, {
+        lessonType: r,
+        packages: (options.packages || []).filter(p => p.lesson_type_id === r.id).slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)),
+        editPkgId: editPkgId,
+        setEditPkgId: setEditPkgId,
+        addOption: addOption,
+        toggleOption: toggleOption,
+        deleteOption: deleteOption,
+        patchOption: patchOption,
+        reorderOption: reorderOption
+      }) : null);
+    }) : /*#__PURE__*/React.createElement("div", {
+      className: "empty"
+    }, "No lesson types"))), (() => {
+      const orphans = (options.packages || []).filter(p => !p.lesson_type_id);
+      if (!orphans.length) return null;
+      return /*#__PURE__*/React.createElement("div", {
+        className: "card",
+        style: {
+          marginTop: 16
+        }
+      }, /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontSize: 16,
+          fontWeight: 800
+        }
+      }, "Legacy Packages"), /*#__PURE__*/React.createElement("div", {
+        className: "small subtle",
+        style: {
+          marginTop: 4
+        }
+      }, "These packages exist from before packages were nested under lesson types. Assign each to a lesson type, or delete it. Swimmers and family groups on these still work until you reassign."), /*#__PURE__*/React.createElement("div", {
+        className: "settings-list",
+        style: {
+          marginTop: 10
+        }
+      }, orphans.map(r => /*#__PURE__*/React.createElement("div", {
+        key: r.id,
+        className: "row-item"
+      }, /*#__PURE__*/React.createElement("div", {
+        style: {
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          flexWrap: 'wrap'
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "pill",
+        style: {
+          background: '#FEF3C7',
+          color: '#92400E',
+          borderColor: '#FCD34D'
+        }
+      }, "Unassigned"), /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontWeight: 700
+        }
+      }, r.name), /*#__PURE__*/React.createElement("span", {
+        className: "small subtle"
+      }, r.pax != null ? `${r.pax} pax` : '—', r.amount != null ? ` · RM${r.amount}` : '', billingText(r.billing_mode, r.billing_count) ? ` · ${billingText(r.billing_mode, r.billing_count)}` : '', r.is_group ? ' · 👪 family' : '')), /*#__PURE__*/React.createElement("div", {
+        style: {
+          display: 'flex',
+          gap: 6,
+          alignItems: 'center'
+        }
+      }, /*#__PURE__*/React.createElement("select", {
+        className: "select",
+        defaultValue: "",
+        onChange: e => {
+          if (e.target.value) patchOption('packages', r.id, {
+            lesson_type_id: e.target.value
+          });
+        }
+      }, /*#__PURE__*/React.createElement("option", {
+        value: ""
+      }, "Move to…"), options.lessonTypes.map(lt => /*#__PURE__*/React.createElement("option", {
+        key: lt.id,
+        value: lt.id
+      }, lt.name))), /*#__PURE__*/React.createElement("button", {
+        className: "btn btn-danger small",
+        onClick: () => deleteOption('packages', r, r.name)
+      }, "Delete"))))));
+    })());
+  })(), section === 'codes' && addCode && /*#__PURE__*/React.createElement(CodesPanel, {
     codes: codes || [],
     students: students || [],
     packages: packages || [],
@@ -13837,6 +13902,187 @@ const TC_CONTENT = [{
   h: '11. Acceptance & Governing Law',
   body: `This Agreement is governed by the laws of Malaysia. Any dispute shall be subject to the jurisdiction of the courts of Malaysia. By electronically accepting, you confirm you have read and agree to all clauses above on behalf of yourself and/or the enrolled swimmer.`
 }];
+
+// Flatten the structured default T&C into one editable text blob. Used to seed
+// the per-branch editor and as the fallback when a branch has no custom terms.
+function defaultTermsText() {
+  return TC_CONTENT.map(s => `${s.h}\n${s.body}`).join('\n\n').replace(/\\n/g, '\n');
+}
+
+// Settings › Terms — edit each branch's Terms & Conditions (one free-text blob).
+// Empty/blank stores NULL and the branch falls back to the default wording.
+function TermsAdminView({
+  branches,
+  currentBranchId,
+  defaultTerms,
+  onSave
+}) {
+  const active = (branches || []).filter(b => b.is_active !== false);
+  const initialBranch = currentBranchId && currentBranchId !== 'all' ? currentBranchId : active[0]?.id || '';
+  const [branchId, setBranchId] = useState(initialBranch);
+  const [text, setText] = useState('');
+  const [usingDefault, setUsingDefault] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const branch = (branches || []).find(b => b.id === branchId) || null;
+  React.useEffect(() => {
+    const b = (branches || []).find(x => x.id === branchId);
+    const hasCustom = !!(b && b.terms_content && b.terms_content.trim());
+    setText(hasCustom ? b.terms_content : defaultTerms);
+    setUsingDefault(!hasCustom);
+  }, [branchId, branches]); // eslint-disable-line
+
+  const dirty = (() => {
+    const b = (branches || []).find(x => x.id === branchId);
+    const stored = b && b.terms_content && b.terms_content.trim() ? b.terms_content : defaultTerms;
+    return text !== stored;
+  })();
+  async function save() {
+    setBusy(true);
+    try {
+      await onSave(branchId, text);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function reset() {
+    if (!confirm('Reset this branch to the default Terms & Conditions?')) return;
+    setBusy(true);
+    try {
+      await onSave(branchId, '');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 18,
+      fontWeight: 800,
+      marginBottom: 4
+    }
+  }, "📄 Terms & Conditions"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginBottom: 14
+    }
+  }, "Each branch has its own Terms & Conditions, shown to parents on that branch's intake form. Leave it on the default wording, or customise the full text for this branch. Blank resets it to the shared default."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 12,
+      alignItems: 'center',
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0,
+      minWidth: 220
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Branch"), /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    value: branchId,
+    onChange: e => setBranchId(e.target.value)
+  }, active.map(b => /*#__PURE__*/React.createElement("option", {
+    key: b.id,
+    value: b.id
+  }, b.name, b.code ? ` (${b.code})` : '')))), /*#__PURE__*/React.createElement("span", {
+    className: "pill",
+    style: usingDefault ? {
+      background: '#FEF3C7',
+      color: '#92400E'
+    } : {
+      background: '#D1FAE5',
+      color: '#065F46'
+    }
+  }, usingDefault ? 'Using default wording' : 'Custom terms set'))), /*#__PURE__*/React.createElement("div", {
+    className: "settings-cols",
+    style: {
+      gridTemplateColumns: '1fr 1fr',
+      gap: 16
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 800
+    }
+  }, "Editor"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle"
+  }, (text || '').length, " chars")), /*#__PURE__*/React.createElement("textarea", {
+    className: "textarea",
+    style: {
+      minHeight: 460,
+      fontFamily: 'inherit',
+      lineHeight: 1.5
+    },
+    value: text,
+    onChange: e => setText(e.target.value),
+    placeholder: "Enter this branch's full Terms & Conditions…"
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginTop: 10,
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: reset,
+    disabled: busy || usingDefault
+  }, "Reset to default"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => setText(defaultTerms),
+    disabled: busy
+  }, "Load default text"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary",
+    onClick: save,
+    disabled: busy || !dirty
+  }, busy ? 'Saving…' : 'Save terms')))), /*#__PURE__*/React.createElement("div", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 800,
+      marginBottom: 8
+    }
+  }, "Preview ", /*#__PURE__*/React.createElement("span", {
+    className: "small subtle",
+    style: {
+      fontWeight: 400
+    }
+  }, "· how parents will see it", branch ? ` · ${branch.name}` : '')), /*#__PURE__*/React.createElement("div", {
+    className: "tc-doc-scroll",
+    style: {
+      maxHeight: 480
+    }
+  }, /*#__PURE__*/React.createElement("h1", {
+    className: "tc-h1"
+  }, TC_COMPANY), /*#__PURE__*/React.createElement("h2", {
+    className: "tc-h2"
+  }, "Swimming Lesson Enrolment — Terms & Conditions"), (text || '').split('\n\n').map((para, i) => /*#__PURE__*/React.createElement("p", {
+    key: i,
+    className: "tc-para",
+    style: {
+      whiteSpace: 'pre-wrap'
+    }
+  }, para))))));
+}
 function TCView({
   students,
   lessonTypes,
