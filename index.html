@@ -205,14 +205,21 @@
     /* ── Programme planner ── */
     .field-label{font-size:11px;font-weight:700;color:var(--text-2);margin-bottom:5px;letter-spacing:.02px}
     .prog-card{display:flex;flex-direction:column;gap:3px}
+    .prog-card-inst{font-weight:700;opacity:.95;font-size:10.5px}
     .prog-card-body{font-size:10px;line-height:1.35;opacity:.85;margin-top:3px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;word-break:break-word}
-    .prog-cat-chip{display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:999px;border:1px solid transparent;margin-top:3px;width:fit-content;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+    .prog-cat-chip{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 9px;border-radius:999px;border:1px solid transparent;margin-top:4px;width:fit-content;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
     .prog-row{display:flex;gap:12px;align-items:flex-start;background:var(--surface-2);border:1px solid var(--border);border-radius:11px;padding:10px 12px;cursor:pointer;transition:.13s ease}
     .prog-row:hover{border-color:#CFCFDE;box-shadow:var(--shadow)}
     .prog-row-time{font-size:12px;font-weight:700;color:var(--text-2);white-space:nowrap;min-width:108px;padding-top:1px}
     .prog-row-main{min-width:0;flex:1}
     .prog-row-title{font-size:13px;font-weight:700;display:flex;align-items:center;flex-wrap:wrap}
     .prog-row-body{font-size:12px;color:var(--text-2);line-height:1.45;margin-top:3px;white-space:pre-wrap;word-break:break-word}
+    /* Monthly view — larger, two-line session cards */
+    .prog-day-box{min-height:140px}
+    .prog-mini-list{display:flex;flex-direction:column;gap:5px}
+    .prog-mini-item{font-size:11.5px;line-height:1.25;padding:6px 9px;border-radius:9px;border-left:3px solid transparent;overflow:hidden;display:flex;flex-direction:column;gap:2px}
+    .prog-mini-item .pmi-top{font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .prog-mini-item .pmi-sub{font-size:10px;font-weight:600;opacity:.82;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     table{width:100%;border-collapse:collapse}.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:14px}
     th,td{padding:8px 12px;border-bottom:1px solid var(--border);font-size:12px;text-align:left;vertical-align:middle} thead th{background:var(--surface-2);color:var(--text-2);font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;font-weight:600;border-bottom:1.5px solid var(--border-2)}
     tr:last-child td{border-bottom:none}
