@@ -253,8 +253,16 @@ function PeriodNav({ rangeLabel, onPrev, onNext, onToday, isCurrent, children })
 }
 
 function App(){
-  const [view,setView] = useState('schedule');          // 'schedule'|'accounts'|'enroll'|'settings'|'students'
+  const [view,setView] = useState('schedule');          // 'schedule'|'programme'|'accounts'|'enroll'|'settings'|'students'
   const [scheduleSection,setScheduleSection] = useState('week'); // 'week'|'day'|'month'
+  // ── Programme planner (event & workout planning calendar) ──────────────
+  const [programmeSection,setProgrammeSection] = useState('week'); // 'week'|'month'
+  const [programmeSessions,setProgrammeSessions] = useState([]);
+  const [programmeCategories,setProgrammeCategories] = useState([]);
+  const [programmeModal,setProgrammeModal] = useState(null);
+  const [programmeDate,setProgrammeDate] = useState(todayStr());     // own week cursor (independent of Schedule)
+  const [programmeMonthCursor,setProgrammeMonthCursor] = useState(new Date());
+  const [programmePoolId,setProgrammePoolId] = useState(null);
   const [adminSection,setAdminSection] = useState('pools');      // 'summary'|'pools'|'instructors'|'lessonTypes'
   const [accountSection,setAccountSection] = useState('accounts');
   // Clear sticky search box when switching account sub-tabs
@@ -342,7 +350,8 @@ function App(){
         loadStudents(), loadGroups(), loadGroupMemberships(),
         loadCreditBalances(), loadCreditPurchases(),
         loadSubscriptions(), loadCodes(), loadReplacementPending(),
-        loadTcAcceptances(), loadRemarks(monthCursor), loadInvoiceData()
+        loadTcAcceptances(), loadRemarks(monthCursor), loadInvoiceData(),
+        loadProgrammeSessions(), loadProgrammeCategories()
       ]).catch(e => console.warn('Background load warning:', e));
     } catch(err){ handleErr(err); setLoading(false); }
   }
@@ -686,6 +695,34 @@ function App(){
       };
     });
     setSessions(merged);
+  }
+
+  // ── Programme loaders ──────────────────────────────────────────────
+  async function loadProgrammeSessions(){
+    try{
+      const rows = await selectRows('programme_sessions','*','&order=week_start_date.asc,weekday.asc,start_minute.asc,sort_order.asc').catch(()=>[]);
+      setProgrammeSessions((rows||[]).map(r => ({
+        id: r.id,
+        weekStartDate: r.week_start_date || weekStartStr(todayStr()),
+        day: Number(r.weekday) - 1,
+        startMinute: Number(r.start_minute),
+        durationMinutes: Number(r.duration_minutes || 60),
+        branchId: r.branch_id || null,
+        poolId: r.pool_id || null,
+        title: r.title || '',
+        body: r.body || '',
+        categoryId: r.category_id || null,
+        label: r.label || '',
+        color: r.color || null,
+        sortOrder: Number(r.sort_order || 0)
+      })));
+    } catch(e){ console.warn('Programme sessions not available yet (run supabase_programme_migration.sql):', e?.message || e); setProgrammeSessions([]); }
+  }
+  async function loadProgrammeCategories(){
+    try{
+      const rows = await selectRows('programme_categories','*','&order=sort_order.asc,name.asc').catch(()=>[]);
+      setProgrammeCategories(rows || []);
+    } catch(_){ setProgrammeCategories([]); }
   }
 
   async function loadStudents(){
@@ -1498,6 +1535,36 @@ function App(){
   const currentWeekStart = weekStartStr(todayStr());
   const isFutureSelectedWeek = selectedWeekStart > currentWeekStart;
 
+  // ── Programme derived data ─────────────────────────────────────────────
+  const programmeWeekStart = weekStartStr(programmeDate);
+  const programmeMonthDates = useMemo(() => monthCells(programmeMonthCursor), [programmeMonthCursor]);
+  // 7-day grid for the selected programme week, branch- and pool-filtered.
+  const programmeWeekDays = useMemo(() => {
+    const days = Array.from({length:7}, () => []);
+    (programmeSessions || []).forEach(s => {
+      if(s.weekStartDate !== programmeWeekStart) return;
+      // branch filter (lenient: unassigned sessions show everywhere)
+      if(currentBranchId && currentBranchId !== 'all'){
+        if(s.branchId && s.branchId !== currentBranchId) return;
+      }
+      // pool tab filter
+      if(programmePoolId && s.poolId !== programmePoolId) return;
+      if(s.day >= 0 && s.day < 7) days[s.day].push(s);
+    });
+    days.forEach(arr => arr.sort((a,b) => a.startMinute - b.startMinute || a.sortOrder - b.sortOrder));
+    return days;
+  }, [programmeSessions, programmeWeekStart, currentBranchId, programmePoolId]);
+  // Sessions on a given calendar date (for the monthly view), branch-filtered.
+  function programmeSessionsForDate(ds){
+    const ws = weekStartStr(ds);
+    const di = (fromDateStr(ds).getDay() + 6) % 7;
+    return (programmeSessions || []).filter(s => {
+      if(s.weekStartDate !== ws || s.day !== di) return false;
+      if(currentBranchId && currentBranchId !== 'all' && s.branchId && s.branchId !== currentBranchId) return false;
+      return true;
+    }).sort((a,b) => a.startMinute - b.startMinute);
+  }
+
   function sessionsForDate(dateStr){
     const day = dateToWeekdayIndex(dateStr);
     const ws = weekStartStr(dateStr);
@@ -2126,6 +2193,79 @@ function App(){
     } catch(err){ handleErr(err); alert(err.message || 'Failed to delete branch'); }
   }
 
+  // ── Programme CRUD ───────────────────────────────────────────────────────
+  function programmeCategoryById(id){ return (programmeCategories||[]).find(c => c.id === id) || null; }
+
+  function openProgrammeCreate(day, startMinute, poolId){
+    setProgrammeModal({
+      mode:'add', id:null, weekStartDate: programmeWeekStart,
+      form:{
+        weekday: day, startMinute: startMinute, durationMinutes: 60,
+        poolId: poolId || null, categoryId: null, title: '', body: '', color: null,
+        branchId: (currentBranchId && currentBranchId !== 'all') ? currentBranchId : null
+      }
+    });
+  }
+  function openProgrammeEdit(s){
+    setProgrammeModal({
+      mode:'edit', id:s.id, weekStartDate: s.weekStartDate,
+      form:{
+        weekday: s.day, startMinute: s.startMinute, durationMinutes: s.durationMinutes,
+        poolId: s.poolId, categoryId: s.categoryId, title: s.title, body: s.body, color: s.color,
+        branchId: s.branchId || null
+      }
+    });
+  }
+  async function saveProgrammeSession(){
+    const m = programmeModal; if(!m) return;
+    try{
+      setSaveBusy(true); setError('');
+      const payload = {
+        week_start_date: m.weekStartDate,
+        weekday: Number(m.form.weekday) + 1,
+        start_minute: Number(m.form.startMinute),
+        duration_minutes: Number(m.form.durationMinutes || 60),
+        // stamp current branch on create; preserve original branch on edit
+        branch_id: m.mode === 'edit' ? (m.form.branchId || null)
+                 : ((currentBranchId && currentBranchId !== 'all') ? currentBranchId : null),
+        pool_id: m.form.poolId || null,
+        title: (m.form.title || '').trim() || null,
+        body: (m.form.body || '').trim() || null,
+        category_id: m.form.categoryId || null,
+        color: m.form.color || null
+      };
+      if(m.mode === 'edit' && m.id){ await patchRows('programme_sessions', {id:m.id}, payload); }
+      else { await insertRows('programme_sessions', payload); }
+      await loadProgrammeSessions();
+      setProgrammeModal(null);
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to save programme session'); }
+    finally{ setSaveBusy(false); }
+  }
+  async function deleteProgrammeSession(id){
+    if(!confirm('Delete this programme session? This cannot be undone.')) return;
+    try{
+      await deleteRows('programme_sessions', {id});
+      await loadProgrammeSessions();
+      setProgrammeModal(null);
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to delete programme session'); }
+  }
+  async function addProgrammeCategory({ name, color }){
+    try{
+      const next = (programmeCategories||[]).length + 1;
+      await insertRows('programme_categories', { name, color: color || null, sort_order: next, is_active: true });
+      await loadProgrammeCategories();
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to add category'); }
+  }
+  async function updateProgrammeCategory(id, patch){
+    try{ await patchRows('programme_categories', {id}, patch); await loadProgrammeCategories(); }
+    catch(err){ handleErr(err); alert(err.message || 'Failed to update category'); }
+  }
+  async function deleteProgrammeCategory(id){
+    if(!confirm('Delete this category?\n\nSessions using it keep their text but lose the category tag.')) return;
+    try{ await deleteRows('programme_categories', {id}); await Promise.all([loadProgrammeCategories(), loadProgrammeSessions()]); }
+    catch(err){ handleErr(err); alert(err.message || 'Failed to delete category'); }
+  }
+
   // Reorder a settings list by reindexing sort_order across the whole list, so
   // the result is clean and gap-free regardless of the existing values.
   async function reorderOption(table, list, index, dir){
@@ -2729,6 +2869,7 @@ function App(){
       </div>
       <nav className="main-nav">
         <button className={`nav-btn ${view==='schedule'?'active':''}`} onClick={()=>setView('schedule')}>📅 Schedule</button>
+        <button className={`nav-btn ${view==='programme'?'active':''}`} onClick={()=>{ setView('programme'); setProgrammeSection('week'); }}>📋 Programme</button>
         <button className={`nav-btn ${view==='accounts'?'active':''}`} onClick={()=>{ setView('accounts'); setAccountSection('accounts'); }}>👤 Accounts</button>
         <button className={`nav-btn ${view==='enroll'?'active':''}`} onClick={()=>setView('enroll')}>🔍 Explore</button>
         <button type="button" className="nav-btn nav-btn-link" onClick={()=>window.open('./intake.html','_blank','noopener,noreferrer')}>📝 Intake ↗</button>
@@ -2749,6 +2890,20 @@ function App(){
           <button className="step-btn" onClick={()=>setSelectedDate(addDays(selectedDate,7))} title="Next week" aria-label="Next week">›</button>
         </div>
         <button className={`today-btn ${selectedWeekStart===currentWeekStart?'is-current':''}`} disabled={selectedWeekStart===currentWeekStart} onClick={()=>setSelectedDate(todayStr())} style={{marginLeft:6}}>This Week</button>
+      </div>}
+    </div></div>}
+
+    {/* ── Sub-bar: programme tabs ── */}
+    {!loading && view==='programme' && <div className="sub-bar"><div className="sub-bar-inner">
+      <button className={`sub-tab ${programmeSection==='week'?'active':''}`} onClick={()=>setProgrammeSection('week')}>Weekly</button>
+      <button className={`sub-tab ${programmeSection==='month'?'active':''}`} onClick={()=>setProgrammeSection('month')}>Monthly</button>
+      {programmeSection==='week' && <div className="sub-bar-spacer">
+        <div className="period-stepper" style={{margin:0}}>
+          <button className="step-btn" onClick={()=>setProgrammeDate(addDays(programmeDate,-7))} title="Previous week" aria-label="Previous week">‹</button>
+          <div className="period-label" style={{fontSize:12}}>{weekRangeLabel(programmeWeekStart)}</div>
+          <button className="step-btn" onClick={()=>setProgrammeDate(addDays(programmeDate,7))} title="Next week" aria-label="Next week">›</button>
+        </div>
+        <button className={`today-btn ${programmeWeekStart===currentWeekStart?'is-current':''}`} disabled={programmeWeekStart===currentWeekStart} onClick={()=>setProgrammeDate(todayStr())} style={{marginLeft:6}}>This Week</button>
       </div>}
     </div></div>}
 
@@ -2785,6 +2940,7 @@ function App(){
       <button className={`sub-tab ${adminSection==='pools'?'active':''}`} onClick={()=>setAdminSection('pools')}>Pools & Hours</button>
       <button className={`sub-tab ${adminSection==='instructors'?'active':''}`} onClick={()=>setAdminSection('instructors')}>Instructors</button>
       <button className={`sub-tab ${adminSection==='lessonTypes'?'active':''}`} onClick={()=>setAdminSection('lessonTypes')}>Lesson Types</button>
+      <button className={`sub-tab ${adminSection==='programme'?'active':''}`} onClick={()=>setAdminSection('programme')}>Programme</button>
       <button className={`sub-tab ${adminSection==='invoiceSettings'?'active':''}`} onClick={()=>setAdminSection('invoiceSettings')}>Invoice Numbering</button>
     </div></div>}
 
@@ -2891,6 +3047,34 @@ function App(){
         monthDates={monthDates} sessionsForDate={sessionsForDate} colorsFor={colorsFor}
         remarks={remarks} remarkDraft={remarkDraft} setRemarkDraft={setRemarkDraft} saveRemark={saveRemark}
         selectedItems={selectedItems}
+      />}
+
+      {/* ── Programme views ── */}
+      {!loading && view==='programme' && programmeSection==='week' && <ProgrammeWeekView
+        programmeWeekDays={programmeWeekDays}
+        pools={activePools()}
+        selectedPoolId={programmePoolId}
+        setSelectedPoolId={setProgrammePoolId}
+        gridBounds={gridBounds}
+        categoryById={programmeCategoryById}
+        poolById={poolById}
+        onAdd={openProgrammeCreate}
+        onEdit={openProgrammeEdit}
+        selectedWeekStart={programmeWeekStart}
+        currentWeekStart={currentWeekStart}
+        onPrev={()=>setProgrammeDate(addDays(programmeDate,-7))}
+        onNext={()=>setProgrammeDate(addDays(programmeDate,7))}
+        onToday={()=>setProgrammeDate(todayStr())}
+        branchLabel={currentBranchId && currentBranchId!=='all' ? (branchById(currentBranchId)?.name || '') : 'All Branches'}
+      />}
+      {!loading && view==='programme' && programmeSection==='month' && <ProgrammeMonthView
+        monthCursor={programmeMonthCursor} setMonthCursor={setProgrammeMonthCursor}
+        monthDates={programmeMonthDates}
+        selectedDate={programmeDate} setSelectedDate={setProgrammeDate}
+        programmeSessionsForDate={programmeSessionsForDate}
+        categoryById={programmeCategoryById}
+        onAdd={openProgrammeCreate}
+        onEdit={openProgrammeEdit}
       />}
 
       {/* ── Accounts views (no side-column for billing sub-sections) ── */}
@@ -3057,6 +3241,12 @@ function App(){
         updateBranch={updateBranch}
         deleteBranch={deleteBranch}
       />}
+      {!loading && view==='settings' && adminSection==='programme' && <ProgrammeCategoriesView
+        categories={programmeCategories}
+        addCategory={addProgrammeCategory}
+        updateCategory={updateProgrammeCategory}
+        deleteCategory={deleteProgrammeCategory}
+      />}
       {!loading && view==='settings' && adminSection==='invoiceSettings' && <div className="card">
         <div style={{fontWeight:800,fontSize:18,marginBottom:4}}>Invoice Numbering &amp; Permissions</div>
         <div className="small subtle" style={{marginBottom:16}}>These are sensitive settings. Invoice deletion is irreversible — enable the delete permission only for authorised users.</div>
@@ -3116,6 +3306,12 @@ function App(){
       forwardClassToNextWeek={forwardClassToNextWeek}
       startFullClassMove={startFullClassMove}
       duplicateSessionForward={duplicateSessionForward}
+    /> : null}
+
+    {programmeModal ? <ProgrammeSessionModal
+      modal={programmeModal} setModal={setProgrammeModal} busy={saveBusy}
+      onSave={saveProgrammeSession} onDelete={deleteProgrammeSession}
+      pools={activePools()} categories={programmeCategories} gridBounds={gridBounds}
     /> : null}
   </div>;
 }
@@ -8900,6 +9096,203 @@ ${pmt?`<div class="block">
 }
 
 
+
+// ============================================================================
+// Programme module — event & workout planning calendar (Weekly + Monthly)
+// ============================================================================
+
+// Soft tint from a hex; falls back to a neutral slate card.
+function programmeCardColors(hex){
+  if(!hex) return { bg:'#F1F5F9', bd:'#CBD5E1', tx:'#0F172A' };
+  return { bg: hex + '1A', bd: hex, tx:'#0F172A' };
+}
+
+function ProgrammeCard({ s, categoryById, poolById, showPoolBadge, onEdit }){
+  const cat = s.categoryId ? categoryById(s.categoryId) : null;
+  const tint = s.color || (cat && cat.color) || null;
+  const c = programmeCardColors(tint);
+  const pool = s.poolId ? poolById(s.poolId) : null;
+  const heading = s.title || (cat && cat.name) || 'Session';
+  return <div className="wa-card prog-card" onClick={(e)=>{ e.stopPropagation(); onEdit(s); }}
+    style={{ background:c.bg, borderLeft:`3px solid ${c.bd}`, color:c.tx }}>
+    <div className="wa-card-head"><span className="wa-card-title">{heading}</span></div>
+    <div className="wa-card-line">{compactRange(s.startMinute, s.durationMinutes)}{showPoolBadge && pool ? <span className="event-pool-pill" style={{marginLeft:4}}>{pool.name}</span> : null}</div>
+    {cat ? <div className="prog-cat-chip" style={{background:(cat.color||'#64748B')+'22', color:cat.color||'#475569', borderColor:cat.color||'#94A3B8'}}>{cat.name}</div> : null}
+    {s.body ? <div className="prog-card-body">{s.body}</div> : <div className="wa-card-students-empty">— no notes yet —</div>}
+  </div>;
+}
+
+function ProgrammeWeekView({ programmeWeekDays, pools, selectedPoolId, setSelectedPoolId, gridBounds, categoryById, poolById, onAdd, onEdit, selectedWeekStart, currentWeekStart, onPrev, onNext, onToday, branchLabel }){
+  const wb = weekBounds(selectedWeekStart);
+  const startHour = Math.floor(gridBounds.startMin / 60) * 60;
+  const hours = [];
+  for(let h = startHour; h < gridBounds.endMin; h += 60) hours.push(h);
+  const showPoolBadge = !selectedPoolId && pools.length > 1;
+  return <div className="card" style={{marginBottom:16}}>
+    <div className="view-head"><div>
+      <div className="view-title">Programme — Weekly</div>
+      <div className="small subtle">Structure workouts, teaching focus and activities per slot. Click any empty cell to add a session.{branchLabel ? ` · ${branchLabel}` : ''}</div>
+    </div></div>
+    <PeriodNav rangeLabel={weekRangeLabel(selectedWeekStart)} onPrev={onPrev} onNext={onNext} onToday={onToday} isCurrent={selectedWeekStart === currentWeekStart} />
+    <div className="pool-tabs" style={{marginTop:12}}>
+      <button className={`pool-tab ${selectedPoolId===null?'active':''}`} onClick={()=>setSelectedPoolId(null)}>All</button>
+      {pools.map(p => <button key={p.id} className={`pool-tab ${selectedPoolId===p.id?'active':''}`} onClick={()=>setSelectedPoolId(p.id)}>{p.name}</button>)}
+    </div>
+    <div className="wagenda">
+      <div className="wa-corner" />
+      {DAYS_S.map((d,di) => {
+        const dateObj = new Date(wb.start); dateObj.setDate(wb.start.getDate()+di);
+        const dateStr = dateObj.toLocaleDateString(undefined,{month:'short', day:'numeric'});
+        return <div key={'h'+di} className="wa-dayhead"><div>{d}</div><div style={{fontSize:'10px',fontWeight:600,color:'#94A3B8'}}>{dateStr}</div></div>;
+      })}
+      {hours.map(h => <React.Fragment key={h}>
+        <div className="wa-time">{hourLabel(h)}</div>
+        {DAYS_S.map((_,di) => {
+          const cell = (programmeWeekDays[di] || []).filter(s => s.startMinute >= h && s.startMinute < h + 60);
+          return <div key={di+'-'+h} className="wa-cell" onClick={()=>onAdd(di, h, selectedPoolId || undefined)}>
+            {cell.map(s => <ProgrammeCard key={s.id} s={s} categoryById={categoryById} poolById={poolById} showPoolBadge={showPoolBadge} onEdit={onEdit} />)}
+          </div>;
+        })}
+      </React.Fragment>)}
+    </div>
+  </div>;
+}
+
+function ProgrammeMonthView({ monthCursor, setMonthCursor, monthDates, selectedDate, setSelectedDate, programmeSessionsForDate, categoryById, onAdd, onEdit }){
+  const monthOpts = [];
+  for(let y=2025;y<=2032;y++) for(let m=0;m<12;m++){ const d = new Date(y,m,1); monthOpts.push(<option key={`${y}-${m}`} value={monthKey(d)}>{d.toLocaleDateString(undefined,{month:'long', year:'numeric'})}</option>); }
+  const items = programmeSessionsForDate(selectedDate);
+  const di = (fromDateStr(selectedDate).getDay() + 6) % 7;
+  return <>
+    <div className="card">
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:14}}>
+        <div><div style={{fontSize:18,fontWeight:800}}>Programme — Monthly</div><div className="small subtle">Monday-first overview. Click a day to view and edit its programme below.</div></div>
+        <div style={{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
+          <button className="btn btn-ghost" onClick={()=>setMonthCursor(new Date(monthCursor.getFullYear(), monthCursor.getMonth()-1, 1))}>←</button>
+          <select className="select" style={{width:240}} value={monthKey(monthCursor)} onChange={(e)=>{ const [y,m]=e.target.value.split('-').map(Number); setMonthCursor(new Date(y,m-1,1)); }}>{monthOpts}</select>
+          <button className="btn btn-ghost" onClick={()=>setMonthCursor(new Date(monthCursor.getFullYear(), monthCursor.getMonth()+1, 1))}>→</button>
+        </div>
+      </div>
+      <div className="month-grid">
+        {DAYS_S.map(d => <div key={d} className="month-dow">{d}</div>)}
+        {monthDates.map(d => {
+          const ds = toDateStr(d), inMonth = d.getMonth() === monthCursor.getMonth(), dayItems = programmeSessionsForDate(ds);
+          return <div key={ds} className={`day-box ${inMonth?'':'outside'} ${selectedDate===ds?'selected':''}`} onClick={()=>setSelectedDate(ds)}>
+            <div className="day-top"><div className="day-num">{d.getDate()}</div></div>
+            <div>{dayItems.length ? dayItems.slice(0,3).map(s => { const cat = s.categoryId ? categoryById(s.categoryId) : null; const c = programmeCardColors(s.color || (cat && cat.color)); return <div key={s.id} className="mini-item" style={{background:c.bg,borderLeftColor:c.bd,color:c.tx}}>{minuteToTime(s.startMinute)} · {s.title || (cat && cat.name) || 'Session'}</div>; }) : <div className="small subtle">—</div>}{dayItems.length>3 ? <div className="small subtle" style={{marginTop:2}}>+{dayItems.length-3} more</div> : null}</div>
+          </div>;
+        })}
+      </div>
+    </div>
+    <div className="card" style={{marginTop:16}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:12}}>
+        <div><div style={{fontSize:18,fontWeight:800}}>{longDate(selectedDate)}</div><div className="small subtle">{items.length} session{items.length===1?'':'s'} planned</div></div>
+        <button className="btn btn-primary small" onClick={()=>onAdd(di, 540, undefined)}>+ Create session</button>
+      </div>
+      {items.length ? <div style={{display:'flex',flexDirection:'column',gap:8}}>
+        {items.map(s => { const cat = s.categoryId ? categoryById(s.categoryId) : null; const c = programmeCardColors(s.color || (cat && cat.color)); return <div key={s.id} className="prog-row" onClick={()=>onEdit(s)} style={{borderLeft:`3px solid ${c.bd}`}}>
+          <div className="prog-row-time">{compactRange(s.startMinute, s.durationMinutes)}</div>
+          <div className="prog-row-main">
+            <div className="prog-row-title">{s.title || (cat && cat.name) || 'Session'}{cat ? <span className="prog-cat-chip" style={{marginLeft:6,background:(cat.color||'#64748B')+'22',color:cat.color||'#475569',borderColor:cat.color||'#94A3B8'}}>{cat.name}</span> : null}</div>
+            {s.body ? <div className="prog-row-body">{s.body}</div> : <div className="small subtle">— no notes —</div>}
+          </div>
+        </div>; })}
+      </div> : <div className="empty">No programme sessions for this day. Click “+ Create session” to add one.</div>}
+    </div>
+  </>;
+}
+
+function ProgrammeSessionModal({ modal, setModal, busy, onSave, onDelete, pools, categories, gridBounds }){
+  const f = modal.form;
+  function set(patch){ setModal({ ...modal, form:{ ...modal.form, ...patch } }); }
+  const timeOpts = [];
+  for(let m = gridBounds.startMin; m < gridBounds.endMin; m += 30) timeOpts.push(m);
+  const durOpts = [30,45,60,75,90,105,120,150,180];
+  return <div className="modal-backdrop" onClick={()=>setModal(null)}>
+    <div className="modal-card" onClick={e=>e.stopPropagation()} style={{width:'min(560px,100%)'}}>
+      <div style={{padding:'14px 18px',borderBottom:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <div style={{fontWeight:800,fontSize:16}}>{modal.mode==='edit' ? 'Edit Programme Session' : 'New Programme Session'}</div>
+        <button className="btn btn-ghost small" onClick={()=>setModal(null)}>✕</button>
+      </div>
+      <div style={{padding:'16px 18px',overflowY:'auto',display:'flex',flexDirection:'column',gap:14}}>
+        <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+          <label style={{flex:'1 1 130px'}}><div className="field-label">Day</div>
+            <select className="select" value={f.weekday} onChange={e=>set({weekday:Number(e.target.value)})}>{DAYS_F.map((d,i)=><option key={i} value={i}>{d}</option>)}</select></label>
+          <label style={{flex:'1 1 120px'}}><div className="field-label">Start time</div>
+            <select className="select" value={f.startMinute} onChange={e=>set({startMinute:Number(e.target.value)})}>{timeOpts.map(m=><option key={m} value={m}>{minuteToTime(m)}</option>)}</select></label>
+          <label style={{flex:'1 1 110px'}}><div className="field-label">Duration</div>
+            <select className="select" value={f.durationMinutes} onChange={e=>set({durationMinutes:Number(e.target.value)})}>{durOpts.map(m=><option key={m} value={m}>{m} min</option>)}</select></label>
+        </div>
+        <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+          <label style={{flex:'1 1 160px'}}><div className="field-label">Pool <span className="subtle">(optional)</span></div>
+            <select className="select" value={f.poolId||''} onChange={e=>set({poolId:e.target.value||null})}><option value="">— None —</option>{pools.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+          <label style={{flex:'1 1 160px'}}><div className="field-label">Swim Group Category <span className="subtle">(optional)</span></div>
+            <select className="select" value={f.categoryId||''} onChange={e=>set({categoryId:e.target.value||null})}><option value="">— None —</option>{(categories||[]).filter(c=>c.is_active!==false).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+        </div>
+        <label><div className="field-label">Title <span className="subtle">(shown on the card)</span></div>
+          <input className="input" value={f.title} onChange={e=>set({title:e.target.value})} placeholder="e.g. Squad A — Endurance set" /></label>
+        <label><div className="field-label">Programme notes</div>
+          <textarea className="textarea" style={{minHeight:160}} value={f.body} onChange={e=>set({body:e.target.value})} placeholder="Free text for coaches — workout, teaching focus, drills, activities…" /></label>
+      </div>
+      <div style={{padding:'12px 18px',borderTop:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <div>{modal.mode==='edit' ? <button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>onDelete(modal.id)}>Delete</button> : null}</div>
+        <div style={{display:'flex',gap:8}}>
+          <button className="btn btn-ghost" onClick={()=>setModal(null)}>Cancel</button>
+          <button className="btn btn-primary" onClick={onSave} disabled={busy}>{busy ? 'Saving…' : 'Save session'}</button>
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+
+function ProgrammeCategoriesView({ categories, addCategory, updateCategory, deleteCategory }){
+  const [name,setName] = useState('');
+  const [color,setColor] = useState('#0EA5E9');
+  const [editingId,setEditingId] = useState(null);
+  const [editForm,setEditForm] = useState({name:'', color:''});
+  function startEdit(c){ setEditingId(c.id); setEditForm({ name:c.name||'', color:c.color||'#0EA5E9' }); }
+  async function saveEdit(){ if(!editForm.name.trim()) return; await updateCategory(editingId, { name:editForm.name.trim(), color:editForm.color||null }); setEditingId(null); }
+  return <>
+    <div className="card" style={{marginBottom:12}}>
+      <div style={{fontSize:18,fontWeight:800,marginBottom:4}}>🏊 Swim Group Categories</div>
+      <div className="small subtle" style={{marginBottom:14}}>Categories for the Programme planner. They appear as a dropdown when creating a programme session and tint the session cards. Shared across all branches.</div>
+      <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+        <input className="input" style={{flex:'1 1 220px',maxWidth:280}} placeholder="Category name (e.g. Squad, Learn-to-Swim)" value={name} onChange={e=>setName(e.target.value)} />
+        <input type="color" className="input" style={{width:64,padding:2}} value={color} onChange={e=>setColor(e.target.value)} title="Category tint" />
+        <button className="btn btn-primary small" disabled={!name.trim()} onClick={async()=>{ if(!name.trim()) return; await addCategory({ name:name.trim(), color }); setName(''); setColor('#0EA5E9'); }}>+ Add Category</button>
+      </div>
+    </div>
+    <div className="card" style={{padding:0,overflow:'hidden'}}>
+      <div className="table-wrap" style={{border:'none',borderRadius:0}}>
+        <table>
+          <thead><tr><th style={{width:'55%'}}>Name</th><th style={{width:90}}>Color</th><th style={{width:200,textAlign:'right'}}>Actions</th></tr></thead>
+          <tbody>
+            {(categories||[]).length === 0 && <tr><td colSpan={3} className="empty">No categories yet. Add one above to get started.</td></tr>}
+            {(categories||[]).map(c => editingId === c.id ? (
+              <tr key={c.id}>
+                <td><input className="input" value={editForm.name} onChange={e=>setEditForm({...editForm, name:e.target.value})} /></td>
+                <td><input type="color" className="input" style={{width:50,padding:2}} value={editForm.color} onChange={e=>setEditForm({...editForm, color:e.target.value})} /></td>
+                <td style={{textAlign:'right'}}>
+                  <button className="btn btn-primary small" onClick={saveEdit} style={{marginRight:6}}>Save</button>
+                  <button className="btn btn-ghost small" onClick={()=>setEditingId(null)}>Cancel</button>
+                </td>
+              </tr>
+            ) : (
+              <tr key={c.id}>
+                <td style={{fontWeight:600}}>{c.name}</td>
+                <td>{c.color ? <span style={{display:'inline-block',width:24,height:24,borderRadius:6,background:c.color,border:'1px solid var(--border)'}} /> : <span className="subtle">—</span>}</td>
+                <td style={{textAlign:'right'}}>
+                  <button className="btn btn-ghost small" onClick={()=>startEdit(c)} style={{marginRight:6}}>✎ Edit</button>
+                  <button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>deleteCategory(c.id)}>Delete</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </>;
+}
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────
 ReactDOM.createRoot(document.getElementById('root')).render(
