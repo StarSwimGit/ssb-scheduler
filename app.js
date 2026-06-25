@@ -714,6 +714,7 @@ function App(){
         categoryId: r.category_id || null,
         label: r.label || '',
         color: r.color || null,
+        instructorIds: Array.isArray(r.instructor_ids) ? r.instructor_ids : [],
         sortOrder: Number(r.sort_order || 0)
       })));
     } catch(e){ console.warn('Programme sessions not available yet (run supabase_programme_migration.sql):', e?.message || e); setProgrammeSessions([]); }
@@ -2195,6 +2196,7 @@ function App(){
 
   // ── Programme CRUD ───────────────────────────────────────────────────────
   function programmeCategoryById(id){ return (programmeCategories||[]).find(c => c.id === id) || null; }
+  function progInstructorById(id){ return (options.instructors||[]).find(i => i.id === id) || null; }
 
   function openProgrammeCreate(day, startMinute, poolId){
     setProgrammeModal({
@@ -2202,6 +2204,7 @@ function App(){
       form:{
         weekday: day, startMinute: startMinute, durationMinutes: 60,
         poolId: poolId || null, categoryId: null, title: '', body: '', color: null,
+        instructorIds: [],
         branchId: (currentBranchId && currentBranchId !== 'all') ? currentBranchId : null
       }
     });
@@ -2212,6 +2215,7 @@ function App(){
       form:{
         weekday: s.day, startMinute: s.startMinute, durationMinutes: s.durationMinutes,
         poolId: s.poolId, categoryId: s.categoryId, title: s.title, body: s.body, color: s.color,
+        instructorIds: s.instructorIds || [],
         branchId: s.branchId || null
       }
     });
@@ -2232,7 +2236,8 @@ function App(){
         title: (m.form.title || '').trim() || null,
         body: (m.form.body || '').trim() || null,
         category_id: m.form.categoryId || null,
-        color: m.form.color || null
+        color: m.form.color || null,
+        instructor_ids: Array.isArray(m.form.instructorIds) ? m.form.instructorIds.slice(0,3) : []
       };
       if(m.mode === 'edit' && m.id){ await patchRows('programme_sessions', {id:m.id}, payload); }
       else { await insertRows('programme_sessions', payload); }
@@ -2248,6 +2253,43 @@ function App(){
       await loadProgrammeSessions();
       setProgrammeModal(null);
     } catch(err){ handleErr(err); alert(err.message || 'Failed to delete programme session'); }
+  }
+  // Copy ONE programme session into the next N weeks at the same weekday +
+  // start time, carrying all details (branch, pool, title, body, category,
+  // colour, instructors). Weeks that already have a matching session at the
+  // same slot + title are skipped so re-running doesn't pile up duplicates.
+  async function duplicateProgrammeSessionForward(sessionId, weekCount){
+    const src = (programmeSessions||[]).find(s => s.id === sessionId);
+    if(!src){ alert('Source session not found.'); return; }
+    const n = Math.max(1, Math.min(52, Number(weekCount) || 1));
+    if(!confirm(`Copy "${src.title || 'this session'}" on ${DAYS_F[src.day]} ${minuteToTime(src.startMinute)} to the next ${n} week${n===1?'':'s'}?\n\nWeeks that already have a matching session at the same day & time are skipped.`)) return;
+    let created = 0;
+    try{
+      for(let w = 1; w <= n; w++){
+        const targetWeekStart = addDays(src.weekStartDate, 7 * w);
+        const exists = (programmeSessions||[]).some(s =>
+          s.weekStartDate === targetWeekStart && s.day === src.day &&
+          s.startMinute === src.startMinute && (s.title||'') === (src.title||''));
+        if(exists) continue;
+        await insertRows('programme_sessions', [{
+          week_start_date: targetWeekStart,
+          weekday: src.day + 1,
+          start_minute: src.startMinute,
+          duration_minutes: src.durationMinutes,
+          branch_id: src.branchId || null,
+          pool_id: src.poolId || null,
+          title: src.title || null,
+          body: src.body || null,
+          category_id: src.categoryId || null,
+          color: src.color || null,
+          instructor_ids: src.instructorIds || []
+        }]);
+        created++;
+      }
+      await loadProgrammeSessions();
+      setProgrammeModal(null);
+      alert(created ? `Copied to ${created} week${created===1?'':'s'}.` : 'No new sessions created — every target week already had a matching session.');
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to copy programme session'); }
   }
   async function addProgrammeCategory({ name, color }){
     try{
@@ -3058,6 +3100,7 @@ function App(){
         gridBounds={gridBounds}
         categoryById={programmeCategoryById}
         poolById={poolById}
+        instructorById={progInstructorById}
         onAdd={openProgrammeCreate}
         onEdit={openProgrammeEdit}
         selectedWeekStart={programmeWeekStart}
@@ -3073,6 +3116,7 @@ function App(){
         selectedDate={programmeDate} setSelectedDate={setProgrammeDate}
         programmeSessionsForDate={programmeSessionsForDate}
         categoryById={programmeCategoryById}
+        instructorById={progInstructorById}
         onAdd={openProgrammeCreate}
         onEdit={openProgrammeEdit}
       />}
@@ -3311,7 +3355,9 @@ function App(){
     {programmeModal ? <ProgrammeSessionModal
       modal={programmeModal} setModal={setProgrammeModal} busy={saveBusy}
       onSave={saveProgrammeSession} onDelete={deleteProgrammeSession}
-      pools={activePools()} categories={programmeCategories} gridBounds={gridBounds}
+      onDuplicateForward={duplicateProgrammeSessionForward}
+      pools={activePools()} categories={programmeCategories}
+      instructors={activeInstructors()} gridBounds={gridBounds}
     /> : null}
   </div>;
 }
@@ -9107,22 +9153,24 @@ function programmeCardColors(hex){
   return { bg: hex + '1A', bd: hex, tx:'#0F172A' };
 }
 
-function ProgrammeCard({ s, categoryById, poolById, showPoolBadge, onEdit }){
+function ProgrammeCard({ s, categoryById, poolById, instructorById, showPoolBadge, onEdit }){
   const cat = s.categoryId ? categoryById(s.categoryId) : null;
   const tint = s.color || (cat && cat.color) || null;
   const c = programmeCardColors(tint);
   const pool = s.poolId ? poolById(s.poolId) : null;
   const heading = s.title || (cat && cat.name) || 'Session';
+  const instNames = (s.instructorIds || []).map(id => (instructorById && instructorById(id))?.name).filter(Boolean);
   return <div className="wa-card prog-card" onClick={(e)=>{ e.stopPropagation(); onEdit(s); }}
     style={{ background:c.bg, borderLeft:`3px solid ${c.bd}`, color:c.tx }}>
     <div className="wa-card-head"><span className="wa-card-title">{heading}</span></div>
     <div className="wa-card-line">{compactRange(s.startMinute, s.durationMinutes)}{showPoolBadge && pool ? <span className="event-pool-pill" style={{marginLeft:4}}>{pool.name}</span> : null}</div>
+    {instNames.length ? <div className="wa-card-line prog-card-inst">👤 {instNames.join(', ')}</div> : null}
     {cat ? <div className="prog-cat-chip" style={{background:(cat.color||'#64748B')+'22', color:cat.color||'#475569', borderColor:cat.color||'#94A3B8'}}>{cat.name}</div> : null}
     {s.body ? <div className="prog-card-body">{s.body}</div> : <div className="wa-card-students-empty">— no notes yet —</div>}
   </div>;
 }
 
-function ProgrammeWeekView({ programmeWeekDays, pools, selectedPoolId, setSelectedPoolId, gridBounds, categoryById, poolById, onAdd, onEdit, selectedWeekStart, currentWeekStart, onPrev, onNext, onToday, branchLabel }){
+function ProgrammeWeekView({ programmeWeekDays, pools, selectedPoolId, setSelectedPoolId, gridBounds, categoryById, poolById, instructorById, onAdd, onEdit, selectedWeekStart, currentWeekStart, onPrev, onNext, onToday, branchLabel }){
   const wb = weekBounds(selectedWeekStart);
   const startHour = Math.floor(gridBounds.startMin / 60) * 60;
   const hours = [];
@@ -9150,7 +9198,7 @@ function ProgrammeWeekView({ programmeWeekDays, pools, selectedPoolId, setSelect
         {DAYS_S.map((_,di) => {
           const cell = (programmeWeekDays[di] || []).filter(s => s.startMinute >= h && s.startMinute < h + 60);
           return <div key={di+'-'+h} className="wa-cell" onClick={()=>onAdd(di, h, selectedPoolId || undefined)}>
-            {cell.map(s => <ProgrammeCard key={s.id} s={s} categoryById={categoryById} poolById={poolById} showPoolBadge={showPoolBadge} onEdit={onEdit} />)}
+            {cell.map(s => <ProgrammeCard key={s.id} s={s} categoryById={categoryById} poolById={poolById} instructorById={instructorById} showPoolBadge={showPoolBadge} onEdit={onEdit} />)}
           </div>;
         })}
       </React.Fragment>)}
@@ -9158,11 +9206,12 @@ function ProgrammeWeekView({ programmeWeekDays, pools, selectedPoolId, setSelect
   </div>;
 }
 
-function ProgrammeMonthView({ monthCursor, setMonthCursor, monthDates, selectedDate, setSelectedDate, programmeSessionsForDate, categoryById, onAdd, onEdit }){
+function ProgrammeMonthView({ monthCursor, setMonthCursor, monthDates, selectedDate, setSelectedDate, programmeSessionsForDate, categoryById, instructorById, onAdd, onEdit }){
   const monthOpts = [];
   for(let y=2025;y<=2032;y++) for(let m=0;m<12;m++){ const d = new Date(y,m,1); monthOpts.push(<option key={`${y}-${m}`} value={monthKey(d)}>{d.toLocaleDateString(undefined,{month:'long', year:'numeric'})}</option>); }
   const items = programmeSessionsForDate(selectedDate);
   const di = (fromDateStr(selectedDate).getDay() + 6) % 7;
+  function instLabel(s){ return (s.instructorIds || []).map(id => (instructorById && instructorById(id))?.name).filter(Boolean).join(', '); }
   return <>
     <div className="card">
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:14}}>
@@ -9177,9 +9226,12 @@ function ProgrammeMonthView({ monthCursor, setMonthCursor, monthDates, selectedD
         {DAYS_S.map(d => <div key={d} className="month-dow">{d}</div>)}
         {monthDates.map(d => {
           const ds = toDateStr(d), inMonth = d.getMonth() === monthCursor.getMonth(), dayItems = programmeSessionsForDate(ds);
-          return <div key={ds} className={`day-box ${inMonth?'':'outside'} ${selectedDate===ds?'selected':''}`} onClick={()=>setSelectedDate(ds)}>
+          return <div key={ds} className={`day-box prog-day-box ${inMonth?'':'outside'} ${selectedDate===ds?'selected':''}`} onClick={()=>setSelectedDate(ds)}>
             <div className="day-top"><div className="day-num">{d.getDate()}</div></div>
-            <div>{dayItems.length ? dayItems.slice(0,3).map(s => { const cat = s.categoryId ? categoryById(s.categoryId) : null; const c = programmeCardColors(s.color || (cat && cat.color)); return <div key={s.id} className="mini-item" style={{background:c.bg,borderLeftColor:c.bd,color:c.tx}}>{minuteToTime(s.startMinute)} · {s.title || (cat && cat.name) || 'Session'}</div>; }) : <div className="small subtle">—</div>}{dayItems.length>3 ? <div className="small subtle" style={{marginTop:2}}>+{dayItems.length-3} more</div> : null}</div>
+            <div className="prog-mini-list">{dayItems.length ? dayItems.slice(0,3).map(s => { const cat = s.categoryId ? categoryById(s.categoryId) : null; const c = programmeCardColors(s.color || (cat && cat.color)); const inst = instLabel(s); return <div key={s.id} className="prog-mini-item" style={{background:c.bg,borderLeftColor:c.bd,color:c.tx}}>
+              <div className="pmi-top">{s.title || (cat && cat.name) || 'Session'}</div>
+              <div className="pmi-sub">{minuteToTime(s.startMinute)}{inst ? ` · ${inst}` : ''}</div>
+            </div>; }) : <div className="small subtle">—</div>}{dayItems.length>3 ? <div className="small subtle" style={{marginTop:3}}>+{dayItems.length-3} more</div> : null}</div>
           </div>;
         })}
       </div>
@@ -9190,10 +9242,11 @@ function ProgrammeMonthView({ monthCursor, setMonthCursor, monthDates, selectedD
         <button className="btn btn-primary small" onClick={()=>onAdd(di, 540, undefined)}>+ Create session</button>
       </div>
       {items.length ? <div style={{display:'flex',flexDirection:'column',gap:8}}>
-        {items.map(s => { const cat = s.categoryId ? categoryById(s.categoryId) : null; const c = programmeCardColors(s.color || (cat && cat.color)); return <div key={s.id} className="prog-row" onClick={()=>onEdit(s)} style={{borderLeft:`3px solid ${c.bd}`}}>
+        {items.map(s => { const cat = s.categoryId ? categoryById(s.categoryId) : null; const c = programmeCardColors(s.color || (cat && cat.color)); const inst = instLabel(s); return <div key={s.id} className="prog-row" onClick={()=>onEdit(s)} style={{borderLeft:`3px solid ${c.bd}`}}>
           <div className="prog-row-time">{compactRange(s.startMinute, s.durationMinutes)}</div>
           <div className="prog-row-main">
             <div className="prog-row-title">{s.title || (cat && cat.name) || 'Session'}{cat ? <span className="prog-cat-chip" style={{marginLeft:6,background:(cat.color||'#64748B')+'22',color:cat.color||'#475569',borderColor:cat.color||'#94A3B8'}}>{cat.name}</span> : null}</div>
+            {inst ? <div className="small subtle" style={{marginTop:2}}>👤 {inst}</div> : null}
             {s.body ? <div className="prog-row-body">{s.body}</div> : <div className="small subtle">— no notes —</div>}
           </div>
         </div>; })}
@@ -9202,18 +9255,52 @@ function ProgrammeMonthView({ monthCursor, setMonthCursor, monthDates, selectedD
   </>;
 }
 
-function ProgrammeSessionModal({ modal, setModal, busy, onSave, onDelete, pools, categories, gridBounds }){
+function ProgrammeSessionModal({ modal, setModal, busy, onSave, onDelete, onDuplicateForward, pools, categories, instructors, gridBounds }){
   const f = modal.form;
   function set(patch){ setModal({ ...modal, form:{ ...modal.form, ...patch } }); }
+
+  // Esc / dirty-close — same behaviour as the scheduling session editor.
+  const [escWarn, setEscWarn] = useState(false);
+  const [dupOpen, setDupOpen] = useState(false);
+  const initialFormRef = React.useRef(null);
+  React.useEffect(() => { initialFormRef.current = JSON.stringify(modal.form); }, []); // eslint-disable-line
+  const isDirty = initialFormRef.current !== null && JSON.stringify(modal.form) !== initialFormRef.current;
+  function requestClose(){ if(isDirty) setEscWarn(true); else setModal(null); }
+  React.useEffect(() => {
+    function onKey(e){
+      if(e.key !== 'Escape') return;
+      e.stopPropagation();
+      if(escWarn){ setEscWarn(false); return; }   // ESC again dismisses warning
+      if(isDirty) setEscWarn(true); else setModal(null);
+    }
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [isDirty, escWarn]);
+
   const timeOpts = [];
   for(let m = gridBounds.startMin; m < gridBounds.endMin; m += 30) timeOpts.push(m);
   const durOpts = [30,45,60,75,90,105,120,150,180];
-  return <div className="modal-backdrop" onClick={()=>setModal(null)}>
+  const selectedInst = f.instructorIds || [];
+  function toggleInstructor(id){
+    const cur = f.instructorIds || [];
+    if(cur.includes(id)) set({ instructorIds: cur.filter(x => x !== id) });
+    else if(cur.length < 3) set({ instructorIds: [...cur, id] });
+  }
+
+  return <div className="modal-backdrop" onClick={requestClose}>
     <div className="modal-card" onClick={e=>e.stopPropagation()} style={{width:'min(560px,100%)'}}>
       <div style={{padding:'14px 18px',borderBottom:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
         <div style={{fontWeight:800,fontSize:16}}>{modal.mode==='edit' ? 'Edit Programme Session' : 'New Programme Session'}</div>
-        <button className="btn btn-ghost small" onClick={()=>setModal(null)}>✕</button>
+        <button className="btn btn-ghost small" onClick={requestClose} aria-label="Close" title="Close (Esc)">✕</button>
       </div>
+      {escWarn && <div className="esc-warn-bar">
+        <span>⚠ You have unsaved changes.</span>
+        <div style={{display:'flex',gap:6,flexShrink:0}}>
+          <button className="btn btn-primary small" onClick={()=>{ setEscWarn(false); onSave(); }}>Save &amp; Close</button>
+          <button className="btn btn-danger small" onClick={()=>{ setEscWarn(false); setModal(null); }}>Discard Changes</button>
+          <button className="btn btn-ghost small" onClick={()=>setEscWarn(false)}>Keep Editing</button>
+        </div>
+      </div>}
       <div style={{padding:'16px 18px',overflowY:'auto',display:'flex',flexDirection:'column',gap:14}}>
         <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
           <label style={{flex:'1 1 130px'}}><div className="field-label">Day</div>
@@ -9229,15 +9316,40 @@ function ProgrammeSessionModal({ modal, setModal, busy, onSave, onDelete, pools,
           <label style={{flex:'1 1 160px'}}><div className="field-label">Swim Group Category <span className="subtle">(optional)</span></div>
             <select className="select" value={f.categoryId||''} onChange={e=>set({categoryId:e.target.value||null})}><option value="">— None —</option>{(categories||[]).filter(c=>c.is_active!==false).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
         </div>
+        <div>
+          <div className="field-label">Instructors <span className="subtle">(up to 3 · {selectedInst.length}/3 selected)</span></div>
+          <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+            {(instructors||[]).length === 0 ? <span className="small subtle">No instructors yet — add them in Settings › Instructors.</span> : (instructors||[]).map(inst => {
+              const on = selectedInst.includes(inst.id);
+              const disabled = !on && selectedInst.length >= 3;
+              const gIcon = inst.gender === 'female' ? '♀ ' : (inst.gender === 'male' ? '♂ ' : '');
+              return <button key={inst.id} type="button" className={`chip chip-instructor ${on?'is-on':''}`} onClick={()=>toggleInstructor(inst.id)} disabled={disabled} style={disabled?{opacity:.4,cursor:'not-allowed'}:undefined} title={on?`Remove ${inst.name}`:(disabled?'Up to 3 instructors':`Add ${inst.name}`)}>{gIcon}{inst.name}</button>;
+            })}
+          </div>
+        </div>
         <label><div className="field-label">Title <span className="subtle">(shown on the card)</span></div>
           <input className="input" value={f.title} onChange={e=>set({title:e.target.value})} placeholder="e.g. Squad A — Endurance set" /></label>
         <label><div className="field-label">Programme notes</div>
           <textarea className="textarea" style={{minHeight:160}} value={f.body} onChange={e=>set({body:e.target.value})} placeholder="Free text for coaches — workout, teaching focus, drills, activities…" /></label>
+
+        {modal.mode==='edit' && modal.id && onDuplicateForward && <div className="cancel-class-panel">
+          <button type="button" className={`cancel-class-toggle ${dupOpen?'is-open':''}`} onClick={()=>setDupOpen(o=>!o)} style={{background:'#EFF6FF',borderColor:'#BFDBFE',color:'#1E40AF'}}>
+            <span>⏩ Copy this session to future weeks</span>
+            <span className="cancel-class-chev" style={{color:'#1E40AF'}}>{dupOpen ? '▴' : '▾'}</span>
+          </button>
+          {dupOpen && <div className="cancel-class-options" style={{background:'#EFF6FF',borderColor:'#BFDBFE'}}>
+            <div className="cancel-class-hint" style={{color:'#1E40AF'}}>Copies this session into the next N weeks at the same day &amp; time, carrying the title, notes, pool, category and instructors. Weeks that already have a matching session at that slot are skipped.</div>
+            <div className="dup-buttons">
+              {[1,2,3,4,8,12].map(n => <button key={n} type="button" className="dup-btn" onClick={()=>onDuplicateForward(modal.id, n)}>{n===1 ? 'Next week' : `Next ${n} weeks`}</button>)}
+              <button type="button" className="dup-btn" onClick={()=>{ const v = prompt('How many weeks ahead to copy? (1–52)', '4'); const n = Math.max(1, Math.min(52, parseInt(v,10)||0)); if(n>0) onDuplicateForward(modal.id, n); }}>Custom…</button>
+            </div>
+          </div>}
+        </div>}
       </div>
       <div style={{padding:'12px 18px',borderTop:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
         <div>{modal.mode==='edit' ? <button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>onDelete(modal.id)}>Delete</button> : null}</div>
         <div style={{display:'flex',gap:8}}>
-          <button className="btn btn-ghost" onClick={()=>setModal(null)}>Cancel</button>
+          <button className="btn btn-ghost" onClick={requestClose}>Cancel</button>
           <button className="btn btn-primary" onClick={onSave} disabled={busy}>{busy ? 'Saving…' : 'Save session'}</button>
         </div>
       </div>
