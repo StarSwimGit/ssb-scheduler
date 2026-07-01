@@ -3889,9 +3889,7 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
               <td className="print-detail-cell">
                 {rowItems.length
                   ? <div className="print-day-cols">
-                      {[0,1,2].map(col => {
-                        const it = rowItems[col];
-                        if(!it) return <div key={col} className="print-day-col print-day-col-empty" />;
+                      {rowItems.map(it => {
                         const pool = poolById(it.poolId);
                         const inst = it.instructors.map(i=>i.name).join(', ') || it.legacyInstructor || '';
                         const meta = [pool ? pool.name : '', inst].filter(Boolean).join(' · ');
