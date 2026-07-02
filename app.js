@@ -259,6 +259,7 @@ function App(){
   const [programmeSection,setProgrammeSection] = useState('week'); // 'week'|'month'
   const [programmeSessions,setProgrammeSessions] = useState([]);
   const [programmeCategories,setProgrammeCategories] = useState([]);
+  const [billingTerms,setBillingTerms] = useState([]);
   const [programmeModal,setProgrammeModal] = useState(null);
   const [programmeDate,setProgrammeDate] = useState(todayStr());     // own week cursor (independent of Schedule)
   const [programmeMonthCursor,setProgrammeMonthCursor] = useState(new Date());
@@ -351,7 +352,7 @@ function App(){
         loadCreditBalances(), loadCreditPurchases(),
         loadSubscriptions(), loadCodes(), loadReplacementPending(),
         loadTcAcceptances(), loadRemarks(monthCursor), loadInvoiceData(),
-        loadProgrammeSessions(), loadProgrammeCategories()
+        loadProgrammeSessions(), loadProgrammeCategories(), loadBillingTerms()
       ]).catch(e => console.warn('Background load warning:', e));
     } catch(err){ handleErr(err); setLoading(false); }
   }
@@ -544,7 +545,7 @@ function App(){
   }
 
   async function voidInvoice(id){
-    const hasPmts = (payments||[]).some(p => p.invoice_id === id);
+    const hasPmts = (pmts||[]).some(p => p.invoice_id === id);
     const msg = hasPmts
       ? 'Void this invoice?\n\nIt has a recorded payment/receipt. Voiding will DELETE the payment(s) and receipt(s) for this invoice and remove its pending credits. The invoice stays on record marked "Void". This cannot be undone.\n\nUse Void only for invoices raised in error (e.g. duplicates). For genuine money returned to a parent, use Refund instead.'
       : 'Void this invoice? It will be marked "Void" and its pending credits removed. This cannot be undone.';
@@ -760,6 +761,12 @@ function App(){
       const rows = await selectRows('programme_categories','*','&order=sort_order.asc,name.asc').catch(()=>[]);
       setProgrammeCategories(rows || []);
     } catch(_){ setProgrammeCategories([]); }
+  }
+  async function loadBillingTerms(){
+    try{
+      const rows = await selectRows('billing_terms','*','&order=start_date.asc,sort_order.asc,name.asc').catch(()=>[]);
+      setBillingTerms(rows || []);
+    } catch(_){ setBillingTerms([]); }
   }
 
   async function loadStudents(){
@@ -2369,6 +2376,30 @@ function App(){
     catch(err){ handleErr(err); alert(err.message || 'Failed to delete category'); }
   }
 
+  // ── Billing Terms CRUD (Settings › Billing Terms) ────────────────────────
+  async function addBillingTerm({ name, startDate, endDate, branchId }){
+    try{
+      const next = (billingTerms||[]).length + 1;
+      await insertRows('billing_terms', {
+        name,
+        start_date: startDate || null,
+        end_date: endDate || null,
+        branch_id: branchId || null,
+        sort_order: next, is_active: true
+      });
+      await loadBillingTerms();
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to add billing term'); }
+  }
+  async function updateBillingTerm(id, patch){
+    try{ await patchRows('billing_terms', {id}, patch); await loadBillingTerms(); }
+    catch(err){ handleErr(err); alert(err.message || 'Failed to update billing term'); }
+  }
+  async function deleteBillingTerm(id){
+    if(!confirm('Delete this billing term?')) return;
+    try{ await deleteRows('billing_terms', {id}); await loadBillingTerms(); }
+    catch(err){ handleErr(err); alert(err.message || 'Failed to delete billing term'); }
+  }
+
   // Reorder a settings list by reindexing sort_order across the whole list, so
   // the result is clean and gap-free regardless of the existing values.
   async function reorderOption(table, list, index, dir){
@@ -3045,6 +3076,7 @@ function App(){
       <button className={`sub-tab ${adminSection==='lessonTypes'?'active':''}`} onClick={()=>setAdminSection('lessonTypes')}>Lesson Types</button>
       <button className={`sub-tab ${adminSection==='programme'?'active':''}`} onClick={()=>setAdminSection('programme')}>Programme</button>
       <button className={`sub-tab ${adminSection==='terms'?'active':''}`} onClick={()=>setAdminSection('terms')}>Terms</button>
+      <button className={`sub-tab ${adminSection==='billingTerms'?'active':''}`} onClick={()=>setAdminSection('billingTerms')}>Billing Terms</button>
       <button className={`sub-tab ${adminSection==='invoiceSettings'?'active':''}`} onClick={()=>setAdminSection('invoiceSettings')}>Invoice Numbering</button>
     </div></div>}
 
@@ -3358,6 +3390,14 @@ function App(){
         currentBranchId={currentBranchId}
         defaultTerms={defaultTermsText()}
         onSave={saveBranchTerms}
+      />}
+      {!loading && view==='settings' && adminSection==='billingTerms' && <BillingTermsAdminView
+        terms={billingTerms}
+        branches={options.branches||[]}
+        currentBranchId={currentBranchId}
+        addTerm={addBillingTerm}
+        updateTerm={updateBillingTerm}
+        deleteTerm={deleteBillingTerm}
       />}
       {!loading && view==='settings' && adminSection==='invoiceSettings' && <div className="card">
         <div style={{fontWeight:800,fontSize:18,marginBottom:4}}>Invoice Numbering &amp; Permissions</div>
@@ -9547,6 +9587,73 @@ function ProgrammeSessionModal({ modal, setModal, busy, onSave, onDelete, onDupl
       </div>
     </div>
   </div>;
+}
+
+// Settings › Billing Terms — per-branch named billing periods / school terms
+// (e.g. "Term 1 2026") with start & end dates. Branch-scoped like Lesson Types.
+function BillingTermsAdminView({ terms, branches, currentBranchId, addTerm, updateTerm, deleteTerm }){
+  const activeBranches = (branches||[]).filter(b => b.is_active !== false);
+  const branchById = id => (branches||[]).find(b => b.id === id) || null;
+  const showBranchTag = !currentBranchId || currentBranchId === 'all';
+  const defaultBranch = (currentBranchId && currentBranchId !== 'all') ? currentBranchId : (activeBranches[0]?.id || '');
+
+  const [name, setName] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [branchId, setBranchId] = useState(defaultBranch);
+  React.useEffect(() => { if(currentBranchId && currentBranchId !== 'all') setBranchId(currentBranchId); }, [currentBranchId]);
+
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({ name:'', startDate:'', endDate:'' });
+
+  const visible = (currentBranchId && currentBranchId !== 'all')
+    ? (terms||[]).filter(t => !t.branch_id || t.branch_id === currentBranchId)
+    : (terms||[]);
+
+  function startEdit(t){ setEditingId(t.id); setEditForm({ name:t.name||'', startDate:t.start_date||'', endDate:t.end_date||'' }); }
+  async function saveEdit(){ if(!editForm.name.trim()) return; await updateTerm(editingId, { name:editForm.name.trim(), start_date:editForm.startDate||null, end_date:editForm.endDate||null }); setEditingId(null); }
+  function fmt(d){ if(!d) return '—'; try{ return new Date(d).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}); }catch(_){ return d; } }
+
+  return <>
+    <div className="card" style={{marginBottom:12}}>
+      <div style={{fontSize:18,fontWeight:800,marginBottom:4}}>🗓 Billing Terms</div>
+      <div className="small subtle" style={{marginBottom:14}}>Named billing periods / school terms (e.g. “Term 1 2026”) with a start and end date, per branch. The list shows the active branch's terms; switch branch in the header to manage another.</div>
+      <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) 150px 150px 160px auto',gap:10,alignItems:'end'}}>
+        <div className="field" style={{margin:0}}><label>Name</label><input className="input" placeholder="e.g. Term 1 2026" value={name} onChange={e=>setName(e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Start date</label><input className="input" type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>End date</label><input className="input" type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Branch</label><select className="select" value={branchId} onChange={e=>setBranchId(e.target.value)}>{activeBranches.map(b => <option key={b.id} value={b.id}>{b.name}{b.code?` (${b.code})`:''}</option>)}</select></div>
+        <button className="btn btn-primary" style={{height:38}} disabled={!name.trim()||!branchId} onClick={async()=>{ if(!name.trim()||!branchId) return; await addTerm({ name:name.trim(), startDate, endDate, branchId }); setName(''); setStartDate(''); setEndDate(''); }}>+ Add Term</button>
+      </div>
+    </div>
+    <div className="card" style={{padding:0,overflow:'hidden'}}>
+      <div className="table-wrap" style={{border:'none',borderRadius:0}}>
+        <table>
+          <thead><tr><th style={{width:'34%'}}>Name</th><th style={{width:140}}>Start</th><th style={{width:140}}>End</th>{showBranchTag?<th style={{width:90}}>Branch</th>:null}<th style={{width:180,textAlign:'right'}}>Actions</th></tr></thead>
+          <tbody>
+            {visible.length===0 && <tr><td colSpan={showBranchTag?5:4} className="empty">No billing terms yet. Add one above.</td></tr>}
+            {visible.map(t => editingId===t.id ? (
+              <tr key={t.id}>
+                <td><input className="input" value={editForm.name} onChange={e=>setEditForm({...editForm,name:e.target.value})} /></td>
+                <td><input className="input" type="date" value={editForm.startDate} onChange={e=>setEditForm({...editForm,startDate:e.target.value})} /></td>
+                <td><input className="input" type="date" value={editForm.endDate} onChange={e=>setEditForm({...editForm,endDate:e.target.value})} /></td>
+                {showBranchTag?<td className="small subtle">{branchById(t.branch_id)?.code||branchById(t.branch_id)?.name||'—'}</td>:null}
+                <td style={{textAlign:'right'}}><button className="btn btn-primary small" onClick={saveEdit} style={{marginRight:6}}>Save</button><button className="btn btn-ghost small" onClick={()=>setEditingId(null)}>Cancel</button></td>
+              </tr>
+            ) : (
+              <tr key={t.id}>
+                <td style={{fontWeight:600}}>{t.name}</td>
+                <td>{fmt(t.start_date)}</td>
+                <td>{fmt(t.end_date)}</td>
+                {showBranchTag?<td>{t.branch_id?<span className="lt-branch-tag">{branchById(t.branch_id)?.code||branchById(t.branch_id)?.name}</span>:<span className="subtle">—</span>}</td>:null}
+                <td style={{textAlign:'right'}}><button className="btn btn-ghost small" onClick={()=>startEdit(t)} style={{marginRight:6}}>✎ Edit</button><button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>deleteTerm(t.id)}>Delete</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </>;
 }
 
 function ProgrammeCategoriesView({ categories, addCategory, updateCategory, deleteCategory }){
