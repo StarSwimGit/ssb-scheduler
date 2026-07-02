@@ -917,10 +917,7 @@ function App() {
       alert(err.message || 'Failed to reverse');
     }
   }
-  async function voidInvoice(id) {
-    const hasPmts = (pmts || []).some(p => p.invoice_id === id);
-    const msg = hasPmts ? 'Void this invoice?\n\nIt has a recorded payment/receipt. Voiding will DELETE the payment(s) and receipt(s) for this invoice and remove its pending credits. The invoice stays on record marked "Void". This cannot be undone.\n\nUse Void only for invoices raised in error (e.g. duplicates). For genuine money returned to a parent, use Refund instead.' : 'Void this invoice? It will be marked "Void" and its pending credits removed. This cannot be undone.';
-    if (!confirm(msg)) return;
+  async function voidInvoice(id, reason) {
     try {
       await deleteRows('payments', {
         invoice_id: id
@@ -933,6 +930,8 @@ function App() {
       }, {
         status: 'void',
         amount_paid: 0,
+        void_reason: (reason || '').slice(0, 100) || null,
+        voided_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       });
       await loadInvoiceData();
@@ -16130,7 +16129,8 @@ function InvoicesView({
         flexShrink: 0
       }
     }, inv.invoice_number || '#—'), /*#__PURE__*/React.createElement("span", {
-      className: `inv-status-chip s-${inv.status || 'draft'}`
+      className: `inv-status-chip s-${inv.status || 'draft'}`,
+      title: inv.status === 'void' && inv.void_reason ? `Void reason: ${inv.void_reason}` : undefined
     }, invoiceStatusLabel(inv.status)), overdue && /*#__PURE__*/React.createElement("span", {
       className: "inv-status-chip s-overdue"
     }, "Overdue"), /*#__PURE__*/React.createElement("span", {
@@ -16182,7 +16182,7 @@ function InvoicesView({
       pendingCredits: invPcs,
       isOverdue: overdue,
       membersByGroup: membersByGroup,
-      onVoid: () => onVoid(inv.id),
+      onVoid: reason => onVoid(inv.id, reason),
       onDelete: onDelete ? () => onDelete(inv.id) : null,
       onRefund: onRefund ? data => onRefund({
         invoiceId: inv.id,
@@ -16236,6 +16236,24 @@ function InvoiceDetailPanel({
   const [refReason, setRefReason] = useState('');
   const [refBusy, setRefBusy] = useState(false);
   const paidTotal = Number(invoice.amount_paid) || 0;
+
+  // Void state
+  const [showVoidForm, setShowVoidForm] = useState(false);
+  const [voidReason, setVoidReason] = useState('');
+  const [voidBusy, setVoidBusy] = useState(false);
+  async function submitVoid() {
+    if (!voidReason.trim()) return;
+    setVoidBusy(true);
+    try {
+      await onVoid(voidReason.trim());
+      setShowVoidForm(false);
+      setVoidReason('');
+    } catch (err) {
+      alert(err.message || 'Failed to void');
+    } finally {
+      setVoidBusy(false);
+    }
+  }
   async function submitRefund() {
     const amt = Math.abs(Number(refAmt) || 0);
     if (!amt) {
@@ -16304,7 +16322,14 @@ function InvoiceDetailPanel({
       marginTop: 4,
       fontStyle: 'italic'
     }
-  }, invoice.notes)), /*#__PURE__*/React.createElement("div", {
+  }, invoice.notes), invoice.status === 'void' && invoice.void_reason && /*#__PURE__*/React.createElement("div", {
+    className: "small",
+    style: {
+      marginTop: 4,
+      color: '#B91C1C',
+      fontWeight: 600
+    }
+  }, "⊘ Voided: ", invoice.void_reason)), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6,
@@ -16328,7 +16353,7 @@ function InvoiceDetailPanel({
     }
   }, "🖨 Print Invoice & Receipt"), invoice.status !== 'void' && invoice.status !== 'refunded' && /*#__PURE__*/React.createElement("button", {
     className: "btn btn-danger small",
-    onClick: onVoid
+    onClick: () => setShowVoidForm(true)
   }, "Void"), onRefund && paidTotal > 0 && invoice.status !== 'void' && invoice.status !== 'refunded' && /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
     style: {
@@ -16431,7 +16456,59 @@ function InvoiceDetailPanel({
     style: {
       marginTop: 4
     }
-  }, "Paid RM ", Number(invoice.amount_paid || 0).toFixed(2), " · Outstanding RM ", outstanding.toFixed(2))), showRefundForm && /*#__PURE__*/React.createElement("div", {
+  }, "Paid RM ", Number(invoice.amount_paid || 0).toFixed(2), " · Outstanding RM ", outstanding.toFixed(2))), showVoidForm && /*#__PURE__*/React.createElement("div", {
+    className: "inv-pay-form",
+    style: {
+      borderColor: 'var(--red-bd)',
+      background: '#FFF5F5'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 700,
+      marginBottom: 6,
+      color: '#B91C1C'
+    }
+  }, "Void Invoice"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginBottom: 8
+    }
+  }, paidTotal > 0 ? 'This invoice has a payment/receipt. Voiding deletes the payment(s) and receipt(s) and removes pending credits. The invoice stays on record as “Void”. This cannot be undone. For genuine money returned, use Refund instead.' : 'The invoice will be marked “Void” and its pending credits removed. This cannot be undone.'), /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", null, "Reason for voiding ", /*#__PURE__*/React.createElement("span", {
+    className: "subtle"
+  }, "(required · max 100)")), /*#__PURE__*/React.createElement("textarea", {
+    className: "textarea",
+    style: {
+      minHeight: 56
+    },
+    maxLength: 100,
+    value: voidReason,
+    onChange: e => setVoidReason(e.target.value.slice(0, 100)),
+    placeholder: "e.g. Duplicate — reissued under correct parent"
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      textAlign: 'right'
+    }
+  }, voidReason.length, "/100")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      justifyContent: 'flex-end',
+      marginTop: 6
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => {
+      setShowVoidForm(false);
+      setVoidReason('');
+    }
+  }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-danger small",
+    disabled: !voidReason.trim() || voidBusy,
+    onClick: submitVoid
+  }, voidBusy ? 'Voiding…' : 'Confirm Void'))), showRefundForm && /*#__PURE__*/React.createElement("div", {
     className: "inv-pay-form",
     style: {
       borderColor: '#C4B5FD',
