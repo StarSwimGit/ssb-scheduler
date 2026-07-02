@@ -1015,6 +1015,23 @@ function App() {
       alert(err.message || 'Failed to delete invoice');
     }
   }
+
+  // Add or amend the void reason on an already-voided invoice (reason-only
+  // patch — does not touch payments/credits, which void already handled).
+  async function updateVoidReason(id, reason) {
+    try {
+      await patchRows('invoices', {
+        id
+      }, {
+        void_reason: (reason || '').slice(0, 100) || null,
+        updated_at: new Date().toISOString()
+      });
+      await loadInvoiceData();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to update void reason');
+    }
+  }
   async function updateInvoiceStatus(id, newStatus) {
     try {
       await patchRows('invoices', {
@@ -4852,6 +4869,7 @@ function App() {
     onVoid: voidInvoice,
     onDelete: invoiceSettings.allow_delete_invoice ? deleteInvoice : null,
     onRefund: refundInvoice,
+    onEditVoidReason: updateVoidReason,
     onUpdateStatus: updateInvoiceStatus,
     onRecordPayment: recordPayment,
     onConfirmCredit: confirmCredit,
@@ -15925,6 +15943,7 @@ function InvoicesView({
   onVoid,
   onDelete,
   onRefund,
+  onEditVoidReason,
   onUpdateStatus,
   onRecordPayment,
   onConfirmCredit,
@@ -16183,6 +16202,7 @@ function InvoicesView({
       isOverdue: overdue,
       membersByGroup: membersByGroup,
       onVoid: reason => onVoid(inv.id, reason),
+      onEditVoidReason: onEditVoidReason ? reason => onEditVoidReason(inv.id, reason) : null,
       onDelete: onDelete ? () => onDelete(inv.id) : null,
       onRefund: onRefund ? data => onRefund({
         invoiceId: inv.id,
@@ -16211,6 +16231,7 @@ function InvoiceDetailPanel({
   onVoid,
   onDelete,
   onRefund,
+  onEditVoidReason,
   onUpdateStatus,
   onRecordPayment,
   onConfirmCredit,
@@ -16252,6 +16273,21 @@ function InvoiceDetailPanel({
       alert(err.message || 'Failed to void');
     } finally {
       setVoidBusy(false);
+    }
+  }
+  // Add/amend the reason on an already-voided invoice
+  const [showReasonEdit, setShowReasonEdit] = useState(false);
+  const [reasonDraft, setReasonDraft] = useState('');
+  const [reasonBusy, setReasonBusy] = useState(false);
+  async function submitReasonEdit() {
+    setReasonBusy(true);
+    try {
+      await onEditVoidReason(reasonDraft.trim());
+      setShowReasonEdit(false);
+    } catch (err) {
+      alert(err.message || 'Failed to update reason');
+    } finally {
+      setReasonBusy(false);
     }
   }
   async function submitRefund() {
@@ -16322,14 +16358,70 @@ function InvoiceDetailPanel({
       marginTop: 4,
       fontStyle: 'italic'
     }
-  }, invoice.notes), invoice.status === 'void' && invoice.void_reason && /*#__PURE__*/React.createElement("div", {
+  }, invoice.notes), invoice.status === 'void' && (showReasonEdit ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 6,
+      padding: '8px 10px',
+      border: '1px solid var(--red-bd)',
+      borderRadius: 8,
+      background: '#FFF5F5'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field-label",
+    style: {
+      color: '#B91C1C'
+    }
+  }, "Void reason ", /*#__PURE__*/React.createElement("span", {
+    className: "subtle"
+  }, "(max 100)")), /*#__PURE__*/React.createElement("textarea", {
+    className: "textarea",
+    style: {
+      minHeight: 52
+    },
+    maxLength: 100,
+    value: reasonDraft,
+    onChange: e => setReasonDraft(e.target.value.slice(0, 100)),
+    placeholder: "e.g. Duplicate — reissued under correct parent"
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      textAlign: 'right'
+    }
+  }, reasonDraft.length, "/100"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      justifyContent: 'flex-end',
+      marginTop: 4
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => setShowReasonEdit(false)
+  }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary small",
+    onClick: submitReasonEdit,
+    disabled: reasonBusy
+  }, reasonBusy ? 'Saving…' : 'Save reason'))) : /*#__PURE__*/React.createElement("div", {
     className: "small",
     style: {
       marginTop: 4,
       color: '#B91C1C',
-      fontWeight: 600
+      fontWeight: 600,
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      flexWrap: 'wrap'
     }
-  }, "⊘ Voided: ", invoice.void_reason)), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("span", null, "⊘ Voided", invoice.void_reason ? `: ${invoice.void_reason}` : ' — no reason recorded'), onEditVoidReason && /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    style: {
+      fontWeight: 600
+    },
+    onClick: () => {
+      setReasonDraft(invoice.void_reason || '');
+      setShowReasonEdit(true);
+    }
+  }, invoice.void_reason ? '✎ Edit reason' : '+ Add reason')))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6,
