@@ -592,6 +592,15 @@ function App(){
     } catch(err){ handleErr(err); alert(err.message||'Failed to delete invoice'); }
   }
 
+  // Add or amend the void reason on an already-voided invoice (reason-only
+  // patch — does not touch payments/credits, which void already handled).
+  async function updateVoidReason(id, reason){
+    try{
+      await patchRows('invoices',{id},{ void_reason:(reason||'').slice(0,100)||null, updated_at:new Date().toISOString() });
+      await loadInvoiceData();
+    } catch(err){ handleErr(err); alert(err.message||'Failed to update void reason'); }
+  }
+
   async function updateInvoiceStatus(id,newStatus){
     try{ await patchRows('invoices',{id},{status:newStatus,updated_at:new Date().toISOString()}); await loadInvoiceData(); }
     catch(err){ handleErr(err); alert(err.message||'Failed to update status'); }
@@ -3280,7 +3289,7 @@ function App(){
         membersByGroup={membersByGroup}
         invoiceSettings={invoiceSettings} onSaveSettings={saveInvoiceSettings}
         formatInvoiceNumber={formatInvoiceNumber} formatReceiptNumber={formatReceiptNumber}
-        onVoid={voidInvoice} onDelete={invoiceSettings.allow_delete_invoice ? deleteInvoice : null} onRefund={refundInvoice} onUpdateStatus={updateInvoiceStatus}
+        onVoid={voidInvoice} onDelete={invoiceSettings.allow_delete_invoice ? deleteInvoice : null} onRefund={refundInvoice} onEditVoidReason={updateVoidReason} onUpdateStatus={updateInvoiceStatus}
         onRecordPayment={recordPayment} onConfirmCredit={confirmCredit}
         onReverseCredit={reverseCredit} onAddLine={addInvoiceLine}
         onUpdateLine={updateInvoiceLine} onDeleteLine={deleteInvoiceLine}
@@ -8790,7 +8799,7 @@ function methodLabel(m){ return({cash:'Cash',bank_transfer:'Bank Transfer',duitn
 // Helper: resolve swimmer names for a group line
 
 
-function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, lessonTypeById, packageById, studentById, membersByGroup, invoiceSettings, onSaveSettings, formatInvoiceNumber, formatReceiptNumber, onVoid, onDelete, onRefund, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine, externalSearchQ }){
+function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, lessonTypeById, packageById, studentById, membersByGroup, invoiceSettings, onSaveSettings, formatInvoiceNumber, formatReceiptNumber, onVoid, onDelete, onRefund, onEditVoidReason, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine, externalSearchQ }){
   const [statusFilter,setStatusFilter]=useState('all');
   const [localSearchQ, setLocalSearchQ] = useState('');
   const searchQ = externalSearchQ !== undefined ? externalSearchQ : localSearchQ;
@@ -8895,6 +8904,7 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
             invoice={inv} lines={invLines} pmts={invPmts} pendingCredits={invPcs}
             isOverdue={overdue} membersByGroup={membersByGroup}
             onVoid={(reason)=>onVoid(inv.id, reason)}
+            onEditVoidReason={onEditVoidReason ? (reason)=>onEditVoidReason(inv.id, reason) : null}
             onDelete={onDelete ? ()=>onDelete(inv.id) : null}
             onRefund={onRefund ? (data)=>onRefund({invoiceId:inv.id,...data}) : null}
             onUpdateStatus={(s)=>onUpdateStatus(inv.id,s)}
@@ -8909,7 +8919,7 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
   </>;
 }
 
-function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, membersByGroup, onVoid, onDelete, onRefund, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
+function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, membersByGroup, onVoid, onDelete, onRefund, onEditVoidReason, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
   const [showPayForm,setShowPayForm]=useState(false);
   const [lastReceipt,setLastReceipt]=useState(null);
   const outstanding=Math.max(0,(Number(invoice.total_amount)||0)-(Number(invoice.amount_paid)||0));
@@ -8938,6 +8948,16 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
     try{ await onVoid(voidReason.trim()); setShowVoidForm(false); setVoidReason(''); }
     catch(err){ alert(err.message||'Failed to void'); }
     finally{ setVoidBusy(false); }
+  }
+  // Add/amend the reason on an already-voided invoice
+  const [showReasonEdit,setShowReasonEdit]=useState(false);
+  const [reasonDraft,setReasonDraft]=useState('');
+  const [reasonBusy,setReasonBusy]=useState(false);
+  async function submitReasonEdit(){
+    setReasonBusy(true);
+    try{ await onEditVoidReason(reasonDraft.trim()); setShowReasonEdit(false); }
+    catch(err){ alert(err.message||'Failed to update reason'); }
+    finally{ setReasonBusy(false); }
   }
 
   async function submitRefund(){
@@ -8971,7 +8991,21 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
         <div style={{fontWeight:700}}>{invoice.account_name||'—'}</div>
         {invoice.account_email&&<div className="small subtle">{invoice.account_email}</div>}
         {invoice.notes&&<div className="small subtle" style={{marginTop:4,fontStyle:'italic'}}>{invoice.notes}</div>}
-        {invoice.status==='void'&&invoice.void_reason&&<div className="small" style={{marginTop:4,color:'#B91C1C',fontWeight:600}}>⊘ Voided: {invoice.void_reason}</div>}
+        {invoice.status==='void'&&(showReasonEdit
+          ? <div style={{marginTop:6,padding:'8px 10px',border:'1px solid var(--red-bd)',borderRadius:8,background:'#FFF5F5'}}>
+              <div className="field-label" style={{color:'#B91C1C'}}>Void reason <span className="subtle">(max 100)</span></div>
+              <textarea className="textarea" style={{minHeight:52}} maxLength={100} value={reasonDraft} onChange={e=>setReasonDraft(e.target.value.slice(0,100))} placeholder="e.g. Duplicate — reissued under correct parent" />
+              <div className="small subtle" style={{textAlign:'right'}}>{reasonDraft.length}/100</div>
+              <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:4}}>
+                <button className="btn btn-ghost small" onClick={()=>setShowReasonEdit(false)}>Cancel</button>
+                <button className="btn btn-primary small" onClick={submitReasonEdit} disabled={reasonBusy}>{reasonBusy?'Saving…':'Save reason'}</button>
+              </div>
+            </div>
+          : <div className="small" style={{marginTop:4,color:'#B91C1C',fontWeight:600,display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+              <span>⊘ Voided{invoice.void_reason?`: ${invoice.void_reason}`:' — no reason recorded'}</span>
+              {onEditVoidReason&&<button className="btn btn-ghost small" style={{fontWeight:600}} onClick={()=>{setReasonDraft(invoice.void_reason||'');setShowReasonEdit(true);}}>{invoice.void_reason?'✎ Edit reason':'+ Add reason'}</button>}
+            </div>
+        )}
       </div>
       <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'flex-start'}}>
         {invoice.status==='draft'&&<button className="btn btn-ghost small" onClick={()=>onUpdateStatus('sent')}>Mark Sent</button>}
