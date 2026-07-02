@@ -917,18 +917,81 @@ function App() {
     }
   }
   async function voidInvoice(id) {
-    if (!confirm('Void this invoice? This cannot be undone.')) return;
+    const hasPmts = (payments || []).some(p => p.invoice_id === id);
+    const msg = hasPmts ? 'Void this invoice?\n\nIt has a recorded payment/receipt. Voiding will DELETE the payment(s) and receipt(s) for this invoice and remove its pending credits. The invoice stays on record marked "Void". This cannot be undone.\n\nUse Void only for invoices raised in error (e.g. duplicates). For genuine money returned to a parent, use Refund instead.' : 'Void this invoice? It will be marked "Void" and its pending credits removed. This cannot be undone.';
+    if (!confirm(msg)) return;
     try {
+      await deleteRows('payments', {
+        invoice_id: id
+      }).catch(() => {});
+      await deleteRows('pending_credits', {
+        invoice_id: id
+      }).catch(() => {});
       await patchRows('invoices', {
         id
       }, {
         status: 'void',
+        amount_paid: 0,
         updated_at: new Date().toISOString()
       });
       await loadInvoiceData();
     } catch (err) {
       handleErr(err);
       alert(err.message || 'Failed to void');
+    }
+  }
+
+  // Refund a genuinely-paid invoice: records a negative "refund" receipt against
+  // it and marks the invoice 'refunded'. Because every cash report and the
+  // Receipts list read the payments table, the negative entry nets the cash out
+  // automatically. (For invoices raised in error, use Void instead.)
+  async function refundInvoice({
+    invoiceId,
+    amount,
+    refundDate,
+    method,
+    reference,
+    reason
+  }) {
+    const amt = Math.abs(Number(amount) || 0);
+    if (!amt) {
+      alert('Enter a valid refund amount.');
+      return;
+    }
+    try {
+      const settRows = await selectRows('invoice_settings', '*').catch(() => []);
+      const sett = settRows?.[0] || invoiceSettings;
+      const seq = Number(sett.next_receipt_seq) || 1;
+      const receiptNumber = formatReceiptNumber(sett, seq);
+      await patchRows('invoice_settings', {
+        id: 1
+      }, {
+        next_receipt_seq: seq + 1
+      }).catch(() => {});
+      await insertRows('payments', {
+        invoice_id: invoiceId,
+        receipt_number: receiptNumber,
+        kind: 'refund',
+        amount: -amt,
+        payment_date: refundDate || todayStr(),
+        payment_method: method || 'cash',
+        reference_number: reference || null,
+        notes: reason ? `Refund: ${reason}` : 'Refund'
+      });
+      // Recompute amount_paid from all payments (the negative refund is included).
+      const pays = await selectRows('payments', '*', `&invoice_id=eq.${invoiceId}`).catch(() => []);
+      const paid = (pays || []).reduce((s, p) => s + Number(p.amount || 0), 0);
+      await patchRows('invoices', {
+        id: invoiceId
+      }, {
+        amount_paid: paid,
+        status: 'refunded',
+        updated_at: new Date().toISOString()
+      });
+      await loadInvoiceData();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to record refund');
     }
   }
   async function deleteInvoice(id) {
@@ -1175,7 +1238,8 @@ function App() {
         byStudent[e.student_id].push({
           id: e.id,
           lessonTypeId: e.lesson_type_id,
-          packageId: e.package_id
+          packageId: e.package_id,
+          quantity: Number(e.quantity) || 1
         });
       });
       setStudents((rows || []).map(r => {
@@ -3482,7 +3546,8 @@ function App() {
           await insertRows('student_enrollments', validEnrollments.map(e => ({
             student_id: studentId,
             lesson_type_id: e.lessonTypeId,
-            package_id: e.packageId || null
+            package_id: e.packageId || null,
+            quantity: Math.max(1, Number(e.quantity) || 1)
           })));
         } catch (err) {
           console.warn('Could not insert enrollments (table may not exist yet):', err?.message || err);
@@ -3541,7 +3606,8 @@ function App() {
             await insertRows('student_enrollments', validEnrollments.map(e => ({
               student_id: id,
               lesson_type_id: e.lessonTypeId,
-              package_id: e.packageId || null
+              package_id: e.packageId || null,
+              quantity: Math.max(1, Number(e.quantity) || 1)
             })));
           }
         } catch (err) {
@@ -4727,6 +4793,7 @@ function App() {
     formatReceiptNumber: formatReceiptNumber,
     onVoid: voidInvoice,
     onDelete: invoiceSettings.allow_delete_invoice ? deleteInvoice : null,
+    onRefund: refundInvoice,
     onUpdateStatus: updateInvoiceStatus,
     onRecordPayment: recordPayment,
     onConfirmCredit: confirmCredit,
@@ -9186,7 +9253,8 @@ function LessonsEditor({
   function add() {
     setEnrollments([...enrollments, {
       lessonTypeId: '',
-      packageId: ''
+      packageId: '',
+      quantity: 1
     }]);
   }
   function remove(idx) {
@@ -9198,6 +9266,7 @@ function LessonsEditor({
     const ltPkgs = e.lessonTypeId ? (packages || []).filter(p => p.lesson_type_id === e.lessonTypeId && p.is_active !== false) : [];
     const usedLtIds = enrollments.map((en, j) => j !== i ? en.lessonTypeId : null).filter(Boolean);
     const availableLts = (lessonTypes || []).filter(lt => !usedLtIds.includes(lt.id));
+    const qty = Math.max(1, Number(e.quantity) || 1);
     return /*#__PURE__*/React.createElement("div", {
       key: i,
       className: "lesson-row"
@@ -9220,7 +9289,15 @@ function LessonsEditor({
     }, e.lessonTypeId ? '— Package —' : '← pick type first'), ltPkgs.map(p => /*#__PURE__*/React.createElement("option", {
       key: p.id,
       value: p.id
-    }, p.name, p.amount != null ? ` · RM${p.amount}` : '', billingText(p.billing_mode, p.billing_count) ? ` · ${billingText(p.billing_mode, p.billing_count)}` : ''))), enrollments.length > 1 ? /*#__PURE__*/React.createElement("button", {
+    }, p.name, p.amount != null ? ` · RM${p.amount}` : '', billingText(p.billing_mode, p.billing_count) ? ` · ${billingText(p.billing_mode, p.billing_count)}` : ''))), /*#__PURE__*/React.createElement("input", {
+      className: "select lesson-row-qty",
+      type: "number",
+      min: "1",
+      step: "1",
+      value: qty,
+      title: "Quantity — how many times per cycle (multiplies billing & credits)",
+      onChange: ev => update(i, 'quantity', Math.max(1, parseInt(ev.target.value, 10) || 1))
+    }), enrollments.length > 1 ? /*#__PURE__*/React.createElement("button", {
       type: "button",
       className: "lesson-row-x",
       onClick: () => remove(i),
@@ -9246,13 +9323,16 @@ function StudentEditor({
   const [gender, setGender] = useState(row.gender || null);
   const [enrollments, setEnrollments] = useState(row.enrollments && row.enrollments.length ? row.enrollments.map(e => ({
     lessonTypeId: e.lessonTypeId || '',
-    packageId: e.packageId || ''
+    packageId: e.packageId || '',
+    quantity: Math.max(1, Number(e.quantity) || 1)
   })) : row.lessonTypeIds && row.lessonTypeIds.length ? row.lessonTypeIds.map((ltId, i) => ({
     lessonTypeId: ltId,
-    packageId: i === 0 ? row.packageId || '' : ''
+    packageId: i === 0 ? row.packageId || '' : '',
+    quantity: 1
   })) : [{
     lessonTypeId: '',
-    packageId: ''
+    packageId: '',
+    quantity: 1
   }]);
   const [guardianName, setGuardianName] = useState(row.guardianName || '');
   const [guardianEmail, setGuardianEmail] = useState(row.guardianEmail || '');
@@ -11216,6 +11296,8 @@ function computeBillingLines(pg, groupById, packageById, lessonTypeById, lessonT
       if (!e.lessonTypeId || !e.packageId || coveredPkgIds.has(e.packageId)) return;
       const pkg = pkgById2(e.packageId);
       if (!pkg) return;
+      const qty = Math.max(1, Number(e.quantity) || 1);
+      const unit = pkg.amount != null ? Number(pkg.amount) : 0;
       individualItems.push({
         key: `ind:${sw.id}:${e.lessonTypeId}:${e.packageId}`,
         swimmerId: sw.id,
@@ -11226,12 +11308,13 @@ function computeBillingLines(pg, groupById, packageById, lessonTypeById, lessonT
         packageName: pkg.name,
         studentIds: sw.id,
         studentNames: sw.name,
-        amount: pkg.amount != null ? Number(pkg.amount) : 0,
+        quantity: qty,
+        amount: unit * qty,
         lineType: 'individual',
         billingMode: pkg.billing_mode || 'monthly',
         billingCount: pkg.billing_count,
-        creditsPerSwimmer: pkg.billing_count || 4,
-        description: `${sw.name} — ${ltName(e.lessonTypeId)} · ${pkg.name}`
+        creditsPerSwimmer: (pkg.billing_count || 4) * qty,
+        description: `${sw.name} — ${ltName(e.lessonTypeId)} · ${pkg.name}${qty > 1 ? ` ×${qty}` : ''}`
       });
     });
   });
@@ -12269,7 +12352,7 @@ function DashboardReport({
   const projection = dayOfMonth > 0 ? Math.round(cashThisMonth / dayOfMonth * daysInMonth) : 0;
 
   // Outstanding receivables
-  const outstanding = invoices.filter(i => i.status !== 'paid' && i.status !== 'void').reduce((s, i) => s + Math.max(0, Number(i.total_amount || 0) - Number(i.amount_paid || 0)), 0);
+  const outstanding = invoices.filter(i => i.status !== 'paid' && i.status !== 'void' && i.status !== 'refunded').reduce((s, i) => s + Math.max(0, Number(i.total_amount || 0) - Number(i.amount_paid || 0)), 0);
 
   // Deferred revenue — sum of remaining credit balances multiplied by an estimated
   // per-credit value. We don't have a clean per-credit price, so use:
@@ -12309,7 +12392,7 @@ function DashboardReport({
   }).filter(r => r.daysSince >= 30 && r.balance <= 1).sort((a, b) => b.daysSince - a.daysSince);
 
   // ── Overdue invoices ──
-  const overdueInvs = invoices.filter(i => i.status !== 'paid' && i.status !== 'void' && i.due_date && i.due_date < today).map(i => ({
+  const overdueInvs = invoices.filter(i => i.status !== 'paid' && i.status !== 'void' && i.status !== 'refunded' && i.due_date && i.due_date < today).map(i => ({
     inv: i,
     owed: Math.max(0, Number(i.total_amount || 0) - Number(i.amount_paid || 0)),
     daysOverdue: Math.floor((todayMs - new Date(i.due_date).getTime()) / 86400000)
@@ -12347,7 +12430,7 @@ function DashboardReport({
     label: "Outstanding (AR)",
     value: rm(outstanding),
     color: "var(--amber-tx)",
-    sub: `${invoices.filter(i => i.status !== 'paid' && i.status !== 'void').length} open invoice${invoices.filter(i => i.status !== 'paid' && i.status !== 'void').length === 1 ? '' : 's'}`
+    sub: `${invoices.filter(i => i.status !== 'paid' && i.status !== 'void' && i.status !== 'refunded').length} open invoice${invoices.filter(i => i.status !== 'paid' && i.status !== 'void' && i.status !== 'refunded').length === 1 ? '' : 's'}`
   }), /*#__PURE__*/React.createElement(KpiCard, {
     label: "Deferred revenue",
     value: rm(deferredRevenue),
@@ -12973,7 +13056,7 @@ function AgingReportView({
       d31_60 = 0,
       d60plus = 0;
     a.invoices.forEach(inv => {
-      if (inv.status === 'paid' || inv.status === 'void') return;
+      if (inv.status === 'paid' || inv.status === 'void' || inv.status === 'refunded') return;
       const owed = Math.max(0, Number(inv.total_amount) - Number(inv.amount_paid));
       if (!owed) return;
       if (!inv.due_date) {
@@ -12983,7 +13066,7 @@ function AgingReportView({
       const age = Math.floor((todayMs - new Date(inv.due_date).getTime()) / 86400000);
       if (age <= 0) current += owed;else if (age <= 30) d1_30 += owed;else if (age <= 60) d31_60 += owed;else d60plus += owed;
     });
-    const openInvs = a.invoices.filter(i => i.status !== 'paid' && i.status !== 'void');
+    const openInvs = a.invoices.filter(i => i.status !== 'paid' && i.status !== 'void' && i.status !== 'refunded');
     const oldestDue = openInvs.map(i => i.due_date).filter(Boolean).sort()[0] || null;
     const isOverdue = d1_30 > 0 || d31_60 > 0 || d60plus > 0;
     return {
@@ -13247,7 +13330,7 @@ function AgingReportView({
     style: {
       marginTop: 10
     }
-  }, "Age buckets are calculated from invoice due dates. Invoices without a due date are counted as Current. Paid and voided invoices are excluded."));
+  }, "Age buckets are calculated from invoice due dates. Invoices without a due date are counted as Current. Paid, voided, and refunded invoices are excluded."));
 }
 function ReceiptsView({
   pmts,
@@ -13381,6 +13464,7 @@ function ReceiptsView({
     className: "empty"
   }, "No receipts found.")), filtered.map(p => {
     const inv = invoiceById[p.invoice_id] || {};
+    const isRef = p.kind === 'refund' || Number(p.amount) < 0;
     return /*#__PURE__*/React.createElement("tr", {
       key: p.id
     }, /*#__PURE__*/React.createElement("td", null, fmtDate(p.payment_date)), /*#__PURE__*/React.createElement("td", {
@@ -13399,13 +13483,13 @@ function ReceiptsView({
       }
     }, inv.account_name || '—'), /*#__PURE__*/React.createElement("td", {
       className: "small subtle"
-    }, methodLabel(p.payment_method)), /*#__PURE__*/React.createElement("td", {
+    }, methodLabel(p.payment_method), isRef ? ' · Refund' : ''), /*#__PURE__*/React.createElement("td", {
       style: {
         textAlign: 'right',
         fontWeight: 700,
-        color: 'var(--green-tx)'
+        color: isRef ? '#DC2626' : 'var(--green-tx)'
       }
-    }, "RM", Number(p.amount).toFixed(2)), /*#__PURE__*/React.createElement("td", {
+    }, isRef ? '−' : '', "RM", Math.abs(Number(p.amount)).toFixed(2)), /*#__PURE__*/React.createElement("td", {
       style: {
         textAlign: 'center'
       }
@@ -15732,7 +15816,8 @@ function invoiceStatusLabel(s) {
     sent: 'Sent',
     partial: 'Part Paid',
     paid: 'Paid',
-    void: 'Void'
+    void: 'Void',
+    refunded: 'Refunded'
   }[s] || s;
 }
 function invoiceStatusColor(s) {
@@ -15741,7 +15826,8 @@ function invoiceStatusColor(s) {
     sent: '#3B82F6',
     partial: '#F59E0B',
     paid: '#10B981',
-    void: '#EF4444'
+    void: '#EF4444',
+    refunded: '#8B5CF6'
   }[s] || '#94A3B8';
 }
 function methodLabel(m) {
@@ -15773,6 +15859,7 @@ function InvoicesView({
   formatReceiptNumber,
   onVoid,
   onDelete,
+  onRefund,
   onUpdateStatus,
   onRecordPayment,
   onConfirmCredit,
@@ -15791,7 +15878,7 @@ function InvoicesView({
   const [branchFilter, setBranchFilter] = useState(null);
   const today = todayStr();
   function isOverdue(inv) {
-    return inv.due_date && inv.due_date < today && inv.status !== 'paid' && inv.status !== 'void';
+    return inv.due_date && inv.due_date < today && inv.status !== 'paid' && inv.status !== 'void' && inv.status !== 'refunded';
   }
   const counts = useMemo(() => {
     const c = {
@@ -15801,6 +15888,7 @@ function InvoicesView({
       partial: 0,
       paid: 0,
       void: 0,
+      refunded: 0,
       overdue: 0
     };
     invoices.forEach(i => {
@@ -15877,7 +15965,7 @@ function InvoicesView({
     branches: branches,
     value: branchFilter,
     onChange: setBranchFilter
-  }), [['all', 'All'], ['draft', 'Draft'], ['sent', 'Sent'], ['partial', 'Part Paid'], ['paid', 'Paid'], ['void', 'Void'], ['overdue', 'Overdue']].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
+  }), [['all', 'All'], ['draft', 'Draft'], ['sent', 'Sent'], ['partial', 'Part Paid'], ['paid', 'Paid'], ['void', 'Void'], ['refunded', 'Refunded'], ['overdue', 'Overdue']].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
     key: k,
     className: `tab ${statusFilter === k ? 'active' : ''}`,
     style: {
@@ -16030,6 +16118,10 @@ function InvoicesView({
       membersByGroup: membersByGroup,
       onVoid: () => onVoid(inv.id),
       onDelete: onDelete ? () => onDelete(inv.id) : null,
+      onRefund: onRefund ? data => onRefund({
+        invoiceId: inv.id,
+        ...data
+      }) : null,
       onUpdateStatus: s => onUpdateStatus(inv.id, s),
       onRecordPayment: data => onRecordPayment({
         invoiceId: inv.id,
@@ -16052,6 +16144,7 @@ function InvoiceDetailPanel({
   membersByGroup,
   onVoid,
   onDelete,
+  onRefund,
   onUpdateStatus,
   onRecordPayment,
   onConfirmCredit,
@@ -16069,6 +16162,37 @@ function InvoiceDetailPanel({
   const [payRef, setPayRef] = useState('');
   const [payNotes, setPayNotes] = useState('');
   const [payBusy, setPayBusy] = useState(false);
+  // Refund state
+  const [showRefundForm, setShowRefundForm] = useState(false);
+  const [refAmt, setRefAmt] = useState('');
+  const [refDate, setRefDate] = useState(todayStr());
+  const [refMethod, setRefMethod] = useState('cash');
+  const [refReason, setRefReason] = useState('');
+  const [refBusy, setRefBusy] = useState(false);
+  const paidTotal = Number(invoice.amount_paid) || 0;
+  async function submitRefund() {
+    const amt = Math.abs(Number(refAmt) || 0);
+    if (!amt) {
+      alert('Enter a valid refund amount.');
+      return;
+    }
+    setRefBusy(true);
+    try {
+      await onRefund({
+        amount: amt,
+        refundDate: refDate,
+        method: refMethod,
+        reason: refReason.trim() || null
+      });
+      setShowRefundForm(false);
+      setRefAmt('');
+      setRefReason('');
+    } catch (err) {
+      alert(err.message || 'Failed to record refund');
+    } finally {
+      setRefBusy(false);
+    }
+  }
   async function submitPayment() {
     if (!payAmt || isNaN(Number(payAmt)) || Number(payAmt) <= 0) {
       alert('Enter a valid amount.');
@@ -16136,10 +16260,20 @@ function InvoiceDetailPanel({
       const lastPmt = [...pmts].sort((a, b) => (b.payment_date || '').localeCompare(a.payment_date || ''))[0];
       printInvoiceAndReceipt(invoice, lines, lastPmt, membersByGroup);
     }
-  }, "🖨 Print Invoice & Receipt"), invoice.status !== 'void' && invoice.status !== 'paid' && /*#__PURE__*/React.createElement("button", {
+  }, "🖨 Print Invoice & Receipt"), invoice.status !== 'void' && invoice.status !== 'refunded' && /*#__PURE__*/React.createElement("button", {
     className: "btn btn-danger small",
     onClick: onVoid
-  }, "Void"), onDelete && /*#__PURE__*/React.createElement("button", {
+  }, "Void"), onRefund && paidTotal > 0 && invoice.status !== 'void' && invoice.status !== 'refunded' && /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    style: {
+      borderColor: '#C4B5FD',
+      color: '#6D28D9'
+    },
+    onClick: () => {
+      setRefAmt(paidTotal.toFixed(2));
+      setShowRefundForm(true);
+    }
+  }, "Refund"), onDelete && /*#__PURE__*/React.createElement("button", {
     className: "btn btn-danger small",
     onClick: onDelete,
     style: {
@@ -16206,29 +16340,116 @@ function InvoiceDetailPanel({
     style: {
       textAlign: 'right'
     }
-  }, "Amount"), /*#__PURE__*/React.createElement("th", null))), /*#__PURE__*/React.createElement("tbody", null, pmts.map(p => /*#__PURE__*/React.createElement("tr", {
-    key: p.id
-  }, /*#__PURE__*/React.createElement("td", null, p.payment_date || '—'), /*#__PURE__*/React.createElement("td", {
-    style: {
-      fontFamily: 'monospace',
-      fontSize: 11
-    }
-  }, p.receipt_number || '—'), /*#__PURE__*/React.createElement("td", null, methodLabel(p.payment_method)), /*#__PURE__*/React.createElement("td", {
-    style: {
-      textAlign: 'right',
-      fontWeight: 700,
-      color: 'var(--green-tx)'
-    }
-  }, "RM ", Number(p.amount).toFixed(2)), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-ghost small",
-    title: "Print receipt",
-    onClick: () => printReceipt(p, invoice)
-  }, "🖨 Receipt"))))))), /*#__PURE__*/React.createElement("div", {
+  }, "Amount"), /*#__PURE__*/React.createElement("th", null))), /*#__PURE__*/React.createElement("tbody", null, pmts.map(p => {
+    const isRef = p.kind === 'refund' || Number(p.amount) < 0;
+    return /*#__PURE__*/React.createElement("tr", {
+      key: p.id
+    }, /*#__PURE__*/React.createElement("td", null, p.payment_date || '—'), /*#__PURE__*/React.createElement("td", {
+      style: {
+        fontFamily: 'monospace',
+        fontSize: 11
+      }
+    }, p.receipt_number || '—'), /*#__PURE__*/React.createElement("td", null, methodLabel(p.payment_method), isRef ? ' · Refund' : ''), /*#__PURE__*/React.createElement("td", {
+      style: {
+        textAlign: 'right',
+        fontWeight: 700,
+        color: isRef ? '#DC2626' : 'var(--green-tx)'
+      }
+    }, isRef ? '−' : '', "RM ", Math.abs(Number(p.amount)).toFixed(2)), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      title: "Print receipt",
+      onClick: () => printReceipt(p, invoice)
+    }, "🖨 Receipt")));
+  })))), /*#__PURE__*/React.createElement("div", {
     className: "small subtle",
     style: {
       marginTop: 4
     }
-  }, "Paid RM ", Number(invoice.amount_paid || 0).toFixed(2), " · Outstanding RM ", outstanding.toFixed(2))), !showPayForm && outstanding > 0 && invoice.status !== 'void' && /*#__PURE__*/React.createElement("button", {
+  }, "Paid RM ", Number(invoice.amount_paid || 0).toFixed(2), " · Outstanding RM ", outstanding.toFixed(2))), showRefundForm && /*#__PURE__*/React.createElement("div", {
+    className: "inv-pay-form",
+    style: {
+      borderColor: '#C4B5FD',
+      background: '#FAF5FF'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 700,
+      marginBottom: 6,
+      color: '#6D28D9'
+    }
+  }, "Refund Payment"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginBottom: 8
+    }
+  }, "Records a refund receipt (money returned to the parent) and marks the invoice “Refunded”. For an invoice raised in error, use Void instead."), /*#__PURE__*/React.createElement("div", {
+    className: "form-grid",
+    style: {
+      gridTemplateColumns: '1fr 1fr 1fr'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", null, "Refund Amount (RM)"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "number",
+    step: "0.01",
+    min: "0.01",
+    value: refAmt,
+    onChange: e => setRefAmt(e.target.value)
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", null, "Date"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "date",
+    value: refDate,
+    onChange: e => setRefDate(e.target.value)
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", null, "Method"), /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    value: refMethod,
+    onChange: e => setRefMethod(e.target.value)
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "cash"
+  }, "Cash"), /*#__PURE__*/React.createElement("option", {
+    value: "bank_transfer"
+  }, "Bank Transfer"), /*#__PURE__*/React.createElement("option", {
+    value: "duitnow"
+  }, "DuitNow"), /*#__PURE__*/React.createElement("option", {
+    value: "card"
+  }, "Card"), /*#__PURE__*/React.createElement("option", {
+    value: "cheque"
+  }, "Cheque"), /*#__PURE__*/React.createElement("option", {
+    value: "other"
+  }, "Other")))), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Reason (optional)"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: refReason,
+    onChange: e => setRefReason(e.target.value),
+    placeholder: "e.g. Parent withdrew, class cancelled"
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      justifyContent: 'flex-end',
+      marginTop: 10
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => setShowRefundForm(false)
+  }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary small",
+    onClick: submitRefund,
+    disabled: refBusy,
+    style: {
+      background: '#7C3AED',
+      borderColor: '#7C3AED'
+    }
+  }, refBusy ? 'Processing…' : 'Confirm Refund'))), !showPayForm && outstanding > 0 && invoice.status !== 'void' && /*#__PURE__*/React.createElement("button", {
     className: "btn btn-primary small",
     onClick: () => {
       setPayAmt(outstanding.toFixed(2));
