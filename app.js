@@ -544,16 +544,11 @@ function App(){
     }catch(err){ handleErr(err); alert(err.message||'Failed to reverse'); }
   }
 
-  async function voidInvoice(id){
-    const hasPmts = (pmts||[]).some(p => p.invoice_id === id);
-    const msg = hasPmts
-      ? 'Void this invoice?\n\nIt has a recorded payment/receipt. Voiding will DELETE the payment(s) and receipt(s) for this invoice and remove its pending credits. The invoice stays on record marked "Void". This cannot be undone.\n\nUse Void only for invoices raised in error (e.g. duplicates). For genuine money returned to a parent, use Refund instead.'
-      : 'Void this invoice? It will be marked "Void" and its pending credits removed. This cannot be undone.';
-    if(!confirm(msg)) return;
+  async function voidInvoice(id, reason){
     try{
       await deleteRows('payments',{invoice_id:id}).catch(()=>{});
       await deleteRows('pending_credits',{invoice_id:id}).catch(()=>{});
-      await patchRows('invoices',{id},{status:'void', amount_paid:0, updated_at:new Date().toISOString()});
+      await patchRows('invoices',{id},{status:'void', amount_paid:0, void_reason:(reason||'').slice(0,100)||null, voided_at:new Date().toISOString(), updated_at:new Date().toISOString()});
       await loadInvoiceData();
     } catch(err){ handleErr(err); alert(err.message||'Failed to void'); }
   }
@@ -8888,7 +8883,7 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
               <input type="checkbox" checked={isSelected} onChange={()=>toggleSelect(inv.id)} />
             </label>
             <span style={{fontFamily:'monospace',fontSize:11,fontWeight:700,minWidth:90,flexShrink:0}}>{inv.invoice_number||'#—'}</span>
-            <span className={`inv-status-chip s-${inv.status||'draft'}`}>{invoiceStatusLabel(inv.status)}</span>
+            <span className={`inv-status-chip s-${inv.status||'draft'}`} title={inv.status==='void'&&inv.void_reason?`Void reason: ${inv.void_reason}`:undefined}>{invoiceStatusLabel(inv.status)}</span>
             {overdue&&<span className="inv-status-chip s-overdue">Overdue</span>}
             <span style={{flex:1,minWidth:0,fontSize:11.5,fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{inv.account_name||'—'}</span>
             <span className="small subtle" style={{fontSize:10.5,whiteSpace:'nowrap',flexShrink:0}}>{inv.issue_date||'—'}{inv.due_date?` → ${inv.due_date}`:''}</span>
@@ -8899,7 +8894,7 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
           {isExpanded&&<InvoiceDetailPanel
             invoice={inv} lines={invLines} pmts={invPmts} pendingCredits={invPcs}
             isOverdue={overdue} membersByGroup={membersByGroup}
-            onVoid={()=>onVoid(inv.id)}
+            onVoid={(reason)=>onVoid(inv.id, reason)}
             onDelete={onDelete ? ()=>onDelete(inv.id) : null}
             onRefund={onRefund ? (data)=>onRefund({invoiceId:inv.id,...data}) : null}
             onUpdateStatus={(s)=>onUpdateStatus(inv.id,s)}
@@ -8933,6 +8928,18 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
   const [refBusy,setRefBusy]=useState(false);
   const paidTotal=Number(invoice.amount_paid)||0;
 
+  // Void state
+  const [showVoidForm,setShowVoidForm]=useState(false);
+  const [voidReason,setVoidReason]=useState('');
+  const [voidBusy,setVoidBusy]=useState(false);
+  async function submitVoid(){
+    if(!voidReason.trim()) return;
+    setVoidBusy(true);
+    try{ await onVoid(voidReason.trim()); setShowVoidForm(false); setVoidReason(''); }
+    catch(err){ alert(err.message||'Failed to void'); }
+    finally{ setVoidBusy(false); }
+  }
+
   async function submitRefund(){
     const amt=Math.abs(Number(refAmt)||0);
     if(!amt){ alert('Enter a valid refund amount.'); return; }
@@ -8964,6 +8971,7 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
         <div style={{fontWeight:700}}>{invoice.account_name||'—'}</div>
         {invoice.account_email&&<div className="small subtle">{invoice.account_email}</div>}
         {invoice.notes&&<div className="small subtle" style={{marginTop:4,fontStyle:'italic'}}>{invoice.notes}</div>}
+        {invoice.status==='void'&&invoice.void_reason&&<div className="small" style={{marginTop:4,color:'#B91C1C',fontWeight:600}}>⊘ Voided: {invoice.void_reason}</div>}
       </div>
       <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'flex-start'}}>
         {invoice.status==='draft'&&<button className="btn btn-ghost small" onClick={()=>onUpdateStatus('sent')}>Mark Sent</button>}
@@ -8974,7 +8982,7 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
             const lastPmt=[...pmts].sort((a,b)=>(b.payment_date||'').localeCompare(a.payment_date||''))[0];
             printInvoiceAndReceipt(invoice,lines,lastPmt,membersByGroup);
           }}>🖨 Print Invoice &amp; Receipt</button>}
-        {invoice.status!=='void'&&invoice.status!=='refunded'&&<button className="btn btn-danger small" onClick={onVoid}>Void</button>}
+        {invoice.status!=='void'&&invoice.status!=='refunded'&&<button className="btn btn-danger small" onClick={()=>setShowVoidForm(true)}>Void</button>}
         {onRefund&&paidTotal>0&&invoice.status!=='void'&&invoice.status!=='refunded'&&<button className="btn btn-ghost small" style={{borderColor:'#C4B5FD',color:'#6D28D9'}} onClick={()=>{setRefAmt(paidTotal.toFixed(2));setShowRefundForm(true);}}>Refund</button>}
         {onDelete&&<button className="btn btn-danger small" onClick={onDelete} style={{marginLeft:'auto'}}>🗑 Delete Invoice</button>}
       </div>
@@ -9014,6 +9022,18 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
         </table>
       </div>
       <div className="small subtle" style={{marginTop:4}}>Paid RM {Number(invoice.amount_paid||0).toFixed(2)} · Outstanding RM {outstanding.toFixed(2)}</div>
+    </div>}
+    {showVoidForm&&<div className="inv-pay-form" style={{borderColor:'var(--red-bd)',background:'#FFF5F5'}}>
+      <div style={{fontWeight:700,marginBottom:6,color:'#B91C1C'}}>Void Invoice</div>
+      <div className="small subtle" style={{marginBottom:8}}>{paidTotal>0 ? 'This invoice has a payment/receipt. Voiding deletes the payment(s) and receipt(s) and removes pending credits. The invoice stays on record as “Void”. This cannot be undone. For genuine money returned, use Refund instead.' : 'The invoice will be marked “Void” and its pending credits removed. This cannot be undone.'}</div>
+      <div className="field"><label>Reason for voiding <span className="subtle">(required · max 100)</span></label>
+        <textarea className="textarea" style={{minHeight:56}} maxLength={100} value={voidReason} onChange={e=>setVoidReason(e.target.value.slice(0,100))} placeholder="e.g. Duplicate — reissued under correct parent" />
+        <div className="small subtle" style={{textAlign:'right'}}>{voidReason.length}/100</div>
+      </div>
+      <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:6}}>
+        <button className="btn btn-ghost small" onClick={()=>{setShowVoidForm(false);setVoidReason('');}}>Cancel</button>
+        <button className="btn btn-danger small" disabled={!voidReason.trim()||voidBusy} onClick={submitVoid}>{voidBusy?'Voiding…':'Confirm Void'}</button>
+      </div>
     </div>}
     {showRefundForm&&<div className="inv-pay-form" style={{borderColor:'#C4B5FD',background:'#FAF5FF'}}>
       <div style={{fontWeight:700,marginBottom:6,color:'#6D28D9'}}>Refund Payment</div>
