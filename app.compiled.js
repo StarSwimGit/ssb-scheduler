@@ -523,6 +523,7 @@ function App() {
   const [programmeSection, setProgrammeSection] = useState('week'); // 'week'|'month'
   const [programmeSessions, setProgrammeSessions] = useState([]);
   const [programmeCategories, setProgrammeCategories] = useState([]);
+  const [billingTerms, setBillingTerms] = useState([]);
   const [programmeModal, setProgrammeModal] = useState(null);
   const [programmeDate, setProgrammeDate] = useState(todayStr()); // own week cursor (independent of Schedule)
   const [programmeMonthCursor, setProgrammeMonthCursor] = useState(new Date());
@@ -646,7 +647,7 @@ function App() {
       setLoading(false);
       setStatus('Connected');
       // Phase 2 — background: load everything else after first paint.
-      Promise.all([loadStudents(), loadGroups(), loadGroupMemberships(), loadCreditBalances(), loadCreditPurchases(), loadSubscriptions(), loadCodes(), loadReplacementPending(), loadTcAcceptances(), loadRemarks(monthCursor), loadInvoiceData(), loadProgrammeSessions(), loadProgrammeCategories()]).catch(e => console.warn('Background load warning:', e));
+      Promise.all([loadStudents(), loadGroups(), loadGroupMemberships(), loadCreditBalances(), loadCreditPurchases(), loadSubscriptions(), loadCodes(), loadReplacementPending(), loadTcAcceptances(), loadRemarks(monthCursor), loadInvoiceData(), loadProgrammeSessions(), loadProgrammeCategories(), loadBillingTerms()]).catch(e => console.warn('Background load warning:', e));
     } catch (err) {
       handleErr(err);
       setLoading(false);
@@ -917,7 +918,7 @@ function App() {
     }
   }
   async function voidInvoice(id) {
-    const hasPmts = (payments || []).some(p => p.invoice_id === id);
+    const hasPmts = (pmts || []).some(p => p.invoice_id === id);
     const msg = hasPmts ? 'Void this invoice?\n\nIt has a recorded payment/receipt. Voiding will DELETE the payment(s) and receipt(s) for this invoice and remove its pending credits. The invoice stays on record marked "Void". This cannot be undone.\n\nUse Void only for invoices raised in error (e.g. duplicates). For genuine money returned to a parent, use Refund instead.' : 'Void this invoice? It will be marked "Void" and its pending credits removed. This cannot be undone.';
     if (!confirm(msg)) return;
     try {
@@ -1226,6 +1227,14 @@ function App() {
       setProgrammeCategories(rows || []);
     } catch (_) {
       setProgrammeCategories([]);
+    }
+  }
+  async function loadBillingTerms() {
+    try {
+      const rows = await selectRows('billing_terms', '*', '&order=start_date.asc,sort_order.asc,name.asc').catch(() => []);
+      setBillingTerms(rows || []);
+    } catch (_) {
+      setBillingTerms([]);
     }
   }
   async function loadStudents() {
@@ -3461,6 +3470,53 @@ function App() {
     }
   }
 
+  // ── Billing Terms CRUD (Settings › Billing Terms) ────────────────────────
+  async function addBillingTerm({
+    name,
+    startDate,
+    endDate,
+    branchId
+  }) {
+    try {
+      const next = (billingTerms || []).length + 1;
+      await insertRows('billing_terms', {
+        name,
+        start_date: startDate || null,
+        end_date: endDate || null,
+        branch_id: branchId || null,
+        sort_order: next,
+        is_active: true
+      });
+      await loadBillingTerms();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to add billing term');
+    }
+  }
+  async function updateBillingTerm(id, patch) {
+    try {
+      await patchRows('billing_terms', {
+        id
+      }, patch);
+      await loadBillingTerms();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to update billing term');
+    }
+  }
+  async function deleteBillingTerm(id) {
+    if (!confirm('Delete this billing term?')) return;
+    try {
+      await deleteRows('billing_terms', {
+        id
+      });
+      await loadBillingTerms();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to delete billing term');
+    }
+  }
+
   // Reorder a settings list by reindexing sort_order across the whole list, so
   // the result is clean and gap-free regardless of the existing values.
   async function reorderOption(table, list, index, dir) {
@@ -4538,6 +4594,9 @@ function App() {
     className: `sub-tab ${adminSection === 'terms' ? 'active' : ''}`,
     onClick: () => setAdminSection('terms')
   }, "Terms"), /*#__PURE__*/React.createElement("button", {
+    className: `sub-tab ${adminSection === 'billingTerms' ? 'active' : ''}`,
+    onClick: () => setAdminSection('billingTerms')
+  }, "Billing Terms"), /*#__PURE__*/React.createElement("button", {
     className: `sub-tab ${adminSection === 'invoiceSettings' ? 'active' : ''}`,
     onClick: () => setAdminSection('invoiceSettings')
   }, "Invoice Numbering"))), /*#__PURE__*/React.createElement("div", {
@@ -4937,6 +4996,13 @@ function App() {
     currentBranchId: currentBranchId,
     defaultTerms: defaultTermsText(),
     onSave: saveBranchTerms
+  }), !loading && view === 'settings' && adminSection === 'billingTerms' && /*#__PURE__*/React.createElement(BillingTermsAdminView, {
+    terms: billingTerms,
+    branches: options.branches || [],
+    currentBranchId: currentBranchId,
+    addTerm: addBillingTerm,
+    updateTerm: updateBillingTerm,
+    deleteTerm: deleteBillingTerm
   }), !loading && view === 'settings' && adminSection === 'invoiceSettings' && /*#__PURE__*/React.createElement("div", {
     className: "card"
   }, /*#__PURE__*/React.createElement("div", {
@@ -17688,6 +17754,251 @@ function ProgrammeSessionModal({
     onClick: onSave,
     disabled: busy
   }, busy ? 'Saving…' : 'Save session')))));
+}
+
+// Settings › Billing Terms — per-branch named billing periods / school terms
+// (e.g. "Term 1 2026") with start & end dates. Branch-scoped like Lesson Types.
+function BillingTermsAdminView({
+  terms,
+  branches,
+  currentBranchId,
+  addTerm,
+  updateTerm,
+  deleteTerm
+}) {
+  const activeBranches = (branches || []).filter(b => b.is_active !== false);
+  const branchById = id => (branches || []).find(b => b.id === id) || null;
+  const showBranchTag = !currentBranchId || currentBranchId === 'all';
+  const defaultBranch = currentBranchId && currentBranchId !== 'all' ? currentBranchId : activeBranches[0]?.id || '';
+  const [name, setName] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [branchId, setBranchId] = useState(defaultBranch);
+  React.useEffect(() => {
+    if (currentBranchId && currentBranchId !== 'all') setBranchId(currentBranchId);
+  }, [currentBranchId]);
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({
+    name: '',
+    startDate: '',
+    endDate: ''
+  });
+  const visible = currentBranchId && currentBranchId !== 'all' ? (terms || []).filter(t => !t.branch_id || t.branch_id === currentBranchId) : terms || [];
+  function startEdit(t) {
+    setEditingId(t.id);
+    setEditForm({
+      name: t.name || '',
+      startDate: t.start_date || '',
+      endDate: t.end_date || ''
+    });
+  }
+  async function saveEdit() {
+    if (!editForm.name.trim()) return;
+    await updateTerm(editingId, {
+      name: editForm.name.trim(),
+      start_date: editForm.startDate || null,
+      end_date: editForm.endDate || null
+    });
+    setEditingId(null);
+  }
+  function fmt(d) {
+    if (!d) return '—';
+    try {
+      return new Date(d).toLocaleDateString(undefined, {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric'
+      });
+    } catch (_) {
+      return d;
+    }
+  }
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 18,
+      fontWeight: 800,
+      marginBottom: 4
+    }
+  }, "🗓 Billing Terms"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginBottom: 14
+    }
+  }, "Named billing periods / school terms (e.g. “Term 1 2026”) with a start and end date, per branch. The list shows the active branch's terms; switch branch in the header to manage another."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: 'minmax(0,1fr) 150px 150px 160px auto',
+      gap: 10,
+      alignItems: 'end'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Name"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    placeholder: "e.g. Term 1 2026",
+    value: name,
+    onChange: e => setName(e.target.value)
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Start date"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "date",
+    value: startDate,
+    onChange: e => setStartDate(e.target.value)
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "End date"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "date",
+    value: endDate,
+    onChange: e => setEndDate(e.target.value)
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Branch"), /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    value: branchId,
+    onChange: e => setBranchId(e.target.value)
+  }, activeBranches.map(b => /*#__PURE__*/React.createElement("option", {
+    key: b.id,
+    value: b.id
+  }, b.name, b.code ? ` (${b.code})` : '')))), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary",
+    style: {
+      height: 38
+    },
+    disabled: !name.trim() || !branchId,
+    onClick: async () => {
+      if (!name.trim() || !branchId) return;
+      await addTerm({
+        name: name.trim(),
+        startDate,
+        endDate,
+        branchId
+      });
+      setName('');
+      setStartDate('');
+      setEndDate('');
+    }
+  }, "+ Add Term"))), /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      padding: 0,
+      overflow: 'hidden'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "table-wrap",
+    style: {
+      border: 'none',
+      borderRadius: 0
+    }
+  }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: '34%'
+    }
+  }, "Name"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 140
+    }
+  }, "Start"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 140
+    }
+  }, "End"), showBranchTag ? /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 90
+    }
+  }, "Branch") : null, /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 180,
+      textAlign: 'right'
+    }
+  }, "Actions"))), /*#__PURE__*/React.createElement("tbody", null, visible.length === 0 && /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
+    colSpan: showBranchTag ? 5 : 4,
+    className: "empty"
+  }, "No billing terms yet. Add one above.")), visible.map(t => editingId === t.id ? /*#__PURE__*/React.createElement("tr", {
+    key: t.id
+  }, /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: editForm.name,
+    onChange: e => setEditForm({
+      ...editForm,
+      name: e.target.value
+    })
+  })), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "date",
+    value: editForm.startDate,
+    onChange: e => setEditForm({
+      ...editForm,
+      startDate: e.target.value
+    })
+  })), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "date",
+    value: editForm.endDate,
+    onChange: e => setEditForm({
+      ...editForm,
+      endDate: e.target.value
+    })
+  })), showBranchTag ? /*#__PURE__*/React.createElement("td", {
+    className: "small subtle"
+  }, branchById(t.branch_id)?.code || branchById(t.branch_id)?.name || '—') : null, /*#__PURE__*/React.createElement("td", {
+    style: {
+      textAlign: 'right'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary small",
+    onClick: saveEdit,
+    style: {
+      marginRight: 6
+    }
+  }, "Save"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => setEditingId(null)
+  }, "Cancel"))) : /*#__PURE__*/React.createElement("tr", {
+    key: t.id
+  }, /*#__PURE__*/React.createElement("td", {
+    style: {
+      fontWeight: 600
+    }
+  }, t.name), /*#__PURE__*/React.createElement("td", null, fmt(t.start_date)), /*#__PURE__*/React.createElement("td", null, fmt(t.end_date)), showBranchTag ? /*#__PURE__*/React.createElement("td", null, t.branch_id ? /*#__PURE__*/React.createElement("span", {
+    className: "lt-branch-tag"
+  }, branchById(t.branch_id)?.code || branchById(t.branch_id)?.name) : /*#__PURE__*/React.createElement("span", {
+    className: "subtle"
+  }, "—")) : null, /*#__PURE__*/React.createElement("td", {
+    style: {
+      textAlign: 'right'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => startEdit(t),
+    style: {
+      marginRight: 6
+    }
+  }, "✎ Edit"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    style: {
+      color: '#DC2626'
+    },
+    onClick: () => deleteTerm(t.id)
+  }, "Delete")))))))));
 }
 function ProgrammeCategoriesView({
   categories,
