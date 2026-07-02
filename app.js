@@ -544,9 +544,45 @@ function App(){
   }
 
   async function voidInvoice(id){
-    if(!confirm('Void this invoice? This cannot be undone.')) return;
-    try{ await patchRows('invoices',{id},{status:'void',updated_at:new Date().toISOString()}); await loadInvoiceData(); }
-    catch(err){ handleErr(err); alert(err.message||'Failed to void'); }
+    const hasPmts = (payments||[]).some(p => p.invoice_id === id);
+    const msg = hasPmts
+      ? 'Void this invoice?\n\nIt has a recorded payment/receipt. Voiding will DELETE the payment(s) and receipt(s) for this invoice and remove its pending credits. The invoice stays on record marked "Void". This cannot be undone.\n\nUse Void only for invoices raised in error (e.g. duplicates). For genuine money returned to a parent, use Refund instead.'
+      : 'Void this invoice? It will be marked "Void" and its pending credits removed. This cannot be undone.';
+    if(!confirm(msg)) return;
+    try{
+      await deleteRows('payments',{invoice_id:id}).catch(()=>{});
+      await deleteRows('pending_credits',{invoice_id:id}).catch(()=>{});
+      await patchRows('invoices',{id},{status:'void', amount_paid:0, updated_at:new Date().toISOString()});
+      await loadInvoiceData();
+    } catch(err){ handleErr(err); alert(err.message||'Failed to void'); }
+  }
+
+  // Refund a genuinely-paid invoice: records a negative "refund" receipt against
+  // it and marks the invoice 'refunded'. Because every cash report and the
+  // Receipts list read the payments table, the negative entry nets the cash out
+  // automatically. (For invoices raised in error, use Void instead.)
+  async function refundInvoice({ invoiceId, amount, refundDate, method, reference, reason }){
+    const amt = Math.abs(Number(amount) || 0);
+    if(!amt){ alert('Enter a valid refund amount.'); return; }
+    try{
+      const settRows = await selectRows('invoice_settings','*').catch(()=>[]);
+      const sett = settRows?.[0] || invoiceSettings;
+      const seq = Number(sett.next_receipt_seq) || 1;
+      const receiptNumber = formatReceiptNumber(sett, seq);
+      await patchRows('invoice_settings',{id:1},{next_receipt_seq: seq+1}).catch(()=>{});
+      await insertRows('payments',{
+        invoice_id: invoiceId, receipt_number: receiptNumber, kind: 'refund',
+        amount: -amt, payment_date: refundDate || todayStr(),
+        payment_method: method || 'cash',
+        reference_number: reference || null,
+        notes: reason ? `Refund: ${reason}` : 'Refund'
+      });
+      // Recompute amount_paid from all payments (the negative refund is included).
+      const pays = await selectRows('payments','*',`&invoice_id=eq.${invoiceId}`).catch(()=>[]);
+      const paid = (pays||[]).reduce((s,p)=>s+Number(p.amount||0),0);
+      await patchRows('invoices',{id:invoiceId},{ amount_paid: paid, status:'refunded', updated_at:new Date().toISOString() });
+      await loadInvoiceData();
+    } catch(err){ handleErr(err); alert(err.message||'Failed to record refund'); }
   }
 
   async function deleteInvoice(id){
@@ -735,7 +771,7 @@ function App(){
       const byStudent = {};
       (enrollmentRows || []).forEach(e => {
         if(!byStudent[e.student_id]) byStudent[e.student_id] = [];
-        byStudent[e.student_id].push({ id: e.id, lessonTypeId: e.lesson_type_id, packageId: e.package_id });
+        byStudent[e.student_id].push({ id: e.id, lessonTypeId: e.lesson_type_id, packageId: e.package_id, quantity: Number(e.quantity) || 1 });
       });
       setStudents((rows || []).map(r => {
         const dob = r.date_of_birth || null;
@@ -2380,7 +2416,7 @@ function App(){
       });
       const studentId = inserted?.[0]?.id;
       if(studentId && validEnrollments.length){
-        try{ await insertRows('student_enrollments', validEnrollments.map(e => ({ student_id: studentId, lesson_type_id: e.lessonTypeId, package_id: e.packageId || null }))); }
+        try{ await insertRows('student_enrollments', validEnrollments.map(e => ({ student_id: studentId, lesson_type_id: e.lessonTypeId, package_id: e.packageId || null, quantity: Math.max(1, Number(e.quantity) || 1) }))); }
         catch(err){ console.warn('Could not insert enrollments (table may not exist yet):', err?.message || err); }
         // Credits are NOT auto-seeded here. They must flow through the
         // Pending Credits → payment receipt → Confirm workflow only.
@@ -2426,7 +2462,7 @@ function App(){
         try{
           await deleteRows('student_enrollments', { student_id: id });
           if(validEnrollments.length){
-            await insertRows('student_enrollments', validEnrollments.map(e => ({ student_id: id, lesson_type_id: e.lessonTypeId, package_id: e.packageId || null })));
+            await insertRows('student_enrollments', validEnrollments.map(e => ({ student_id: id, lesson_type_id: e.lessonTypeId, package_id: e.packageId || null, quantity: Math.max(1, Number(e.quantity) || 1) })));
           }
         } catch(err){ console.warn('Could not sync enrollments (table may not exist yet):', err?.message || err); }
         // Credits are NOT auto-seeded when enrollments change.
@@ -3217,7 +3253,7 @@ function App(){
         membersByGroup={membersByGroup}
         invoiceSettings={invoiceSettings} onSaveSettings={saveInvoiceSettings}
         formatInvoiceNumber={formatInvoiceNumber} formatReceiptNumber={formatReceiptNumber}
-        onVoid={voidInvoice} onDelete={invoiceSettings.allow_delete_invoice ? deleteInvoice : null} onUpdateStatus={updateInvoiceStatus}
+        onVoid={voidInvoice} onDelete={invoiceSettings.allow_delete_invoice ? deleteInvoice : null} onRefund={refundInvoice} onUpdateStatus={updateInvoiceStatus}
         onRecordPayment={recordPayment} onConfirmCredit={confirmCredit}
         onReverseCredit={reverseCredit} onAddLine={addInvoiceLine}
         onUpdateLine={updateInvoiceLine} onDeleteLine={deleteInvoiceLine}
@@ -5137,7 +5173,7 @@ function LessonsEditor({ enrollments, setEnrollments, lessonTypes, packages }){
     const next = enrollments.map((e, i) => i === idx ? { ...e, [field]: value, ...(field === 'lessonTypeId' ? { packageId: '' } : {}) } : e);
     setEnrollments(next);
   }
-  function add(){ setEnrollments([...enrollments, { lessonTypeId: '', packageId: '' }]); }
+  function add(){ setEnrollments([...enrollments, { lessonTypeId: '', packageId: '', quantity: 1 }]); }
   function remove(idx){ setEnrollments(enrollments.filter((_, i) => i !== idx)); }
   return <>
     <div className="lessons-rows">
@@ -5145,6 +5181,7 @@ function LessonsEditor({ enrollments, setEnrollments, lessonTypes, packages }){
         const ltPkgs = e.lessonTypeId ? (packages || []).filter(p => p.lesson_type_id === e.lessonTypeId && p.is_active !== false) : [];
         const usedLtIds = enrollments.map((en, j) => j !== i ? en.lessonTypeId : null).filter(Boolean);
         const availableLts = (lessonTypes || []).filter(lt => !usedLtIds.includes(lt.id));
+        const qty = Math.max(1, Number(e.quantity) || 1);
         return <div key={i} className="lesson-row">
           <select className="select" value={e.lessonTypeId} onChange={ev => update(i, 'lessonTypeId', ev.target.value)}>
             <option value="">— Lesson Type —</option>
@@ -5154,6 +5191,7 @@ function LessonsEditor({ enrollments, setEnrollments, lessonTypes, packages }){
             <option value="">{e.lessonTypeId ? '— Package —' : '← pick type first'}</option>
             {ltPkgs.map(p => <option key={p.id} value={p.id}>{p.name}{p.amount != null ? ` · RM${p.amount}` : ''}{billingText(p.billing_mode, p.billing_count) ? ` · ${billingText(p.billing_mode, p.billing_count)}` : ''}</option>)}
           </select>
+          <input className="select lesson-row-qty" type="number" min="1" step="1" value={qty} title="Quantity — how many times per cycle (multiplies billing & credits)" onChange={ev => update(i, 'quantity', Math.max(1, parseInt(ev.target.value, 10) || 1))} />
           {enrollments.length > 1 ? <button type="button" className="lesson-row-x" onClick={() => remove(i)} title="Remove this lesson">×</button> : <span className="lesson-row-x-spacer" />}
         </div>;
       })}
@@ -5168,10 +5206,10 @@ function StudentEditor({ row, lessonTypes, packages, onSave, hideAccountSections
   const [gender, setGender] = useState(row.gender || null);
   const [enrollments, setEnrollments] = useState(
     (row.enrollments && row.enrollments.length)
-      ? row.enrollments.map(e => ({ lessonTypeId: e.lessonTypeId || '', packageId: e.packageId || '' }))
+      ? row.enrollments.map(e => ({ lessonTypeId: e.lessonTypeId || '', packageId: e.packageId || '', quantity: Math.max(1, Number(e.quantity) || 1) }))
       : (row.lessonTypeIds && row.lessonTypeIds.length
-          ? row.lessonTypeIds.map((ltId, i) => ({ lessonTypeId: ltId, packageId: i === 0 ? (row.packageId || '') : '' }))
-          : [{ lessonTypeId: '', packageId: '' }])
+          ? row.lessonTypeIds.map((ltId, i) => ({ lessonTypeId: ltId, packageId: i === 0 ? (row.packageId || '') : '', quantity: 1 }))
+          : [{ lessonTypeId: '', packageId: '', quantity: 1 }])
   );
   const [guardianName, setGuardianName] = useState(row.guardianName || '');
   const [guardianEmail, setGuardianEmail] = useState(row.guardianEmail || '');
@@ -6346,16 +6384,19 @@ function computeBillingLines(pg, groupById, packageById, lessonTypeById, lessonT
       if(!e.lessonTypeId||!e.packageId||coveredPkgIds.has(e.packageId)) return;
       const pkg=pkgById2(e.packageId);
       if(!pkg) return;
+      const qty=Math.max(1,Number(e.quantity)||1);
+      const unit=pkg.amount!=null?Number(pkg.amount):0;
       individualItems.push({
         key:`ind:${sw.id}:${e.lessonTypeId}:${e.packageId}`,
         swimmerId:sw.id,swimmerName:sw.name,
         lessonTypeId:e.lessonTypeId,packageId:e.packageId,
         lessonTypeName:ltName(e.lessonTypeId),packageName:pkg.name,
         studentIds:sw.id,studentNames:sw.name,
-        amount:pkg.amount!=null?Number(pkg.amount):0,
+        quantity:qty,
+        amount:unit*qty,
         lineType:'individual',billingMode:pkg.billing_mode||'monthly',
-        billingCount:pkg.billing_count,creditsPerSwimmer:pkg.billing_count||4,
-        description:`${sw.name} — ${ltName(e.lessonTypeId)} · ${pkg.name}`,
+        billingCount:pkg.billing_count,creditsPerSwimmer:(pkg.billing_count||4)*qty,
+        description:`${sw.name} — ${ltName(e.lessonTypeId)} · ${pkg.name}${qty>1?` ×${qty}`:''}`,
       });
     });
   });
@@ -6947,7 +6988,7 @@ function DashboardReport({ invoices, pmts, students, pendingCredits, creditBalan
   const projection = dayOfMonth > 0 ? Math.round(cashThisMonth / dayOfMonth * daysInMonth) : 0;
 
   // Outstanding receivables
-  const outstanding = invoices.filter(i => i.status !== 'paid' && i.status !== 'void')
+  const outstanding = invoices.filter(i => i.status !== 'paid' && i.status !== 'void' && i.status !== 'refunded')
     .reduce((s,i) => s + Math.max(0, Number(i.total_amount||0) - Number(i.amount_paid||0)), 0);
 
   // Deferred revenue — sum of remaining credit balances multiplied by an estimated
@@ -6986,7 +7027,7 @@ function DashboardReport({ invoices, pmts, students, pendingCredits, creditBalan
 
   // ── Overdue invoices ──
   const overdueInvs = invoices.filter(i =>
-    i.status !== 'paid' && i.status !== 'void' &&
+    i.status !== 'paid' && i.status !== 'void' && i.status !== 'refunded' &&
     i.due_date && i.due_date < today
   ).map(i => ({
     inv: i,
@@ -7025,7 +7066,7 @@ function DashboardReport({ invoices, pmts, students, pendingCredits, creditBalan
         label="Outstanding (AR)"
         value={rm(outstanding)}
         color="var(--amber-tx)"
-        sub={`${invoices.filter(i=>i.status!=='paid'&&i.status!=='void').length} open invoice${invoices.filter(i=>i.status!=='paid'&&i.status!=='void').length===1?'':'s'}`}
+        sub={`${invoices.filter(i=>i.status!=='paid'&&i.status!=='void'&&i.status!=='refunded').length} open invoice${invoices.filter(i=>i.status!=='paid'&&i.status!=='void'&&i.status!=='refunded').length===1?'':'s'}`}
       />
       <KpiCard
         label="Deferred revenue"
@@ -7342,7 +7383,7 @@ function AgingReportView({ invoices, pmts, branches }){
     const outstanding=Math.max(0,a.totalInvoiced-a.totalPaid);
     let current=0,d1_30=0,d31_60=0,d60plus=0;
     a.invoices.forEach(inv=>{
-      if(inv.status==='paid'||inv.status==='void') return;
+      if(inv.status==='paid'||inv.status==='void'||inv.status==='refunded') return;
       const owed=Math.max(0,Number(inv.total_amount)-Number(inv.amount_paid));
       if(!owed) return;
       if(!inv.due_date){ current+=owed; return; }
@@ -7352,7 +7393,7 @@ function AgingReportView({ invoices, pmts, branches }){
       else if(age<=60) d31_60+=owed;
       else d60plus+=owed;
     });
-    const openInvs=a.invoices.filter(i=>i.status!=='paid'&&i.status!=='void');
+    const openInvs=a.invoices.filter(i=>i.status!=='paid'&&i.status!=='void'&&i.status!=='refunded');
     const oldestDue=openInvs.map(i=>i.due_date).filter(Boolean).sort()[0]||null;
     const isOverdue=d1_30>0||d31_60>0||d60plus>0;
     return { account:a.account, totalInvoiced:a.totalInvoiced, totalPaid:a.totalPaid, outstanding, current, d1_30, d31_60, d60plus, openCount:openInvs.length, oldestDue, isOverdue };
@@ -7444,7 +7485,7 @@ function AgingReportView({ invoices, pmts, branches }){
     </div>}
 
     <div className="small subtle" style={{marginTop:10}}>
-      Age buckets are calculated from invoice due dates. Invoices without a due date are counted as Current. Paid and voided invoices are excluded.
+      Age buckets are calculated from invoice due dates. Invoices without a due date are counted as Current. Paid, voided, and refunded invoices are excluded.
     </div>
   </>;
 }
@@ -7501,13 +7542,14 @@ function ReceiptsView({ pmts, invoices, branches, externalSearchQ }){
           {filtered.length === 0 && <tr><td colSpan={7} className="empty">No receipts found.</td></tr>}
           {filtered.map(p => {
             const inv = invoiceById[p.invoice_id] || {};
+            const isRef = p.kind==='refund' || Number(p.amount)<0;
             return <tr key={p.id}>
               <td>{fmtDate(p.payment_date)}</td>
               <td style={{fontFamily:'monospace',fontSize:12}}>{p.receipt_number||'—'}</td>
               <td style={{fontFamily:'monospace',fontSize:12}}>{inv.invoice_number||'—'}</td>
               <td style={{fontWeight:600}}>{inv.account_name||'—'}</td>
-              <td className="small subtle">{methodLabel(p.payment_method)}</td>
-              <td style={{textAlign:'right',fontWeight:700,color:'var(--green-tx)'}}>RM{Number(p.amount).toFixed(2)}</td>
+              <td className="small subtle">{methodLabel(p.payment_method)}{isRef?' · Refund':''}</td>
+              <td style={{textAlign:'right',fontWeight:700,color:isRef?'#DC2626':'var(--green-tx)'}}>{isRef?'−':''}RM{Math.abs(Number(p.amount)).toFixed(2)}</td>
               <td style={{textAlign:'center'}}>
                 <button className="btn btn-ghost small" title="Print receipt" onClick={()=>printReceipt(p, inv)}>🖨</button>
               </td>
@@ -8706,14 +8748,14 @@ function decodeReplacementFrom(raw){
 }
 function replFromLabel(raw){ return decodeReplacementFrom(raw).label; }
 
-function invoiceStatusLabel(s){ return({draft:'Draft',sent:'Sent',partial:'Part Paid',paid:'Paid',void:'Void'})[s]||s; }
-function invoiceStatusColor(s){ return({draft:'#94A3B8',sent:'#3B82F6',partial:'#F59E0B',paid:'#10B981',void:'#EF4444'})[s]||'#94A3B8'; }
+function invoiceStatusLabel(s){ return({draft:'Draft',sent:'Sent',partial:'Part Paid',paid:'Paid',void:'Void',refunded:'Refunded'})[s]||s; }
+function invoiceStatusColor(s){ return({draft:'#94A3B8',sent:'#3B82F6',partial:'#F59E0B',paid:'#10B981',void:'#EF4444',refunded:'#8B5CF6'})[s]||'#94A3B8'; }
 function methodLabel(m){ return({cash:'Cash',bank_transfer:'Bank Transfer',duitnow:'DuitNow',card:'Card',cheque:'Cheque',other:'Other'})[m]||m; }
 
 // Helper: resolve swimmer names for a group line
 
 
-function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, lessonTypeById, packageById, studentById, membersByGroup, invoiceSettings, onSaveSettings, formatInvoiceNumber, formatReceiptNumber, onVoid, onDelete, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine, externalSearchQ }){
+function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, lessonTypeById, packageById, studentById, membersByGroup, invoiceSettings, onSaveSettings, formatInvoiceNumber, formatReceiptNumber, onVoid, onDelete, onRefund, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine, externalSearchQ }){
   const [statusFilter,setStatusFilter]=useState('all');
   const [localSearchQ, setLocalSearchQ] = useState('');
   const searchQ = externalSearchQ !== undefined ? externalSearchQ : localSearchQ;
@@ -8723,10 +8765,10 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
   const [branchFilter,setBranchFilter]=useState(null);
   const today=todayStr();
 
-  function isOverdue(inv){ return inv.due_date && inv.due_date < today && inv.status !== 'paid' && inv.status !== 'void'; }
+  function isOverdue(inv){ return inv.due_date && inv.due_date < today && inv.status !== 'paid' && inv.status !== 'void' && inv.status !== 'refunded'; }
 
   const counts = useMemo(()=>{
-    const c={all:invoices.length,draft:0,sent:0,partial:0,paid:0,void:0,overdue:0};
+    const c={all:invoices.length,draft:0,sent:0,partial:0,paid:0,void:0,refunded:0,overdue:0};
     invoices.forEach(i=>{ if(c[i.status]!=null)c[i.status]++; if(isOverdue(i))c.overdue++; });
     return c;
   },[invoices]);
@@ -8767,7 +8809,7 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
       </div>
       <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',marginBottom:8}}>
         <BranchFilterPills branches={branches} value={branchFilter} onChange={setBranchFilter} />
-        {[['all','All'],['draft','Draft'],['sent','Sent'],['partial','Part Paid'],['paid','Paid'],['void','Void'],['overdue','Overdue']].map(([k,l])=>
+        {[['all','All'],['draft','Draft'],['sent','Sent'],['partial','Part Paid'],['paid','Paid'],['void','Void'],['refunded','Refunded'],['overdue','Overdue']].map(([k,l])=>
           <button key={k} className={`tab ${statusFilter===k?'active':''}`} style={{padding:'4px 10px',fontSize:11}} onClick={()=>setStatusFilter(k)}>
             {l} {counts[k]!=null?`(${counts[k]})`:null}
           </button>)}
@@ -8819,6 +8861,7 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
             isOverdue={overdue} membersByGroup={membersByGroup}
             onVoid={()=>onVoid(inv.id)}
             onDelete={onDelete ? ()=>onDelete(inv.id) : null}
+            onRefund={onRefund ? (data)=>onRefund({invoiceId:inv.id,...data}) : null}
             onUpdateStatus={(s)=>onUpdateStatus(inv.id,s)}
             onRecordPayment={(data)=>onRecordPayment({invoiceId:inv.id,...data})}
             onConfirmCredit={onConfirmCredit} onReverseCredit={onReverseCredit}
@@ -8831,7 +8874,7 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
   </>;
 }
 
-function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, membersByGroup, onVoid, onDelete, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
+function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, membersByGroup, onVoid, onDelete, onRefund, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
   const [showPayForm,setShowPayForm]=useState(false);
   const [lastReceipt,setLastReceipt]=useState(null);
   const outstanding=Math.max(0,(Number(invoice.total_amount)||0)-(Number(invoice.amount_paid)||0));
@@ -8841,6 +8884,25 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
   const [payRef,setPayRef]=useState('');
   const [payNotes,setPayNotes]=useState('');
   const [payBusy,setPayBusy]=useState(false);
+  // Refund state
+  const [showRefundForm,setShowRefundForm]=useState(false);
+  const [refAmt,setRefAmt]=useState('');
+  const [refDate,setRefDate]=useState(todayStr());
+  const [refMethod,setRefMethod]=useState('cash');
+  const [refReason,setRefReason]=useState('');
+  const [refBusy,setRefBusy]=useState(false);
+  const paidTotal=Number(invoice.amount_paid)||0;
+
+  async function submitRefund(){
+    const amt=Math.abs(Number(refAmt)||0);
+    if(!amt){ alert('Enter a valid refund amount.'); return; }
+    setRefBusy(true);
+    try{
+      await onRefund({ amount:amt, refundDate:refDate, method:refMethod, reason:refReason.trim()||null });
+      setShowRefundForm(false); setRefAmt(''); setRefReason('');
+    }catch(err){ alert(err.message||'Failed to record refund'); }
+    finally{ setRefBusy(false); }
+  }
 
   async function submitPayment(){
     if(!payAmt||isNaN(Number(payAmt))||Number(payAmt)<=0){alert('Enter a valid amount.');return;}
@@ -8872,7 +8934,8 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
             const lastPmt=[...pmts].sort((a,b)=>(b.payment_date||'').localeCompare(a.payment_date||''))[0];
             printInvoiceAndReceipt(invoice,lines,lastPmt,membersByGroup);
           }}>🖨 Print Invoice &amp; Receipt</button>}
-        {invoice.status!=='void'&&invoice.status!=='paid'&&<button className="btn btn-danger small" onClick={onVoid}>Void</button>}
+        {invoice.status!=='void'&&invoice.status!=='refunded'&&<button className="btn btn-danger small" onClick={onVoid}>Void</button>}
+        {onRefund&&paidTotal>0&&invoice.status!=='void'&&invoice.status!=='refunded'&&<button className="btn btn-ghost small" style={{borderColor:'#C4B5FD',color:'#6D28D9'}} onClick={()=>{setRefAmt(paidTotal.toFixed(2));setShowRefundForm(true);}}>Refund</button>}
         {onDelete&&<button className="btn btn-danger small" onClick={onDelete} style={{marginLeft:'auto'}}>🗑 Delete Invoice</button>}
       </div>
     </div>
@@ -8901,16 +8964,30 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
       <div style={{fontWeight:700,marginBottom:6}}>Payments</div>
       <div className="table-wrap">
         <table><thead><tr><th>Date</th><th>Receipt #</th><th>Method</th><th style={{textAlign:'right'}}>Amount</th><th></th></tr></thead>
-          <tbody>{pmts.map(p=><tr key={p.id}>
+          <tbody>{pmts.map(p=>{ const isRef=p.kind==='refund'||Number(p.amount)<0; return <tr key={p.id}>
             <td>{p.payment_date||'—'}</td>
             <td style={{fontFamily:'monospace',fontSize:11}}>{p.receipt_number||'—'}</td>
-            <td>{methodLabel(p.payment_method)}</td>
-            <td style={{textAlign:'right',fontWeight:700,color:'var(--green-tx)'}}>RM {Number(p.amount).toFixed(2)}</td>
+            <td>{methodLabel(p.payment_method)}{isRef?' · Refund':''}</td>
+            <td style={{textAlign:'right',fontWeight:700,color:isRef?'#DC2626':'var(--green-tx)'}}>{isRef?'−':''}RM {Math.abs(Number(p.amount)).toFixed(2)}</td>
             <td><button className="btn btn-ghost small" title="Print receipt" onClick={()=>printReceipt(p,invoice)}>🖨 Receipt</button></td>
-          </tr>)}</tbody>
+          </tr>; })}</tbody>
         </table>
       </div>
       <div className="small subtle" style={{marginTop:4}}>Paid RM {Number(invoice.amount_paid||0).toFixed(2)} · Outstanding RM {outstanding.toFixed(2)}</div>
+    </div>}
+    {showRefundForm&&<div className="inv-pay-form" style={{borderColor:'#C4B5FD',background:'#FAF5FF'}}>
+      <div style={{fontWeight:700,marginBottom:6,color:'#6D28D9'}}>Refund Payment</div>
+      <div className="small subtle" style={{marginBottom:8}}>Records a refund receipt (money returned to the parent) and marks the invoice “Refunded”. For an invoice raised in error, use Void instead.</div>
+      <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
+        <div className="field"><label>Refund Amount (RM)</label><input className="input" type="number" step="0.01" min="0.01" value={refAmt} onChange={e=>setRefAmt(e.target.value)} /></div>
+        <div className="field"><label>Date</label><input className="input" type="date" value={refDate} onChange={e=>setRefDate(e.target.value)} /></div>
+        <div className="field"><label>Method</label><select className="select" value={refMethod} onChange={e=>setRefMethod(e.target.value)}><option value="cash">Cash</option><option value="bank_transfer">Bank Transfer</option><option value="duitnow">DuitNow</option><option value="card">Card</option><option value="cheque">Cheque</option><option value="other">Other</option></select></div>
+      </div>
+      <div className="field" style={{marginTop:8}}><label>Reason (optional)</label><input className="input" value={refReason} onChange={e=>setRefReason(e.target.value)} placeholder="e.g. Parent withdrew, class cancelled" /></div>
+      <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:10}}>
+        <button className="btn btn-ghost small" onClick={()=>setShowRefundForm(false)}>Cancel</button>
+        <button className="btn btn-primary small" onClick={submitRefund} disabled={refBusy} style={{background:'#7C3AED',borderColor:'#7C3AED'}}>{refBusy?'Processing…':'Confirm Refund'}</button>
+      </div>
     </div>}
     {!showPayForm&&outstanding>0&&invoice.status!=='void'&&
       <button className="btn btn-primary small" onClick={()=>{setPayAmt(outstanding.toFixed(2));setShowPayForm(true);}}>+ Record Payment</button>}
