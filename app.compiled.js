@@ -524,6 +524,7 @@ function App() {
   const [programmeSessions, setProgrammeSessions] = useState([]);
   const [programmeCategories, setProgrammeCategories] = useState([]);
   const [billingTerms, setBillingTerms] = useState([]);
+  const [products, setProducts] = useState([]);
   const [programmeModal, setProgrammeModal] = useState(null);
   const [programmeDate, setProgrammeDate] = useState(todayStr()); // own week cursor (independent of Schedule)
   const [programmeMonthCursor, setProgrammeMonthCursor] = useState(new Date());
@@ -647,7 +648,7 @@ function App() {
       setLoading(false);
       setStatus('Connected');
       // Phase 2 — background: load everything else after first paint.
-      Promise.all([loadStudents(), loadGroups(), loadGroupMemberships(), loadCreditBalances(), loadCreditPurchases(), loadSubscriptions(), loadCodes(), loadReplacementPending(), loadTcAcceptances(), loadRemarks(monthCursor), loadInvoiceData(), loadProgrammeSessions(), loadProgrammeCategories(), loadBillingTerms()]).catch(e => console.warn('Background load warning:', e));
+      Promise.all([loadStudents(), loadGroups(), loadGroupMemberships(), loadCreditBalances(), loadCreditPurchases(), loadSubscriptions(), loadCodes(), loadReplacementPending(), loadTcAcceptances(), loadRemarks(monthCursor), loadInvoiceData(), loadProgrammeSessions(), loadProgrammeCategories(), loadBillingTerms(), loadProducts()]).catch(e => console.warn('Background load warning:', e));
     } catch (err) {
       handleErr(err);
       setLoading(false);
@@ -1254,6 +1255,14 @@ function App() {
       setBillingTerms(rows || []);
     } catch (_) {
       setBillingTerms([]);
+    }
+  }
+  async function loadProducts() {
+    try {
+      const rows = await selectRows('products', '*', '&order=sort_order.asc,name.asc').catch(() => []);
+      setProducts(rows || []);
+    } catch (_) {
+      setProducts([]);
     }
   }
   async function loadStudents() {
@@ -3536,6 +3545,49 @@ function App() {
     }
   }
 
+  // ── Product catalogue CRUD (Settings › Products) ─────────────────────────
+  async function addCatalogProduct({
+    name,
+    price
+  }) {
+    try {
+      const next = (products || []).length + 1;
+      await insertRows('products', {
+        name,
+        price: price === '' || price == null ? null : Number(price),
+        sort_order: next,
+        is_active: true
+      });
+      await loadProducts();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to add product');
+    }
+  }
+  async function updateCatalogProduct(id, patch) {
+    try {
+      await patchRows('products', {
+        id
+      }, patch);
+      await loadProducts();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to update product');
+    }
+  }
+  async function deleteCatalogProduct(id) {
+    if (!confirm('Delete this product from the catalogue?')) return;
+    try {
+      await deleteRows('products', {
+        id
+      });
+      await loadProducts();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to delete product');
+    }
+  }
+
   // Reorder a settings list by reindexing sort_order across the whole list, so
   // the result is clean and gap-free regardless of the existing values.
   async function reorderOption(table, list, index, dir) {
@@ -4616,6 +4668,9 @@ function App() {
     className: `sub-tab ${adminSection === 'billingTerms' ? 'active' : ''}`,
     onClick: () => setAdminSection('billingTerms')
   }, "Billing Terms"), /*#__PURE__*/React.createElement("button", {
+    className: `sub-tab ${adminSection === 'products' ? 'active' : ''}`,
+    onClick: () => setAdminSection('products')
+  }, "Products"), /*#__PURE__*/React.createElement("button", {
     className: `sub-tab ${adminSection === 'invoiceSettings' ? 'active' : ''}`,
     onClick: () => setAdminSection('invoiceSettings')
   }, "Invoice Numbering"))), /*#__PURE__*/React.createElement("div", {
@@ -4792,6 +4847,7 @@ function App() {
     lessonTypes: activeLessonTypes(),
     lessonTypeById: lessonTypeById,
     packages: activePackages(),
+    products: products,
     packageById: packageById,
     familyGroups: currentBranchId && currentBranchId !== 'all' ? (familyGroups || []).filter(g => {
       const gid = g.id;
@@ -4864,6 +4920,7 @@ function App() {
     lessonTypeById: lessonTypeById,
     packageById: packageById,
     studentById: studentById,
+    products: products,
     membersByGroup: membersByGroup,
     invoiceSettings: invoiceSettings,
     onSaveSettings: saveInvoiceSettings,
@@ -5023,6 +5080,11 @@ function App() {
     addTerm: addBillingTerm,
     updateTerm: updateBillingTerm,
     deleteTerm: deleteBillingTerm
+  }), !loading && view === 'settings' && adminSection === 'products' && /*#__PURE__*/React.createElement(ProductsAdminView, {
+    products: products,
+    addProduct: addCatalogProduct,
+    updateProduct: updateCatalogProduct,
+    deleteProduct: deleteCatalogProduct
   }), !loading && view === 'settings' && adminSection === 'invoiceSettings' && /*#__PURE__*/React.createElement("div", {
     className: "card"
   }, /*#__PURE__*/React.createElement("div", {
@@ -10097,6 +10159,7 @@ function ParentsView({
   lessonTypeById,
   packages,
   packageById,
+  products,
   familyGroups,
   groupById,
   membersByGroup,
@@ -10618,6 +10681,7 @@ function ParentsView({
       lessonTypeById: lessonTypeById,
       packages: packages,
       packageById: packageById,
+      products: products,
       groupById: groupById,
       membersByGroup: membersByGroup,
       subscriptions: subscriptions,
@@ -11424,6 +11488,7 @@ function BillingPreviewPanel({
   lessonTypeById,
   packages,
   packageById,
+  products,
   groupById,
   membersByGroup,
   subscriptions,
@@ -11617,7 +11682,26 @@ function BillingPreviewPanel({
     }
   }, "🛍 Products / goods ", /*#__PURE__*/React.createElement("span", {
     className: "small subtle"
-  }, "(optional — goggles, caps, swim diapers…)")), productLines.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "(optional — goggles, caps, swim diapers…)")), (products || []).filter(p => p.is_active !== false).length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    value: "",
+    onChange: e => {
+      const p = (products || []).find(x => x.id === e.target.value);
+      if (p) {
+        setPDesc(p.name);
+        if (p.price != null) setPPrice(String(p.price));
+      }
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "Pick from catalogue…"), (products || []).filter(p => p.is_active !== false).map(p => /*#__PURE__*/React.createElement("option", {
+    key: p.id,
+    value: p.id
+  }, p.name, p.price != null ? ` — RM${Number(p.price).toFixed(2)}` : '')))), productLines.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       flexDirection: 'column',
@@ -16073,6 +16157,7 @@ function InvoicesView({
   lessonTypeById,
   packageById,
   studentById,
+  products,
   membersByGroup,
   invoiceSettings,
   onSaveSettings,
@@ -16339,6 +16424,7 @@ function InvoicesView({
       pendingCredits: invPcs,
       isOverdue: overdue,
       membersByGroup: membersByGroup,
+      products: products,
       onVoid: reason => onVoid(inv.id, reason),
       onEditVoidReason: onEditVoidReason ? reason => onEditVoidReason(inv.id, reason) : null,
       onDelete: onDelete ? () => onDelete(inv.id) : null,
@@ -16366,6 +16452,7 @@ function InvoiceDetailPanel({
   pendingCredits,
   isOverdue,
   membersByGroup,
+  products,
   onVoid,
   onDelete,
   onRefund,
@@ -16709,7 +16796,26 @@ function InvoiceDetailPanel({
     }
   }, "Add item ", /*#__PURE__*/React.createElement("span", {
     className: "small subtle"
-  }, "(goggles, cap, swim diaper…)")), /*#__PURE__*/React.createElement("div", {
+  }, "(goggles, cap, swim diaper…)")), (products || []).filter(p => p.is_active !== false).length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    value: "",
+    onChange: e => {
+      const p = (products || []).find(x => x.id === e.target.value);
+      if (p) {
+        setItemDesc(p.name);
+        if (p.price != null) setItemPrice(String(p.price));
+      }
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "Pick from catalogue…"), (products || []).filter(p => p.is_active !== false).map(p => /*#__PURE__*/React.createElement("option", {
+    key: p.id,
+    value: p.id
+  }, p.name, p.price != null ? ` — RM${Number(p.price).toFixed(2)}` : '')))), /*#__PURE__*/React.createElement("div", {
     className: "form-grid",
     style: {
       gridTemplateColumns: '2fr 70px 100px 90px'
@@ -18193,6 +18299,190 @@ function ProgrammeSessionModal({
 
 // Settings › Billing Terms — per-branch named billing periods / school terms
 // (e.g. "Term 1 2026") with start & end dates. Branch-scoped like Lesson Types.
+// Settings › Products — shared product / goods catalogue (name + price).
+function ProductsAdminView({
+  products,
+  addProduct,
+  updateProduct,
+  deleteProduct
+}) {
+  const [name, setName] = useState('');
+  const [price, setPrice] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({
+    name: '',
+    price: ''
+  });
+  function startEdit(p) {
+    setEditingId(p.id);
+    setEditForm({
+      name: p.name || '',
+      price: p.price != null ? String(p.price) : ''
+    });
+  }
+  async function saveEdit() {
+    if (!editForm.name.trim()) return;
+    await updateProduct(editingId, {
+      name: editForm.name.trim(),
+      price: editForm.price === '' ? null : Number(editForm.price)
+    });
+    setEditingId(null);
+  }
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 18,
+      fontWeight: 800,
+      marginBottom: 4
+    }
+  }, "🛍 Products / Goods"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginBottom: 14
+    }
+  }, "Items you sell to swimmers and parents (goggles, swim caps, swim diapers…). Saved here so you can pick them — with the price pre-filled — when billing products on an invoice. Shared across all branches; the price stays editable per sale."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: 'minmax(0,1fr) 150px auto',
+      gap: 10,
+      alignItems: 'end'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Product name"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    placeholder: "e.g. Swim goggles",
+    value: name,
+    onChange: e => setName(e.target.value)
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Default price (RM)"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "number",
+    min: "0",
+    step: "0.01",
+    placeholder: "0.00",
+    value: price,
+    onChange: e => setPrice(e.target.value)
+  })), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary",
+    style: {
+      height: 38
+    },
+    disabled: !name.trim(),
+    onClick: async () => {
+      if (!name.trim()) return;
+      await addProduct({
+        name: name.trim(),
+        price
+      });
+      setName('');
+      setPrice('');
+    }
+  }, "+ Add Product"))), /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      padding: 0,
+      overflow: 'hidden'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "table-wrap",
+    style: {
+      border: 'none',
+      borderRadius: 0
+    }
+  }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: '55%'
+    }
+  }, "Product"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 140,
+      textAlign: 'right'
+    }
+  }, "Default price"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 180,
+      textAlign: 'right'
+    }
+  }, "Actions"))), /*#__PURE__*/React.createElement("tbody", null, (products || []).length === 0 && /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
+    colSpan: 3,
+    className: "empty"
+  }, "No products yet. Add one above.")), (products || []).map(p => editingId === p.id ? /*#__PURE__*/React.createElement("tr", {
+    key: p.id
+  }, /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: editForm.name,
+    onChange: e => setEditForm({
+      ...editForm,
+      name: e.target.value
+    })
+  })), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "number",
+    min: "0",
+    step: "0.01",
+    style: {
+      textAlign: 'right'
+    },
+    value: editForm.price,
+    onChange: e => setEditForm({
+      ...editForm,
+      price: e.target.value
+    })
+  })), /*#__PURE__*/React.createElement("td", {
+    style: {
+      textAlign: 'right'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary small",
+    onClick: saveEdit,
+    style: {
+      marginRight: 6
+    }
+  }, "Save"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => setEditingId(null)
+  }, "Cancel"))) : /*#__PURE__*/React.createElement("tr", {
+    key: p.id
+  }, /*#__PURE__*/React.createElement("td", {
+    style: {
+      fontWeight: 600
+    }
+  }, p.name), /*#__PURE__*/React.createElement("td", {
+    style: {
+      textAlign: 'right'
+    }
+  }, p.price != null ? `RM${Number(p.price).toFixed(2)}` : /*#__PURE__*/React.createElement("span", {
+    className: "subtle"
+  }, "—")), /*#__PURE__*/React.createElement("td", {
+    style: {
+      textAlign: 'right'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => startEdit(p),
+    style: {
+      marginRight: 6
+    }
+  }, "✎ Edit"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    style: {
+      color: '#DC2626'
+    },
+    onClick: () => deleteProduct(p.id)
+  }, "Delete")))))))));
+}
 function BillingTermsAdminView({
   terms,
   branches,
