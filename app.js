@@ -260,6 +260,7 @@ function App(){
   const [programmeSessions,setProgrammeSessions] = useState([]);
   const [programmeCategories,setProgrammeCategories] = useState([]);
   const [billingTerms,setBillingTerms] = useState([]);
+  const [products,setProducts] = useState([]);
   const [programmeModal,setProgrammeModal] = useState(null);
   const [programmeDate,setProgrammeDate] = useState(todayStr());     // own week cursor (independent of Schedule)
   const [programmeMonthCursor,setProgrammeMonthCursor] = useState(new Date());
@@ -352,7 +353,7 @@ function App(){
         loadCreditBalances(), loadCreditPurchases(),
         loadSubscriptions(), loadCodes(), loadReplacementPending(),
         loadTcAcceptances(), loadRemarks(monthCursor), loadInvoiceData(),
-        loadProgrammeSessions(), loadProgrammeCategories(), loadBillingTerms()
+        loadProgrammeSessions(), loadProgrammeCategories(), loadBillingTerms(), loadProducts()
       ]).catch(e => console.warn('Background load warning:', e));
     } catch(err){ handleErr(err); setLoading(false); }
   }
@@ -774,6 +775,12 @@ function App(){
       const rows = await selectRows('billing_terms','*','&order=start_date.asc,sort_order.asc,name.asc').catch(()=>[]);
       setBillingTerms(rows || []);
     } catch(_){ setBillingTerms([]); }
+  }
+  async function loadProducts(){
+    try{
+      const rows = await selectRows('products','*','&order=sort_order.asc,name.asc').catch(()=>[]);
+      setProducts(rows || []);
+    } catch(_){ setProducts([]); }
   }
 
   async function loadStudents(){
@@ -2407,6 +2414,24 @@ function App(){
     catch(err){ handleErr(err); alert(err.message || 'Failed to delete billing term'); }
   }
 
+  // ── Product catalogue CRUD (Settings › Products) ─────────────────────────
+  async function addCatalogProduct({ name, price }){
+    try{
+      const next = (products||[]).length + 1;
+      await insertRows('products', { name, price: (price===''||price==null)?null:Number(price), sort_order: next, is_active: true });
+      await loadProducts();
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to add product'); }
+  }
+  async function updateCatalogProduct(id, patch){
+    try{ await patchRows('products', {id}, patch); await loadProducts(); }
+    catch(err){ handleErr(err); alert(err.message || 'Failed to update product'); }
+  }
+  async function deleteCatalogProduct(id){
+    if(!confirm('Delete this product from the catalogue?')) return;
+    try{ await deleteRows('products', {id}); await loadProducts(); }
+    catch(err){ handleErr(err); alert(err.message || 'Failed to delete product'); }
+  }
+
   // Reorder a settings list by reindexing sort_order across the whole list, so
   // the result is clean and gap-free regardless of the existing values.
   async function reorderOption(table, list, index, dir){
@@ -3084,6 +3109,7 @@ function App(){
       <button className={`sub-tab ${adminSection==='programme'?'active':''}`} onClick={()=>setAdminSection('programme')}>Programme</button>
       <button className={`sub-tab ${adminSection==='terms'?'active':''}`} onClick={()=>setAdminSection('terms')}>Terms</button>
       <button className={`sub-tab ${adminSection==='billingTerms'?'active':''}`} onClick={()=>setAdminSection('billingTerms')}>Billing Terms</button>
+      <button className={`sub-tab ${adminSection==='products'?'active':''}`} onClick={()=>setAdminSection('products')}>Products</button>
       <button className={`sub-tab ${adminSection==='invoiceSettings'?'active':''}`} onClick={()=>setAdminSection('invoiceSettings')}>Invoice Numbering</button>
     </div></div>}
 
@@ -3232,6 +3258,7 @@ function App(){
         lessonTypes={activeLessonTypes()}
         lessonTypeById={lessonTypeById}
         packages={activePackages()}
+        products={products}
         packageById={packageById}
         familyGroups={currentBranchId && currentBranchId !== 'all'
           ? (familyGroups || []).filter(g => {
@@ -3289,6 +3316,7 @@ function App(){
         invoices={invoices} invoiceLines={invoiceLines} pmts={pmts}
         pendingCredits={pendingCredits} lessonTypeById={lessonTypeById}
         packageById={packageById} studentById={studentById}
+        products={products}
         membersByGroup={membersByGroup}
         invoiceSettings={invoiceSettings} onSaveSettings={saveInvoiceSettings}
         formatInvoiceNumber={formatInvoiceNumber} formatReceiptNumber={formatReceiptNumber}
@@ -3405,6 +3433,12 @@ function App(){
         addTerm={addBillingTerm}
         updateTerm={updateBillingTerm}
         deleteTerm={deleteBillingTerm}
+      />}
+      {!loading && view==='settings' && adminSection==='products' && <ProductsAdminView
+        products={products}
+        addProduct={addCatalogProduct}
+        updateProduct={updateCatalogProduct}
+        deleteProduct={deleteCatalogProduct}
       />}
       {!loading && view==='settings' && adminSection==='invoiceSettings' && <div className="card">
         <div style={{fontWeight:800,fontSize:18,marginBottom:4}}>Invoice Numbering &amp; Permissions</div>
@@ -5631,7 +5665,7 @@ function BranchFilterPills({ branches, value, onChange }){
   </div>;
 }
 
-function ParentsView({ accountSection, setAccountSection, branches, parentGroups, lessonTypes, lessonTypeById, packages, packageById, familyGroups, groupById, membersByGroup, creditByKey, subscriptions, addStudent, updateStudent, deleteStudent, deleteAccount, addGroup, updateGroup, deleteGroup, setStudentGroup, addStudentToGroup, removeStudentFromGroup, groupIdsByStudent, addSubscription, cancelSubscription, adjustBalanceTo, scheduleByStudent, sessions, poolById, selectedWeekStart, createInvoice, setAdminSection, onJumpToSession, setView, externalSearchQ }){
+function ParentsView({ accountSection, setAccountSection, branches, parentGroups, lessonTypes, lessonTypeById, packages, packageById, products, familyGroups, groupById, membersByGroup, creditByKey, subscriptions, addStudent, updateStudent, deleteStudent, deleteAccount, addGroup, updateGroup, deleteGroup, setStudentGroup, addStudentToGroup, removeStudentFromGroup, groupIdsByStudent, addSubscription, cancelSubscription, adjustBalanceTo, scheduleByStudent, sessions, poolById, selectedWeekStart, createInvoice, setAdminSection, onJumpToSession, setView, externalSearchQ }){
   // ── Sub-view driven by external accountSection prop (from nav dropdown) ──
   const adminView = accountSection || 'accounts';
   const setAdminView = (v) => { if(setAccountSection) setAccountSection(v); };
@@ -5990,6 +6024,7 @@ function ParentsView({ accountSection, setAccountSection, branches, parentGroups
             lessonTypeById={lessonTypeById}
             packages={packages}
             packageById={packageById}
+            products={products}
             groupById={groupById}
             membersByGroup={membersByGroup}
             subscriptions={subscriptions}
@@ -6456,7 +6491,7 @@ function computeBillingLines(pg, groupById, packageById, lessonTypeById, lessonT
 // "Generate Invoice" creates the invoice + lines + navigates to Admin > Invoices.
 // The old per-line "💳 Record" flow has been superseded by the invoice path.
 // ============================================================================
-function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packageById, groupById, membersByGroup, subscriptions, addSubscription, onClose, onGenerateInvoice }){
+function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packageById, products, groupById, membersByGroup, subscriptions, addSubscription, onClose, onGenerateInvoice }){
   const ltById = lessonTypeById || ((id) => lessonTypes.find(x => x.id === id));
   const pkgById = packageById || ((id) => packages.find(p => p.id === id));
   function ltName(id){ const lt = typeof ltById === 'function' ? ltById(id) : ltById?.[id]; return lt?.name || 'Lesson'; }
@@ -6556,6 +6591,12 @@ function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packag
       {/* Products / goods — billable with or without lessons */}
       {unconfiguredGroups.length===0 && <div style={{marginTop:hasAny?14:6,padding:'10px 12px',border:'1px dashed var(--border)',borderRadius:10}}>
         <div style={{fontWeight:700,marginBottom:6}}>🛍 Products / goods <span className="small subtle">(optional — goggles, caps, swim diapers…)</span></div>
+        {(products||[]).filter(p=>p.is_active!==false).length>0 && <div style={{marginBottom:8}}>
+          <select className="select" value="" onChange={e=>{ const p=(products||[]).find(x=>x.id===e.target.value); if(p){ setPDesc(p.name); if(p.price!=null) setPPrice(String(p.price)); } }}>
+            <option value="">Pick from catalogue…</option>
+            {(products||[]).filter(p=>p.is_active!==false).map(p=><option key={p.id} value={p.id}>{p.name}{p.price!=null?` — RM${Number(p.price).toFixed(2)}`:''}</option>)}
+          </select>
+        </div>}
         {productLines.length>0 && <div style={{display:'flex',flexDirection:'column',gap:4,marginBottom:8}}>
           {productLines.map(p=>{ const q=Math.max(1,Number(p.quantity)||1); const u=Number(p.unitPrice)||0; return <div key={p.id} style={{display:'flex',alignItems:'center',gap:8,fontSize:13}}>
             <span style={{flex:1}}>{p.description}{q>1?` — Qty ${q} × RM${u.toFixed(2)}`:''}</span>
@@ -8833,7 +8874,7 @@ function methodLabel(m){ return({cash:'Cash',bank_transfer:'Bank Transfer',duitn
 // Helper: resolve swimmer names for a group line
 
 
-function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, lessonTypeById, packageById, studentById, membersByGroup, invoiceSettings, onSaveSettings, formatInvoiceNumber, formatReceiptNumber, onVoid, onDelete, onRefund, onEditVoidReason, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine, externalSearchQ }){
+function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, lessonTypeById, packageById, studentById, products, membersByGroup, invoiceSettings, onSaveSettings, formatInvoiceNumber, formatReceiptNumber, onVoid, onDelete, onRefund, onEditVoidReason, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine, externalSearchQ }){
   const [statusFilter,setStatusFilter]=useState('all');
   const [localSearchQ, setLocalSearchQ] = useState('');
   const searchQ = externalSearchQ !== undefined ? externalSearchQ : localSearchQ;
@@ -8936,7 +8977,7 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
           </div>
           {isExpanded&&<InvoiceDetailPanel
             invoice={inv} lines={invLines} pmts={invPmts} pendingCredits={invPcs}
-            isOverdue={overdue} membersByGroup={membersByGroup}
+            isOverdue={overdue} membersByGroup={membersByGroup} products={products}
             onVoid={(reason)=>onVoid(inv.id, reason)}
             onEditVoidReason={onEditVoidReason ? (reason)=>onEditVoidReason(inv.id, reason) : null}
             onDelete={onDelete ? ()=>onDelete(inv.id) : null}
@@ -8953,7 +8994,7 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
   </>;
 }
 
-function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, membersByGroup, onVoid, onDelete, onRefund, onEditVoidReason, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
+function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, membersByGroup, products, onVoid, onDelete, onRefund, onEditVoidReason, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
   const [showPayForm,setShowPayForm]=useState(false);
   const [lastReceipt,setLastReceipt]=useState(null);
   const outstanding=Math.max(0,(Number(invoice.total_amount)||0)-(Number(invoice.amount_paid)||0));
@@ -9101,6 +9142,12 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
       {canEditLines && (showItemForm
         ? <div className="inv-pay-form" style={{marginTop:8}}>
             <div style={{fontWeight:700,marginBottom:6}}>Add item <span className="small subtle">(goggles, cap, swim diaper…)</span></div>
+            {(products||[]).filter(p=>p.is_active!==false).length>0 && <div style={{marginBottom:8}}>
+              <select className="select" value="" onChange={e=>{ const p=(products||[]).find(x=>x.id===e.target.value); if(p){ setItemDesc(p.name); if(p.price!=null) setItemPrice(String(p.price)); } }}>
+                <option value="">Pick from catalogue…</option>
+                {(products||[]).filter(p=>p.is_active!==false).map(p=><option key={p.id} value={p.id}>{p.name}{p.price!=null?` — RM${Number(p.price).toFixed(2)}`:''}</option>)}
+              </select>
+            </div>}
             <div className="form-grid" style={{gridTemplateColumns:'2fr 70px 100px 90px'}}>
               <div className="field"><label>Item</label><input className="input" value={itemDesc} onChange={e=>setItemDesc(e.target.value)} placeholder="e.g. Swim goggles" /></div>
               <div className="field"><label>Qty</label><input className="input" type="number" min="1" step="1" value={itemQty} onChange={e=>setItemQty(Math.max(1,parseInt(e.target.value,10)||1))} /></div>
@@ -9718,6 +9765,50 @@ function ProgrammeSessionModal({ modal, setModal, busy, onSave, onDelete, onDupl
 
 // Settings › Billing Terms — per-branch named billing periods / school terms
 // (e.g. "Term 1 2026") with start & end dates. Branch-scoped like Lesson Types.
+// Settings › Products — shared product / goods catalogue (name + price).
+function ProductsAdminView({ products, addProduct, updateProduct, deleteProduct }){
+  const [name,setName]=useState('');
+  const [price,setPrice]=useState('');
+  const [editingId,setEditingId]=useState(null);
+  const [editForm,setEditForm]=useState({name:'',price:''});
+  function startEdit(p){ setEditingId(p.id); setEditForm({name:p.name||'',price:p.price!=null?String(p.price):''}); }
+  async function saveEdit(){ if(!editForm.name.trim()) return; await updateProduct(editingId,{ name:editForm.name.trim(), price:(editForm.price===''?null:Number(editForm.price)) }); setEditingId(null); }
+  return <>
+    <div className="card" style={{marginBottom:12}}>
+      <div style={{fontSize:18,fontWeight:800,marginBottom:4}}>🛍 Products / Goods</div>
+      <div className="small subtle" style={{marginBottom:14}}>Items you sell to swimmers and parents (goggles, swim caps, swim diapers…). Saved here so you can pick them — with the price pre-filled — when billing products on an invoice. Shared across all branches; the price stays editable per sale.</div>
+      <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) 150px auto',gap:10,alignItems:'end'}}>
+        <div className="field" style={{margin:0}}><label>Product name</label><input className="input" placeholder="e.g. Swim goggles" value={name} onChange={e=>setName(e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Default price (RM)</label><input className="input" type="number" min="0" step="0.01" placeholder="0.00" value={price} onChange={e=>setPrice(e.target.value)} /></div>
+        <button className="btn btn-primary" style={{height:38}} disabled={!name.trim()} onClick={async()=>{ if(!name.trim()) return; await addProduct({ name:name.trim(), price }); setName(''); setPrice(''); }}>+ Add Product</button>
+      </div>
+    </div>
+    <div className="card" style={{padding:0,overflow:'hidden'}}>
+      <div className="table-wrap" style={{border:'none',borderRadius:0}}>
+        <table>
+          <thead><tr><th style={{width:'55%'}}>Product</th><th style={{width:140,textAlign:'right'}}>Default price</th><th style={{width:180,textAlign:'right'}}>Actions</th></tr></thead>
+          <tbody>
+            {(products||[]).length===0 && <tr><td colSpan={3} className="empty">No products yet. Add one above.</td></tr>}
+            {(products||[]).map(p => editingId===p.id ? (
+              <tr key={p.id}>
+                <td><input className="input" value={editForm.name} onChange={e=>setEditForm({...editForm,name:e.target.value})} /></td>
+                <td><input className="input" type="number" min="0" step="0.01" style={{textAlign:'right'}} value={editForm.price} onChange={e=>setEditForm({...editForm,price:e.target.value})} /></td>
+                <td style={{textAlign:'right'}}><button className="btn btn-primary small" onClick={saveEdit} style={{marginRight:6}}>Save</button><button className="btn btn-ghost small" onClick={()=>setEditingId(null)}>Cancel</button></td>
+              </tr>
+            ) : (
+              <tr key={p.id}>
+                <td style={{fontWeight:600}}>{p.name}</td>
+                <td style={{textAlign:'right'}}>{p.price!=null?`RM${Number(p.price).toFixed(2)}`:<span className="subtle">—</span>}</td>
+                <td style={{textAlign:'right'}}><button className="btn btn-ghost small" onClick={()=>startEdit(p)} style={{marginRight:6}}>✎ Edit</button><button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>deleteProduct(p.id)}>Delete</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </>;
+}
+
 function BillingTermsAdminView({ terms, branches, currentBranchId, addTerm, updateTerm, deleteTerm }){
   const activeBranches = (branches||[]).filter(b => b.is_active !== false);
   const branchById = id => (branches||[]).find(b => b.id === id) || null;
