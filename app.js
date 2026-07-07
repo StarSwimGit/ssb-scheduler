@@ -443,7 +443,7 @@ function App(){
         package_name:l.packageName||null, package_id:l.packageId||null,
         family_group_id:l.familyGroupId||null, family_group_name:l.familyGroupName||null,
         student_names:l.studentNames||null, student_ids:l.studentIds||null,
-        amount:Number(l.amount||0), quantity:1, is_billable:true,
+        amount:Number(l.amount||0), quantity:l.quantity||1, is_billable:true,
         line_type:l.lineType||'package',
         credits_per_swimmer:l.creditsPerSwimmer||null, billing_mode:l.billingMode||null,
         sort_order:i
@@ -6482,10 +6482,23 @@ function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packag
   const hasAny = allItems.length > 0;
   const allChecked = allKeys.length > 0 && allKeys.every(k=>checked.has(k));
 
+  // Product / goods lines (goggles, caps, swim diapers…) — billable with or without lessons.
+  const [productLines,setProductLines]=useState([]);
+  const [pDesc,setPDesc]=useState(''); const [pQty,setPQty]=useState(1); const [pPrice,setPPrice]=useState('');
+  const productTotal = productLines.reduce((s,p)=> s + (Math.max(1,Number(p.quantity)||1)*(Number(p.unitPrice)||0)), 0);
+  const grandTotal = checkedTotal + productTotal;
+  const canGenerate = checkedItems.length>0 || productLines.length>0;
+  function addProduct(){ const d=pDesc.trim(); const u=Number(pPrice)||0; const q=Math.max(1,Number(pQty)||1); if(!d||!(u>0)) return; setProductLines([...productLines,{id:Math.random().toString(36).slice(2),description:d,quantity:q,unitPrice:u}]); setPDesc(''); setPQty(1); setPPrice(''); }
+  function removeProduct(id){ setProductLines(productLines.filter(p=>p.id!==id)); }
+
   async function handleGenerate(){
-    if(checkedItems.length === 0){ alert('Select at least one line to include on the invoice.'); return; }
+    if(!canGenerate){ alert('Add or select at least one line to include on the invoice.'); return; }
     setGenerating(true);
-    try{ await onGenerateInvoice(checkedItems.map(it=>({...it})), { notes:invoiceNotes, dueDate:invoiceDueDate }); }
+    try{
+      const lessonLines = checkedItems.map(it=>({...it}));
+      const prodLines = productLines.map(p=>({ description:p.description, amount:Math.max(1,Number(p.quantity)||1)*(Number(p.unitPrice)||0), quantity:Math.max(1,Number(p.quantity)||1), lineType:'product' }));
+      await onGenerateInvoice([...lessonLines, ...prodLines], { notes:invoiceNotes, dueDate:invoiceDueDate });
+    }
     catch(e){ alert(e?.message||'Failed to generate invoice'); }
     finally{ setGenerating(false); }
   }
@@ -6499,15 +6512,14 @@ function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packag
       Tick the items to include on this invoice. Untick anything not being billed this cycle. Click <strong>Generate Invoice</strong> to create a draft invoice in Admin → Invoices.
     </div>
 
-    {!hasAny && unconfiguredGroups.length===0 && <div className="empty" style={{padding:20}}>No billable items — no swimmers have package enrolments yet.</div>}
+    {!hasAny && unconfiguredGroups.length===0 && <div className="empty" style={{padding:16}}>No lesson items to bill — you can still add products / goods below and generate a bill.</div>}
 
     {unconfiguredGroups.length > 0 && <div className="billing-warning-box">
       <div className="billing-warning-title">⚠ {unconfiguredGroups.length} group{unconfiguredGroups.length===1?'':'s'} missing a package</div>
       <div className="billing-warning-body">Open <strong>Manage Group</strong> and set a package on: {unconfiguredGroups.map(u=><strong key={u.id}> {u.name}</strong>)}.</div>
     </div>}
 
-    {hasAny && <>
-      <table className="billing-table">
+    {hasAny && <table className="billing-table">
         <thead>
           <tr>
             <th style={{width:32}}>
@@ -6539,11 +6551,30 @@ function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packag
             <td className="num"><strong>RM{it.amount.toFixed(2)}</strong></td>
           </tr>)}
         </tbody>
-      </table>
+      </table>}
 
-      <div className="billing-total-row">
-        <span className="billing-total-label">{checkedItems.length} item{checkedItems.length===1?'':'s'} selected</span>
-        <span className="billing-total-value">RM{checkedTotal.toFixed(2)}</span>
+      {/* Products / goods — billable with or without lessons */}
+      {unconfiguredGroups.length===0 && <div style={{marginTop:hasAny?14:6,padding:'10px 12px',border:'1px dashed var(--border)',borderRadius:10}}>
+        <div style={{fontWeight:700,marginBottom:6}}>🛍 Products / goods <span className="small subtle">(optional — goggles, caps, swim diapers…)</span></div>
+        {productLines.length>0 && <div style={{display:'flex',flexDirection:'column',gap:4,marginBottom:8}}>
+          {productLines.map(p=>{ const q=Math.max(1,Number(p.quantity)||1); const u=Number(p.unitPrice)||0; return <div key={p.id} style={{display:'flex',alignItems:'center',gap:8,fontSize:13}}>
+            <span style={{flex:1}}>{p.description}{q>1?` — Qty ${q} × RM${u.toFixed(2)}`:''}</span>
+            <span style={{fontWeight:700}}>RM{(q*u).toFixed(2)}</span>
+            <button className="btn btn-ghost small" style={{color:'#DC2626',padding:'0 6px'}} title="Remove" onClick={()=>removeProduct(p.id)}>×</button>
+          </div>; })}
+        </div>}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 58px 92px auto',gap:8,alignItems:'end'}}>
+          <div className="field" style={{margin:0}}><label>Item</label><input className="input" value={pDesc} onChange={e=>setPDesc(e.target.value)} placeholder="e.g. Swim goggles" /></div>
+          <div className="field" style={{margin:0}}><label>Qty</label><input className="input" type="number" min="1" step="1" value={pQty} onChange={e=>setPQty(Math.max(1,parseInt(e.target.value,10)||1))} /></div>
+          <div className="field" style={{margin:0}}><label>Unit RM</label><input className="input" type="number" min="0" step="0.01" value={pPrice} onChange={e=>setPPrice(e.target.value)} placeholder="0.00" /></div>
+          <button className="btn btn-ghost small" style={{height:34}} onClick={addProduct} disabled={!pDesc.trim()||!(Number(pPrice)>0)}>+ Add</button>
+        </div>
+      </div>}
+
+      {(hasAny || productLines.length>0) && <>
+      <div className="billing-total-row" style={{marginTop:12}}>
+        <span className="billing-total-label">{checkedItems.length} lesson item{checkedItems.length===1?'':'s'}{productLines.length?` + ${productLines.length} product${productLines.length===1?'':'s'}`:''}</span>
+        <span className="billing-total-value">RM{grandTotal.toFixed(2)}</span>
       </div>
 
       <div style={{display:'grid',gridTemplateColumns:'1fr 180px',gap:10,marginTop:12}}>
@@ -6554,11 +6585,11 @@ function BillingPreviewPanel({ pg, lessonTypes, lessonTypeById, packages, packag
       </div>
 
       <div style={{display:'flex',justifyContent:'flex-end',marginTop:12}}>
-        <button className="btn btn-primary" onClick={handleGenerate} disabled={generating||checkedItems.length===0}>
-          {generating ? 'Generating…' : `🧾 Generate Invoice — RM${checkedTotal.toFixed(2)}`}
+        <button className="btn btn-primary" onClick={handleGenerate} disabled={generating||!canGenerate}>
+          {generating ? 'Generating…' : `🧾 Generate Invoice — RM${grandTotal.toFixed(2)}`}
         </button>
       </div>
-    </>}
+      </>}
   </div>;
 }
 
