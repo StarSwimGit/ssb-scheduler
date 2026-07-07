@@ -766,7 +766,7 @@ function App() {
         student_names: l.studentNames || null,
         student_ids: l.studentIds || null,
         amount: Number(l.amount || 0),
-        quantity: 1,
+        quantity: l.quantity || 1,
         is_billable: true,
         line_type: l.lineType || 'package',
         credits_per_swimmer: l.creditsPerSwimmer || null,
@@ -11470,16 +11470,50 @@ function BillingPreviewPanel({
   const checkedTotal = checkedItems.reduce((s, it) => s + it.amount, 0);
   const hasAny = allItems.length > 0;
   const allChecked = allKeys.length > 0 && allKeys.every(k => checked.has(k));
+
+  // Product / goods lines (goggles, caps, swim diapers…) — billable with or without lessons.
+  const [productLines, setProductLines] = useState([]);
+  const [pDesc, setPDesc] = useState('');
+  const [pQty, setPQty] = useState(1);
+  const [pPrice, setPPrice] = useState('');
+  const productTotal = productLines.reduce((s, p) => s + Math.max(1, Number(p.quantity) || 1) * (Number(p.unitPrice) || 0), 0);
+  const grandTotal = checkedTotal + productTotal;
+  const canGenerate = checkedItems.length > 0 || productLines.length > 0;
+  function addProduct() {
+    const d = pDesc.trim();
+    const u = Number(pPrice) || 0;
+    const q = Math.max(1, Number(pQty) || 1);
+    if (!d || !(u > 0)) return;
+    setProductLines([...productLines, {
+      id: Math.random().toString(36).slice(2),
+      description: d,
+      quantity: q,
+      unitPrice: u
+    }]);
+    setPDesc('');
+    setPQty(1);
+    setPPrice('');
+  }
+  function removeProduct(id) {
+    setProductLines(productLines.filter(p => p.id !== id));
+  }
   async function handleGenerate() {
-    if (checkedItems.length === 0) {
-      alert('Select at least one line to include on the invoice.');
+    if (!canGenerate) {
+      alert('Add or select at least one line to include on the invoice.');
       return;
     }
     setGenerating(true);
     try {
-      await onGenerateInvoice(checkedItems.map(it => ({
+      const lessonLines = checkedItems.map(it => ({
         ...it
-      })), {
+      }));
+      const prodLines = productLines.map(p => ({
+        description: p.description,
+        amount: Math.max(1, Number(p.quantity) || 1) * (Number(p.unitPrice) || 0),
+        quantity: Math.max(1, Number(p.quantity) || 1),
+        lineType: 'product'
+      }));
+      await onGenerateInvoice([...lessonLines, ...prodLines], {
         notes: invoiceNotes,
         dueDate: invoiceDueDate
       });
@@ -11510,9 +11544,9 @@ function BillingPreviewPanel({
   }, "Tick the items to include on this invoice. Untick anything not being billed this cycle. Click ", /*#__PURE__*/React.createElement("strong", null, "Generate Invoice"), " to create a draft invoice in Admin → Invoices."), !hasAny && unconfiguredGroups.length === 0 && /*#__PURE__*/React.createElement("div", {
     className: "empty",
     style: {
-      padding: 20
+      padding: 16
     }
-  }, "No billable items — no swimmers have package enrolments yet."), unconfiguredGroups.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "No lesson items to bill — you can still add products / goods below and generate a bill."), unconfiguredGroups.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "billing-warning-box"
   }, /*#__PURE__*/React.createElement("div", {
     className: "billing-warning-title"
@@ -11520,7 +11554,7 @@ function BillingPreviewPanel({
     className: "billing-warning-body"
   }, "Open ", /*#__PURE__*/React.createElement("strong", null, "Manage Group"), " and set a package on: ", unconfiguredGroups.map(u => /*#__PURE__*/React.createElement("strong", {
     key: u.id
-  }, " ", u.name)), ".")), hasAny && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("table", {
+  }, " ", u.name)), ".")), hasAny && /*#__PURE__*/React.createElement("table", {
     className: "billing-table"
   }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
     style: {
@@ -11569,13 +11603,114 @@ function BillingPreviewPanel({
     className: "billing-type-chip individual"
   }, "Individual")), /*#__PURE__*/React.createElement("td", {
     className: "num"
-  }, /*#__PURE__*/React.createElement("strong", null, "RM", it.amount.toFixed(2))))))), /*#__PURE__*/React.createElement("div", {
-    className: "billing-total-row"
+  }, /*#__PURE__*/React.createElement("strong", null, "RM", it.amount.toFixed(2))))))), unconfiguredGroups.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: hasAny ? 14 : 6,
+      padding: '10px 12px',
+      border: '1px dashed var(--border)',
+      borderRadius: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 700,
+      marginBottom: 6
+    }
+  }, "🛍 Products / goods ", /*#__PURE__*/React.createElement("span", {
+    className: "small subtle"
+  }, "(optional — goggles, caps, swim diapers…)")), productLines.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 4,
+      marginBottom: 8
+    }
+  }, productLines.map(p => {
+    const q = Math.max(1, Number(p.quantity) || 1);
+    const u = Number(p.unitPrice) || 0;
+    return /*#__PURE__*/React.createElement("div", {
+      key: p.id,
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        fontSize: 13
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: 1
+      }
+    }, p.description, q > 1 ? ` — Qty ${q} × RM${u.toFixed(2)}` : ''), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontWeight: 700
+      }
+    }, "RM", (q * u).toFixed(2)), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      style: {
+        color: '#DC2626',
+        padding: '0 6px'
+      },
+      title: "Remove",
+      onClick: () => removeProduct(p.id)
+    }, "×"));
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: '1fr 58px 92px auto',
+      gap: 8,
+      alignItems: 'end'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Item"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: pDesc,
+    onChange: e => setPDesc(e.target.value),
+    placeholder: "e.g. Swim goggles"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Qty"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "number",
+    min: "1",
+    step: "1",
+    value: pQty,
+    onChange: e => setPQty(Math.max(1, parseInt(e.target.value, 10) || 1))
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Unit RM"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "number",
+    min: "0",
+    step: "0.01",
+    value: pPrice,
+    onChange: e => setPPrice(e.target.value),
+    placeholder: "0.00"
+  })), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    style: {
+      height: 34
+    },
+    onClick: addProduct,
+    disabled: !pDesc.trim() || !(Number(pPrice) > 0)
+  }, "+ Add"))), (hasAny || productLines.length > 0) && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "billing-total-row",
+    style: {
+      marginTop: 12
+    }
   }, /*#__PURE__*/React.createElement("span", {
     className: "billing-total-label"
-  }, checkedItems.length, " item", checkedItems.length === 1 ? '' : 's', " selected"), /*#__PURE__*/React.createElement("span", {
+  }, checkedItems.length, " lesson item", checkedItems.length === 1 ? '' : 's', productLines.length ? ` + ${productLines.length} product${productLines.length === 1 ? '' : 's'}` : ''), /*#__PURE__*/React.createElement("span", {
     className: "billing-total-value"
-  }, "RM", checkedTotal.toFixed(2))), /*#__PURE__*/React.createElement("div", {
+  }, "RM", grandTotal.toFixed(2))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: '1fr 180px',
@@ -11605,8 +11740,8 @@ function BillingPreviewPanel({
   }, /*#__PURE__*/React.createElement("button", {
     className: "btn btn-primary",
     onClick: handleGenerate,
-    disabled: generating || checkedItems.length === 0
-  }, generating ? 'Generating…' : `🧾 Generate Invoice — RM${checkedTotal.toFixed(2)}`))));
+    disabled: generating || !canGenerate
+  }, generating ? 'Generating…' : `🧾 Generate Invoice — RM${grandTotal.toFixed(2)}`))));
 }
 
 // Flow:
