@@ -1062,13 +1062,16 @@ function App() {
   async function addInvoiceLine(invoiceId, lineData) {
     try {
       const existing = invoiceLines.filter(l => l.invoice_id === invoiceId);
+      const qty = Math.max(1, Number(lineData.quantity) || 1);
+      // If a unit price is given, amount = qty × unit; otherwise treat amount as the line total.
+      const amount = lineData.unitPrice != null ? (Number(lineData.unitPrice) || 0) * qty : Number(lineData.amount) || 0;
       await insertRows('invoice_lines', {
         invoice_id: invoiceId,
         description: lineData.description || 'Custom line',
-        amount: Number(lineData.amount || 0),
-        quantity: 1,
+        amount: amount,
+        quantity: qty,
         is_billable: true,
-        line_type: lineData.lineType || 'other',
+        line_type: lineData.lineType || 'product',
         lesson_type_name: lineData.lessonTypeName || null,
         package_name: lineData.packageName || null,
         sort_order: existing.length
@@ -16290,6 +16293,44 @@ function InvoiceDetailPanel({
       setReasonBusy(false);
     }
   }
+  // Add a product / goods line to the invoice
+  const [showItemForm, setShowItemForm] = useState(false);
+  const [itemDesc, setItemDesc] = useState('');
+  const [itemQty, setItemQty] = useState(1);
+  const [itemPrice, setItemPrice] = useState('');
+  const [itemBusy, setItemBusy] = useState(false);
+  const itemTotal = Math.max(1, Number(itemQty) || 1) * (Number(itemPrice) || 0);
+  async function submitItem() {
+    const desc = itemDesc.trim();
+    const unit = Number(itemPrice) || 0;
+    const qty = Math.max(1, Number(itemQty) || 1);
+    if (!desc) {
+      alert('Enter an item name.');
+      return;
+    }
+    if (!unit) {
+      alert('Enter a unit price.');
+      return;
+    }
+    setItemBusy(true);
+    try {
+      await onAddLine({
+        description: desc,
+        quantity: qty,
+        unitPrice: unit,
+        lineType: 'product'
+      });
+      setShowItemForm(false);
+      setItemDesc('');
+      setItemQty(1);
+      setItemPrice('');
+    } catch (err) {
+      alert(err.message || 'Failed to add item');
+    } finally {
+      setItemBusy(false);
+    }
+  }
+  const canEditLines = onAddLine && invoice.status !== 'void' && invoice.status !== 'refunded';
   async function submitRefund() {
     const amt = Math.abs(Number(refAmt) || 0);
     if (!amt) {
@@ -16478,24 +16519,37 @@ function InvoiceDetailPanel({
     }
   }, "Amount"))), /*#__PURE__*/React.createElement("tbody", null, lines.map(l => {
     const swimmers = getSwimmerNames(l, membersByGroup);
+    const isProduct = l.line_type === 'product' || l.line_type === 'other' || l.line_type === 'custom';
     const ltName = l.lesson_type_name || l.description || '—';
-    const pkgName = l.package_name || (l.line_type === 'group_bundle' ? 'Group Bundle' : 'Individual');
+    const qty = Number(l.quantity) || 1;
+    const unit = qty > 0 ? Number(l.amount || 0) / qty : Number(l.amount || 0);
+    const pkgName = isProduct ? qty > 1 ? `Qty ${qty} × RM${unit.toFixed(2)}` : 'Product / goods' : l.package_name || (l.line_type === 'group_bundle' ? 'Group Bundle' : 'Individual');
     return /*#__PURE__*/React.createElement("tr", {
       key: l.id
     }, /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("div", {
       style: {
         fontWeight: 600
       }
-    }, ltName), /*#__PURE__*/React.createElement("div", {
+    }, isProduct ? '🛍 ' : '', ltName), /*#__PURE__*/React.createElement("div", {
       className: "small subtle"
     }, pkgName)), /*#__PURE__*/React.createElement("td", {
       className: "small subtle"
     }, swimmers.length > 0 ? swimmers.join(', ') : '—'), /*#__PURE__*/React.createElement("td", {
       style: {
         textAlign: 'right',
-        fontWeight: 600
+        fontWeight: 600,
+        whiteSpace: 'nowrap'
       }
-    }, "RM ", Number(l.amount).toFixed(2)));
+    }, "RM ", Number(l.amount).toFixed(2), canEditLines && isProduct && /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      title: "Remove item",
+      style: {
+        marginLeft: 6,
+        color: '#DC2626',
+        padding: '0 6px'
+      },
+      onClick: () => onDeleteLine(l.id)
+    }, "×")));
   })), /*#__PURE__*/React.createElement("tfoot", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
     colSpan: 2,
     style: {
@@ -16508,7 +16562,84 @@ function InvoiceDetailPanel({
       fontWeight: 800,
       fontSize: 15
     }
-  }, "RM ", Number(invoice.total_amount || 0).toFixed(2)))))), pmts.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "RM ", Number(invoice.total_amount || 0).toFixed(2))))), canEditLines && (showItemForm ? /*#__PURE__*/React.createElement("div", {
+    className: "inv-pay-form",
+    style: {
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 700,
+      marginBottom: 6
+    }
+  }, "Add item ", /*#__PURE__*/React.createElement("span", {
+    className: "small subtle"
+  }, "(goggles, cap, swim diaper…)")), /*#__PURE__*/React.createElement("div", {
+    className: "form-grid",
+    style: {
+      gridTemplateColumns: '2fr 70px 100px 90px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", null, "Item"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: itemDesc,
+    onChange: e => setItemDesc(e.target.value),
+    placeholder: "e.g. Swim goggles"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", null, "Qty"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "number",
+    min: "1",
+    step: "1",
+    value: itemQty,
+    onChange: e => setItemQty(Math.max(1, parseInt(e.target.value, 10) || 1))
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", null, "Unit (RM)"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "number",
+    min: "0",
+    step: "0.01",
+    value: itemPrice,
+    onChange: e => setItemPrice(e.target.value),
+    placeholder: "0.00"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", null, "Total"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: `RM ${itemTotal.toFixed(2)}`,
+    disabled: true,
+    style: {
+      fontWeight: 700
+    }
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      justifyContent: 'flex-end',
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => {
+      setShowItemForm(false);
+      setItemDesc('');
+      setItemQty(1);
+      setItemPrice('');
+    }
+  }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary small",
+    onClick: submitItem,
+    disabled: itemBusy || !itemDesc.trim() || !(Number(itemPrice) > 0)
+  }, itemBusy ? 'Adding…' : 'Add to invoice'))) : /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    style: {
+      marginTop: 8
+    },
+    onClick: () => setShowItemForm(true)
+  }, "+ Add item (product / goods)"))), pmts.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 10
     }
