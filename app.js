@@ -617,10 +617,13 @@ function App(){
   async function addInvoiceLine(invoiceId, lineData){
     try{
       const existing = invoiceLines.filter(l=>l.invoice_id===invoiceId);
+      const qty = Math.max(1, Number(lineData.quantity)||1);
+      // If a unit price is given, amount = qty × unit; otherwise treat amount as the line total.
+      const amount = lineData.unitPrice != null ? (Number(lineData.unitPrice)||0) * qty : (Number(lineData.amount)||0);
       await insertRows('invoice_lines',{
         invoice_id:invoiceId, description:lineData.description||'Custom line',
-        amount:Number(lineData.amount||0), quantity:1, is_billable:true,
-        line_type:lineData.lineType||'other',
+        amount:amount, quantity:qty, is_billable:true,
+        line_type:lineData.lineType||'product',
         lesson_type_name:lineData.lessonTypeName||null, package_name:lineData.packageName||null,
         sort_order: existing.length
       });
@@ -8959,6 +8962,24 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
     catch(err){ alert(err.message||'Failed to update reason'); }
     finally{ setReasonBusy(false); }
   }
+  // Add a product / goods line to the invoice
+  const [showItemForm,setShowItemForm]=useState(false);
+  const [itemDesc,setItemDesc]=useState('');
+  const [itemQty,setItemQty]=useState(1);
+  const [itemPrice,setItemPrice]=useState('');
+  const [itemBusy,setItemBusy]=useState(false);
+  const itemTotal=(Math.max(1,Number(itemQty)||1))*(Number(itemPrice)||0);
+  async function submitItem(){
+    const desc=itemDesc.trim(); const unit=Number(itemPrice)||0; const qty=Math.max(1,Number(itemQty)||1);
+    if(!desc){ alert('Enter an item name.'); return; }
+    if(!unit){ alert('Enter a unit price.'); return; }
+    setItemBusy(true);
+    try{ await onAddLine({ description:desc, quantity:qty, unitPrice:unit, lineType:'product' });
+      setShowItemForm(false); setItemDesc(''); setItemQty(1); setItemPrice('');
+    }catch(err){ alert(err.message||'Failed to add item'); }
+    finally{ setItemBusy(false); }
+  }
+  const canEditLines = onAddLine && invoice.status!=='void' && invoice.status!=='refunded';
 
   async function submitRefund(){
     const amt=Math.abs(Number(refAmt)||0);
@@ -9025,15 +9046,20 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
       <table><thead><tr><th>Lesson Type &amp; Package</th><th style={{width:120}}>Swimmers</th><th style={{width:120,textAlign:'right'}}>Amount</th></tr></thead>
         <tbody>{lines.map(l=>{
           const swimmers=getSwimmerNames(l,membersByGroup);
+          const isProduct=l.line_type==='product'||l.line_type==='other'||l.line_type==='custom';
           const ltName  = l.lesson_type_name || l.description || '—';
-          const pkgName = l.package_name || (l.line_type==='group_bundle' ? 'Group Bundle' : 'Individual');
+          const qty=Number(l.quantity)||1;
+          const unit=qty>0?Number(l.amount||0)/qty:Number(l.amount||0);
+          const pkgName = isProduct
+            ? (qty>1?`Qty ${qty} × RM${unit.toFixed(2)}`:'Product / goods')
+            : (l.package_name || (l.line_type==='group_bundle' ? 'Group Bundle' : 'Individual'));
           return <tr key={l.id}>
             <td>
-              <div style={{fontWeight:600}}>{ltName}</div>
+              <div style={{fontWeight:600}}>{isProduct?'🛍 ':''}{ltName}</div>
               <div className="small subtle">{pkgName}</div>
             </td>
             <td className="small subtle">{swimmers.length>0 ? swimmers.join(', ') : '—'}</td>
-            <td style={{textAlign:'right',fontWeight:600}}>RM {Number(l.amount).toFixed(2)}</td>
+            <td style={{textAlign:'right',fontWeight:600,whiteSpace:'nowrap'}}>RM {Number(l.amount).toFixed(2)}{canEditLines&&isProduct&&<button className="btn btn-ghost small" title="Remove item" style={{marginLeft:6,color:'#DC2626',padding:'0 6px'}} onClick={()=>onDeleteLine(l.id)}>×</button>}</td>
           </tr>;
         })}</tbody>
         <tfoot><tr>
@@ -9041,6 +9067,22 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
           <td style={{textAlign:'right',fontWeight:800,fontSize:15}}>RM {Number(invoice.total_amount||0).toFixed(2)}</td>
         </tr></tfoot>
       </table>
+      {canEditLines && (showItemForm
+        ? <div className="inv-pay-form" style={{marginTop:8}}>
+            <div style={{fontWeight:700,marginBottom:6}}>Add item <span className="small subtle">(goggles, cap, swim diaper…)</span></div>
+            <div className="form-grid" style={{gridTemplateColumns:'2fr 70px 100px 90px'}}>
+              <div className="field"><label>Item</label><input className="input" value={itemDesc} onChange={e=>setItemDesc(e.target.value)} placeholder="e.g. Swim goggles" /></div>
+              <div className="field"><label>Qty</label><input className="input" type="number" min="1" step="1" value={itemQty} onChange={e=>setItemQty(Math.max(1,parseInt(e.target.value,10)||1))} /></div>
+              <div className="field"><label>Unit (RM)</label><input className="input" type="number" min="0" step="0.01" value={itemPrice} onChange={e=>setItemPrice(e.target.value)} placeholder="0.00" /></div>
+              <div className="field"><label>Total</label><input className="input" value={`RM ${itemTotal.toFixed(2)}`} disabled style={{fontWeight:700}} /></div>
+            </div>
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:8}}>
+              <button className="btn btn-ghost small" onClick={()=>{setShowItemForm(false);setItemDesc('');setItemQty(1);setItemPrice('');}}>Cancel</button>
+              <button className="btn btn-primary small" onClick={submitItem} disabled={itemBusy||!itemDesc.trim()||!(Number(itemPrice)>0)}>{itemBusy?'Adding…':'Add to invoice'}</button>
+            </div>
+          </div>
+        : <button className="btn btn-ghost small" style={{marginTop:8}} onClick={()=>setShowItemForm(true)}>+ Add item (product / goods)</button>
+      )}
     </div>
     {pmts.length>0&&<div style={{marginBottom:10}}>
       <div style={{fontWeight:700,marginBottom:6}}>Payments</div>
