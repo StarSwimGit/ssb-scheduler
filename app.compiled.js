@@ -3608,7 +3608,8 @@ function App() {
     name,
     sku,
     price,
-    imageUrl
+    imageUrl,
+    description
   }) {
     try {
       const next = (products || []).length + 1;
@@ -3617,6 +3618,7 @@ function App() {
         sku: sku || null,
         price: price === '' || price == null ? null : Number(price),
         image_url: imageUrl || null,
+        description: description || null,
         sort_order: next,
         is_active: true
       });
@@ -18405,6 +18407,143 @@ function ProgrammeSessionModal({
 // existing account (all branches, not branch-filtered). Creates an invoice
 // and, if paid now, an immediate receipt.
 // ============================================================================
+// Visual product picker popup for the Shop — cards with photo, title, SKU,
+// description and price.
+function ProductPickerModal({
+  products,
+  onPick,
+  onClose
+}) {
+  const [q, setQ] = useState('');
+  const term = q.trim().toLowerCase();
+  const list = (products || []).filter(p => p.is_active !== false).filter(p => !term || (p.name || '').toLowerCase().includes(term) || (p.sku || '').toLowerCase().includes(term) || (p.description || '').toLowerCase().includes(term));
+  return /*#__PURE__*/React.createElement("div", {
+    className: "modal-backdrop",
+    onClick: onClose
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "modal-card",
+    onClick: e => e.stopPropagation(),
+    style: {
+      width: 'min(780px,96vw)',
+      maxHeight: '88vh',
+      display: 'flex',
+      flexDirection: 'column'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '14px 18px',
+      borderBottom: '1px solid var(--border)',
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 800,
+      fontSize: 16
+    }
+  }, "Choose a product"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: onClose
+  }, "✕")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '10px 18px'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    autoFocus: true,
+    value: q,
+    onChange: e => setQ(e.target.value),
+    placeholder: "Search name, SKU or description…"
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '0 18px 18px',
+      overflowY: 'auto',
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))',
+      gap: 12
+    }
+  }, list.length === 0 && /*#__PURE__*/React.createElement("div", {
+    className: "empty",
+    style: {
+      gridColumn: '1/-1',
+      padding: 24
+    }
+  }, "No products found."), list.map(p => /*#__PURE__*/React.createElement("button", {
+    key: p.id,
+    onClick: () => onPick(p),
+    style: {
+      textAlign: 'left',
+      padding: 0,
+      border: '1px solid var(--border)',
+      borderRadius: 10,
+      overflow: 'hidden',
+      background: 'var(--surface)',
+      cursor: 'pointer',
+      display: 'flex',
+      flexDirection: 'column'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      height: 118,
+      background: 'var(--surface-2)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      overflow: 'hidden'
+    }
+  }, p.image_url ? /*#__PURE__*/React.createElement("img", {
+    src: p.image_url,
+    alt: "",
+    style: {
+      width: '100%',
+      height: '100%',
+      objectFit: 'cover'
+    }
+  }) : /*#__PURE__*/React.createElement("span", {
+    className: "small subtle"
+  }, "No photo")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '8px 10px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 2
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      gap: 6,
+      alignItems: 'baseline'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontWeight: 700,
+      fontSize: 13
+    }
+  }, p.name), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontWeight: 800,
+      whiteSpace: 'nowrap'
+    }
+  }, p.price != null ? `RM${Number(p.price).toFixed(2)}` : '—')), p.sku && /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      fontFamily: 'monospace',
+      fontSize: 10
+    }
+  }, p.sku), p.description && /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      fontSize: 11,
+      lineHeight: 1.35,
+      maxHeight: 44,
+      overflow: 'hidden'
+    }
+  }, p.description)))))));
+}
+
 // Read an image file and return a small compressed JPEG data URL (keeps DB rows
 // light — product thumbnails end up ~10–40 KB).
 function fileToThumbnail(file, maxDim = 340, quality = 0.72) {
@@ -18458,7 +18597,7 @@ function SalesView({
   return /*#__PURE__*/React.createElement("div", {
     style: {
       maxWidth: 860,
-      margin: '0 auto'
+      margin: '18px auto 0'
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -18525,6 +18664,7 @@ function ShopSale({
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
   const [result, setResult] = useState(null);
   const total = cart.reduce((s, c) => s + Math.max(1, Number(c.quantity) || 1) * (Number(c.unitPrice) || 0), 0);
   const buyerName = mode === 'cash' ? cashName.trim() || 'Cash Sale' : acct?.name || '';
@@ -19044,33 +19184,26 @@ function ShopSale({
       marginBottom: 8,
       display: 'flex',
       alignItems: 'center',
-      gap: 10
+      gap: 10,
+      flexWrap: 'wrap'
     }
-  }, /*#__PURE__*/React.createElement("select", {
-    className: "select",
-    style: {
-      flex: 1
-    },
-    value: "",
-    onChange: e => pickProduct(e.target.value)
-  }, /*#__PURE__*/React.createElement("option", {
-    value: ""
-  }, "Pick from catalogue…"), activeProducts.map(p => /*#__PURE__*/React.createElement("option", {
-    key: p.id,
-    value: p.id
-  }, p.name, p.sku ? ` [${p.sku}]` : '', p.price != null ? ` — RM${Number(p.price).toFixed(2)}` : ''))), pImg ? /*#__PURE__*/React.createElement("img", {
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: () => setShowPicker(true)
+  }, "🔍 Browse catalogue (", activeProducts.length, ")"), pImg ? /*#__PURE__*/React.createElement("img", {
     src: pImg,
     alt: "",
     style: {
-      width: 44,
-      height: 44,
+      width: 40,
+      height: 40,
       borderRadius: 8,
       objectFit: 'cover',
-      border: '1px solid var(--border)',
-      flexShrink: 0
+      border: '1px solid var(--border)'
     },
     title: "Selected product photo"
-  }) : null), /*#__PURE__*/React.createElement("div", {
+  }) : null, pDesc ? /*#__PURE__*/React.createElement("span", {
+    className: "small subtle"
+  }, "Selected: ", /*#__PURE__*/React.createElement("strong", null, pDesc), pPrice ? ` · RM${Number(pPrice).toFixed(2)}` : '', " — set qty and press Add") : null), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: '1fr 110px 56px 92px auto',
@@ -19225,7 +19358,14 @@ function ShopSale({
       fontSize: 15,
       padding: '10px 18px'
     }
-  }, "👁 Preview Bill — RM", total.toFixed(2)))));
+  }, "👁 Preview Bill — RM", total.toFixed(2)))), showPicker && /*#__PURE__*/React.createElement(ProductPickerModal, {
+    products: products,
+    onPick: p => {
+      pickProduct(p.id);
+      setShowPicker(false);
+    },
+    onClose: () => setShowPicker(false)
+  }));
 }
 function ShopReturns({
   invoices,
@@ -19439,31 +19579,40 @@ function ShopReturns({
   }, "Tip: for a partial return (some items kept), open the invoice under Accounts → Invoices and use its Refund action with a custom amount.")));
 }
 
-// Settings › Products — shared product / goods catalogue (name + price + optional SKU + photo).
+// Settings › Products — product catalogue (photo, name, SKU, description, price).
 function ProductsAdminView({
   products,
   addProduct,
   updateProduct,
   deleteProduct
 }) {
-  const [name, setName] = useState('');
-  const [sku, setSku] = useState('');
-  const [price, setPrice] = useState('');
-  const [img, setImg] = useState('');
-  const [editingId, setEditingId] = useState(null);
-  const [editForm, setEditForm] = useState({
+  const blank = {
     name: '',
     sku: '',
     price: '',
-    image: ''
-  });
+    image: '',
+    description: ''
+  };
+  const [form, setForm] = useState(blank);
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState(blank);
+  async function onPick(file, apply) {
+    if (!file) return;
+    try {
+      const t = await fileToThumbnail(file);
+      apply(t);
+    } catch (_) {
+      alert('Could not read that image.');
+    }
+  }
   function startEdit(p) {
     setEditingId(p.id);
     setEditForm({
       name: p.name || '',
       sku: p.sku || '',
       price: p.price != null ? String(p.price) : '',
-      image: p.image_url || ''
+      image: p.image_url || '',
+      description: p.description || ''
     });
   }
   async function saveEdit() {
@@ -19472,23 +19621,26 @@ function ProductsAdminView({
       name: editForm.name.trim(),
       sku: editForm.sku.trim() || null,
       price: editForm.price === '' ? null : Number(editForm.price),
-      image_url: editForm.image || null
+      image_url: editForm.image || null,
+      description: editForm.description.trim() || null
     });
     setEditingId(null);
   }
-  async function onPick(file, setter) {
-    if (!file) return;
-    try {
-      const t = await fileToThumbnail(file);
-      setter(t);
-    } catch (_) {
-      alert('Could not read that image.');
-    }
+  async function addNew() {
+    if (!form.name.trim()) return;
+    await addProduct({
+      name: form.name.trim(),
+      sku: form.sku.trim() || null,
+      price: form.price,
+      imageUrl: form.image || null,
+      description: form.description.trim() || null
+    });
+    setForm(blank);
   }
-  const box = {
-    width: 56,
-    height: 56,
-    borderRadius: 8,
+  const upBox = {
+    width: '100%',
+    height: 120,
+    borderRadius: 10,
     border: '1px dashed var(--border)',
     display: 'flex',
     alignItems: 'center',
@@ -19496,15 +19648,128 @@ function ProductsAdminView({
     overflow: 'hidden',
     background: 'var(--surface-2)',
     cursor: 'pointer',
-    flexShrink: 0,
-    fontSize: 10,
-    color: 'var(--text-3)',
-    textAlign: 'center'
+    fontSize: 12,
+    color: 'var(--text-3)'
   };
+  function EditCard({
+    vals,
+    setVals,
+    onSave,
+    onCancel,
+    saveLabel
+  }) {
+    return /*#__PURE__*/React.createElement("div", {
+      className: "card",
+      style: {
+        padding: 12,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8
+      }
+    }, /*#__PURE__*/React.createElement("label", {
+      style: upBox,
+      title: "Add / change photo"
+    }, vals.image ? /*#__PURE__*/React.createElement("img", {
+      src: vals.image,
+      alt: "",
+      style: {
+        width: '100%',
+        height: '100%',
+        objectFit: 'cover'
+      }
+    }) : /*#__PURE__*/React.createElement("span", null, "＋ Add photo"), /*#__PURE__*/React.createElement("input", {
+      type: "file",
+      accept: "image/*",
+      style: {
+        display: 'none'
+      },
+      onChange: e => {
+        onPick(e.target.files?.[0], v => setVals({
+          ...vals,
+          image: v
+        }));
+        e.target.value = '';
+      }
+    })), vals.image && /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      style: {
+        alignSelf: 'flex-start',
+        color: '#DC2626',
+        padding: '0 4px',
+        fontSize: 11
+      },
+      onClick: () => setVals({
+        ...vals,
+        image: ''
+      })
+    }, "remove photo"), /*#__PURE__*/React.createElement("input", {
+      className: "input",
+      placeholder: "Product name",
+      value: vals.name,
+      onChange: e => setVals({
+        ...vals,
+        name: e.target.value
+      })
+    }), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 8
+      }
+    }, /*#__PURE__*/React.createElement("input", {
+      className: "input",
+      placeholder: "SKU (optional)",
+      value: vals.sku,
+      onChange: e => setVals({
+        ...vals,
+        sku: e.target.value
+      }),
+      style: {
+        flex: 1
+      }
+    }), /*#__PURE__*/React.createElement("input", {
+      className: "input",
+      type: "number",
+      min: "0",
+      step: "0.01",
+      placeholder: "Price RM",
+      value: vals.price,
+      onChange: e => setVals({
+        ...vals,
+        price: e.target.value
+      }),
+      style: {
+        width: 110
+      }
+    })), /*#__PURE__*/React.createElement("textarea", {
+      className: "textarea",
+      style: {
+        minHeight: 60
+      },
+      placeholder: "Description (optional)",
+      value: vals.description,
+      onChange: e => setVals({
+        ...vals,
+        description: e.target.value
+      })
+    }), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 8,
+        justifyContent: 'flex-end'
+      }
+    }, onCancel && /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      onClick: onCancel
+    }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-primary small",
+      disabled: !vals.name.trim(),
+      onClick: onSave
+    }, saveLabel)));
+  }
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
-      marginBottom: 12
+      marginBottom: 14
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -19512,270 +19777,123 @@ function ProductsAdminView({
       fontWeight: 800,
       marginBottom: 4
     }
-  }, "🛍 Products / Goods"), /*#__PURE__*/React.createElement("div", {
-    className: "small subtle",
-    style: {
-      marginBottom: 14
-    }
-  }, "Items you sell (goggles, swim caps, swim diapers…). Add a photo, SKU (optional) and price. The photo shows in the Shop so staff can confirm the right item. Shared across all branches; price stays editable per sale."), /*#__PURE__*/React.createElement("div", {
+  }, "🛍 Product Catalogue"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle"
+  }, "Items you sell (goggles, caps, swim diapers…). Add a photo, SKU, description and price — the photo and details show in the Shop so staff pick the right item. Shared across all branches; price stays editable per sale.")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: '56px minmax(0,1fr) 130px 120px auto',
-      gap: 10,
-      alignItems: 'end'
+      gridTemplateColumns: 'repeat(auto-fill,minmax(230px,1fr))',
+      gap: 14,
+      alignItems: 'start'
     }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: box,
-    title: "Add photo"
-  }, img ? /*#__PURE__*/React.createElement("img", {
-    src: img,
-    alt: "",
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
     style: {
-      width: '100%',
-      height: '100%',
-      objectFit: 'cover'
+      fontWeight: 700,
+      marginBottom: 6
     }
-  }) : /*#__PURE__*/React.createElement("span", null, "＋ Photo"), /*#__PURE__*/React.createElement("input", {
-    type: "file",
-    accept: "image/*",
+  }, "＋ New product"), /*#__PURE__*/React.createElement(EditCard, {
+    vals: form,
+    setVals: setForm,
+    onSave: addNew,
+    onCancel: null,
+    saveLabel: "Add Product"
+  })), (products || []).map(p => editingId === p.id ? /*#__PURE__*/React.createElement("div", {
+    key: p.id
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
     style: {
-      display: 'none'
-    },
-    onChange: e => {
-      onPick(e.target.files?.[0], setImg);
-      e.target.value = '';
+      fontWeight: 700,
+      marginBottom: 6
     }
-  })), img && /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-ghost small",
-    style: {
-      padding: '0 4px',
-      marginTop: 2,
-      color: '#DC2626',
-      fontSize: 10
-    },
-    onClick: () => setImg('')
-  }, "remove")), /*#__PURE__*/React.createElement("div", {
-    className: "field",
-    style: {
-      margin: 0
-    }
-  }, /*#__PURE__*/React.createElement("label", null, "Product name"), /*#__PURE__*/React.createElement("input", {
-    className: "input",
-    placeholder: "e.g. Swim goggles",
-    value: name,
-    onChange: e => setName(e.target.value)
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "field",
-    style: {
-      margin: 0
-    }
-  }, /*#__PURE__*/React.createElement("label", null, "SKU ", /*#__PURE__*/React.createElement("span", {
-    className: "subtle"
-  }, "(optional)")), /*#__PURE__*/React.createElement("input", {
-    className: "input",
-    placeholder: "e.g. SG-001",
-    value: sku,
-    onChange: e => setSku(e.target.value)
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "field",
-    style: {
-      margin: 0
-    }
-  }, /*#__PURE__*/React.createElement("label", null, "Default price (RM)"), /*#__PURE__*/React.createElement("input", {
-    className: "input",
-    type: "number",
-    min: "0",
-    step: "0.01",
-    placeholder: "0.00",
-    value: price,
-    onChange: e => setPrice(e.target.value)
-  })), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-primary",
-    style: {
-      height: 38
-    },
-    disabled: !name.trim(),
-    onClick: async () => {
-      if (!name.trim()) return;
-      await addProduct({
-        name: name.trim(),
-        sku: sku.trim() || null,
-        price,
-        imageUrl: img || null
-      });
-      setName('');
-      setSku('');
-      setPrice('');
-      setImg('');
-    }
-  }, "+ Add Product"))), /*#__PURE__*/React.createElement("div", {
+  }, "Editing"), /*#__PURE__*/React.createElement(EditCard, {
+    vals: editForm,
+    setVals: setEditForm,
+    onSave: saveEdit,
+    onCancel: () => setEditingId(null),
+    saveLabel: "Save"
+  })) : /*#__PURE__*/React.createElement("div", {
+    key: p.id,
     className: "card",
     style: {
       padding: 0,
-      overflow: 'hidden'
+      overflow: 'hidden',
+      display: 'flex',
+      flexDirection: 'column'
     }
   }, /*#__PURE__*/React.createElement("div", {
-    className: "table-wrap",
     style: {
-      border: 'none',
-      borderRadius: 0
+      height: 130,
+      background: 'var(--surface-2)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      overflow: 'hidden'
     }
-  }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
-    style: {
-      width: 56
-    }
-  }), /*#__PURE__*/React.createElement("th", null, "Product"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      width: 120
-    }
-  }, "SKU"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      width: 120,
-      textAlign: 'right'
-    }
-  }, "Price"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      width: 180,
-      textAlign: 'right'
-    }
-  }, "Actions"))), /*#__PURE__*/React.createElement("tbody", null, (products || []).length === 0 && /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
-    colSpan: 5,
-    className: "empty"
-  }, "No products yet. Add one above.")), (products || []).map(p => editingId === p.id ? /*#__PURE__*/React.createElement("tr", {
-    key: p.id
-  }, /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("label", {
-    style: {
-      ...box,
-      width: 44,
-      height: 44
-    },
-    title: "Change photo"
-  }, editForm.image ? /*#__PURE__*/React.createElement("img", {
-    src: editForm.image,
+  }, p.image_url ? /*#__PURE__*/React.createElement("img", {
+    src: p.image_url,
     alt: "",
     style: {
       width: '100%',
       height: '100%',
       objectFit: 'cover'
     }
-  }) : /*#__PURE__*/React.createElement("span", null, "＋"), /*#__PURE__*/React.createElement("input", {
-    type: "file",
-    accept: "image/*",
+  }) : /*#__PURE__*/React.createElement("span", {
+    className: "small subtle"
+  }, "No photo")), /*#__PURE__*/React.createElement("div", {
     style: {
-      display: 'none'
-    },
-    onChange: e => {
-      onPick(e.target.files?.[0], v => setEditForm(f => ({
-        ...f,
-        image: v
-      })));
-      e.target.value = '';
+      padding: '10px 12px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 4,
+      flex: 1
     }
-  })), editForm.image && /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-ghost small",
+  }, /*#__PURE__*/React.createElement("div", {
     style: {
-      padding: '0 4px',
-      color: '#DC2626',
-      fontSize: 10
-    },
-    onClick: () => setEditForm(f => ({
-      ...f,
-      image: ''
-    }))
-  }, "×")), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("input", {
-    className: "input",
-    value: editForm.name,
-    onChange: e => setEditForm({
-      ...editForm,
-      name: e.target.value
-    })
-  })), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("input", {
-    className: "input",
-    value: editForm.sku,
-    onChange: e => setEditForm({
-      ...editForm,
-      sku: e.target.value
-    })
-  })), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("input", {
-    className: "input",
-    type: "number",
-    min: "0",
-    step: "0.01",
-    style: {
-      textAlign: 'right'
-    },
-    value: editForm.price,
-    onChange: e => setEditForm({
-      ...editForm,
-      price: e.target.value
-    })
-  })), /*#__PURE__*/React.createElement("td", {
-    style: {
-      textAlign: 'right'
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'baseline',
+      gap: 8
     }
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-primary small",
-    onClick: saveEdit,
+  }, /*#__PURE__*/React.createElement("div", {
     style: {
-      marginRight: 6
+      fontWeight: 700,
+      fontSize: 14
     }
-  }, "Save"), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-ghost small",
-    onClick: () => setEditingId(null)
-  }, "Cancel"))) : /*#__PURE__*/React.createElement("tr", {
-    key: p.id
-  }, /*#__PURE__*/React.createElement("td", null, p.image_url ? /*#__PURE__*/React.createElement("img", {
-    src: p.image_url,
-    alt: "",
+  }, p.name), /*#__PURE__*/React.createElement("div", {
     style: {
-      width: 44,
-      height: 44,
-      borderRadius: 8,
-      objectFit: 'cover',
-      border: '1px solid var(--border)'
+      fontWeight: 800,
+      whiteSpace: 'nowrap'
     }
-  }) : /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...box,
-      width: 44,
-      height: 44,
-      cursor: 'default',
-      border: '1px solid var(--border)'
-    }
-  }, "—")), /*#__PURE__*/React.createElement("td", {
-    style: {
-      fontWeight: 600
-    }
-  }, p.name), /*#__PURE__*/React.createElement("td", {
+  }, p.price != null ? `RM${Number(p.price).toFixed(2)}` : '—')), p.sku && /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
     style: {
       fontFamily: 'monospace',
-      fontSize: 12
+      fontSize: 11
     }
-  }, p.sku || /*#__PURE__*/React.createElement("span", {
-    className: "subtle"
-  }, "—")), /*#__PURE__*/React.createElement("td", {
+  }, "SKU: ", p.sku), p.description && /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
     style: {
-      textAlign: 'right'
+      fontSize: 12,
+      lineHeight: 1.4
     }
-  }, p.price != null ? `RM${Number(p.price).toFixed(2)}` : /*#__PURE__*/React.createElement("span", {
-    className: "subtle"
-  }, "—")), /*#__PURE__*/React.createElement("td", {
+  }, p.description), /*#__PURE__*/React.createElement("div", {
     style: {
-      textAlign: 'right'
+      display: 'flex',
+      gap: 6,
+      marginTop: 'auto',
+      paddingTop: 8
     }
   }, /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
-    onClick: () => startEdit(p),
-    style: {
-      marginRight: 6
-    }
+    onClick: () => startEdit(p)
   }, "✎ Edit"), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
     style: {
       color: '#DC2626'
     },
     onClick: () => deleteProduct(p.id)
-  }, "Delete")))))))));
+  }, "Delete")))))));
 }
 function BillingTermsAdminView({
   terms,
