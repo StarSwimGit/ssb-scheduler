@@ -419,7 +419,7 @@ function App(){
   }
 
   // ── Invoice CRUD ───────────────────────────────────────────────────
-  async function createInvoice({ accountName, accountEmail, accountPhone, lines, notes, dueDate }){
+  async function createInvoice({ accountName, accountEmail, accountPhone, lines, notes, dueDate, branchId }){
     // Read current settings (fresh from DB to get latest seq)
     const settRows = await selectRows('invoice_settings','*').catch(()=>[]);
     const sett = settRows?.[0] || invoiceSettings;
@@ -434,7 +434,7 @@ function App(){
       account_email:accountEmail||null, account_phone:accountPhone||null,
       status:'draft', issue_date:toDateStr(now), due_date:dueDate||null,
       notes:notes||null, total_amount:totalAmount, amount_paid:0,
-      branch_id: currentBranchId && currentBranchId !== 'all' ? currentBranchId : null
+      branch_id: (branchId !== undefined) ? (branchId || null) : (currentBranchId && currentBranchId !== 'all' ? currentBranchId : null)
     });
     const invoiceId = inserted?.[0]?.id;
     if(invoiceId && lines.length){
@@ -452,6 +452,26 @@ function App(){
     }
     await loadInvoiceData();
     return invoiceId;
+  }
+
+  // Point-of-sale: create a product invoice (cash sale or against an account)
+  // and, if paid now, immediately record the payment/receipt. Returns the
+  // invoice + payment for on-screen confirmation and receipt printing.
+  async function createProductSale({ buyerName, buyerEmail, buyerPhone, branchId, lines, paid, paymentMethod, paymentDate, notes }){
+    const invoiceId = await createInvoice({
+      accountName: buyerName || 'Cash Sale', accountEmail: buyerEmail || null, accountPhone: buyerPhone || null,
+      lines, notes: notes || null, dueDate: null, branchId: branchId || null
+    });
+    if(!invoiceId) throw new Error('Failed to create invoice');
+    const total = lines.reduce((s,l)=>s+Number(l.amount||0),0);
+    let payment = null;
+    if(paid && total>0){
+      const res = await recordPayment({ invoiceId, amount: total, paymentDate: paymentDate || todayStr(), paymentMethod: paymentMethod || 'cash', referenceNumber: null, notes: notes || 'Product sale' });
+      payment = { receipt_number: res?.receiptNumber || null, amount: total, payment_date: paymentDate || todayStr(), payment_method: paymentMethod || 'cash' };
+    }
+    const invRows = await selectRows('invoices','*',`&id=eq.${invoiceId}`).catch(()=>[]);
+    const invoice = invRows?.[0] || { id:invoiceId, account_name: buyerName, account_phone: buyerPhone||null, total_amount: total, amount_paid: paid?total:0 };
+    return { invoice, payment, invoiceId };
   }
 
   async function recordPayment({ invoiceId, amount, paymentDate, paymentMethod, referenceNumber, notes:pNotes }){
@@ -2983,6 +3003,23 @@ function App(){
     });
   }, [studentsWithGroups, currentBranchId]);
 
+  // All accounts across every branch (NOT branch-filtered) — for the Sales module's
+  // "invoice to" account picker. Just name/email/phone per guardian account.
+  const allAccountsForSale = useMemo(() => {
+    const byAcct = {};
+    (students||[]).forEach(s => {
+      if(s.isActive===false) return;
+      const gname=(s.guardianName||'').trim();
+      if(!gname) return;
+      const key = s.accountId || ('n:'+gname.toLowerCase());
+      if(!byAcct[key]) byAcct[key]={ key, name:gname, email:s.guardianEmail||'', phone:s.guardianPhone||'', count:0 };
+      if(!byAcct[key].email && s.guardianEmail) byAcct[key].email=s.guardianEmail;
+      if(!byAcct[key].phone && s.guardianPhone) byAcct[key].phone=s.guardianPhone;
+      byAcct[key].count++;
+    });
+    return Object.values(byAcct).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+  }, [students]);
+
   // Which sessions (in the selected week) each swimmer is already in — drives the
   // double-booking warning in the enrollment modal.
   const weekEnrollments = useMemo(() => {
@@ -3037,6 +3074,7 @@ function App(){
         <button className={`nav-btn ${view==='schedule'?'active':''}`} onClick={()=>setView('schedule')}>📅 Schedule</button>
         <button className={`nav-btn ${view==='programme'?'active':''}`} onClick={()=>{ setView('programme'); setProgrammeSection('week'); }}>📋 Programme</button>
         <button className={`nav-btn ${view==='accounts'?'active':''}`} onClick={()=>{ setView('accounts'); setAccountSection('accounts'); }}>👤 Accounts</button>
+        <button className={`nav-btn ${view==='sales'?'active':''}`} onClick={()=>setView('sales')}>🛒 Sales</button>
         <button className={`nav-btn ${view==='enroll'?'active':''}`} onClick={()=>setView('enroll')}>🔍 Explore</button>
         <button type="button" className="nav-btn nav-btn-link" onClick={()=>window.open('./intake.html','_blank','noopener,noreferrer')}>📝 Intake ↗</button>
         <button className={`nav-btn ${view==='settings'?'active':''}`} onClick={()=>{ setView('settings'); setAdminSection('pools'); }}>⚙️ Settings</button>
@@ -3246,6 +3284,15 @@ function App(){
         instructorById={progInstructorById}
         onAdd={openProgrammeCreate}
         onEdit={openProgrammeEdit}
+      />}
+
+      {!loading && view==='sales' && <SalesView
+        accounts={allAccountsForSale}
+        products={products}
+        branches={options.branches||[]}
+        currentBranchId={currentBranchId}
+        onCreateSale={createProductSale}
+        onViewInvoices={()=>{ setView('accounts'); setAccountSection('invoices'); }}
       />}
 
       {/* ── Accounts views (no side-column for billing sub-sections) ── */}
@@ -9765,6 +9812,169 @@ function ProgrammeSessionModal({ modal, setModal, busy, onSave, onDelete, onDupl
 
 // Settings › Billing Terms — per-branch named billing periods / school terms
 // (e.g. "Term 1 2026") with start & end dates. Branch-scoped like Lesson Types.
+// ============================================================================
+// SalesView — point-of-sale for product/goods. Cash sale or against an
+// existing account (all branches, not branch-filtered). Creates an invoice
+// and, if paid now, an immediate receipt.
+// ============================================================================
+function SalesView({ accounts, products, branches, currentBranchId, onCreateSale, onViewInvoices }){
+  const [mode,setMode]=useState('cash'); // 'cash' | 'account'
+  const [cashName,setCashName]=useState('');
+  const [cashPhone,setCashPhone]=useState('');
+  const [accountKey,setAccountKey]=useState('');
+  const [acctQuery,setAcctQuery]=useState('');
+  const acct=(accounts||[]).find(a=>a.key===accountKey)||null;
+  const activeBranches=(branches||[]).filter(b=>b.is_active!==false);
+  const [branchId,setBranchId]=useState(currentBranchId&&currentBranchId!=='all'?currentBranchId:'');
+
+  const [cart,setCart]=useState([]);
+  const [pDesc,setPDesc]=useState(''); const [pQty,setPQty]=useState(1); const [pPrice,setPPrice]=useState('');
+
+  const [paidNow,setPaidNow]=useState(true);
+  const [method,setMethod]=useState('cash');
+  const [date,setDate]=useState(todayStr());
+  const [notes,setNotes]=useState('');
+  const [busy,setBusy]=useState(false);
+  const [result,setResult]=useState(null);
+
+  const total=cart.reduce((s,c)=>s+(Math.max(1,Number(c.quantity)||1)*(Number(c.unitPrice)||0)),0);
+  const buyerName = mode==='cash' ? (cashName.trim()||'Cash Sale') : (acct?.name||'');
+  const canGenerate = cart.length>0 && (mode==='cash' || !!acct) && !busy;
+  const activeProducts=(products||[]).filter(p=>p.is_active!==false);
+  const filteredAccounts = acctQuery.trim()
+    ? (accounts||[]).filter(a=>(a.name||'').toLowerCase().includes(acctQuery.trim().toLowerCase()))
+    : (accounts||[]);
+
+  function addToCart(){ const d=pDesc.trim(); const u=Number(pPrice)||0; const q=Math.max(1,Number(pQty)||1); if(!d||!(u>0))return; setCart([...cart,{id:Math.random().toString(36).slice(2),description:d,quantity:q,unitPrice:u}]); setPDesc('');setPQty(1);setPPrice(''); }
+  function removeFromCart(id){ setCart(cart.filter(c=>c.id!==id)); }
+
+  async function generate(){
+    if(!canGenerate) return;
+    setBusy(true);
+    try{
+      const lines=cart.map(c=>({ description:c.description, amount:Math.max(1,Number(c.quantity)||1)*(Number(c.unitPrice)||0), quantity:Math.max(1,Number(c.quantity)||1), lineType:'product' }));
+      const res=await onCreateSale({
+        buyerName,
+        buyerEmail: mode==='account' ? (acct?.email||null) : null,
+        buyerPhone: mode==='account' ? (acct?.phone||null) : (cashPhone.trim()||null),
+        branchId: branchId||null, lines, paid:paidNow, paymentMethod:method, paymentDate:date, notes:notes.trim()||null
+      });
+      setResult(res);
+    }catch(e){ alert(e?.message||'Failed to create sale'); }
+    finally{ setBusy(false); }
+  }
+  function reset(){ setResult(null); setCart([]); setCashName(''); setCashPhone(''); setAccountKey(''); setAcctQuery(''); setNotes(''); setMode('cash'); }
+
+  if(result){
+    const inv=result.invoice||{}; const pay=result.payment;
+    return <div style={{maxWidth:640,margin:'0 auto'}}>
+      <div className="card" style={{textAlign:'center',borderColor:'#86EFAC',background:'#F0FDF4'}}>
+        <div style={{fontSize:34,marginBottom:6}}>✅</div>
+        <div style={{fontSize:20,fontWeight:800,marginBottom:4}}>Sale complete</div>
+        <div className="small subtle" style={{marginBottom:12}}>Billed to <strong>{inv.account_name||buyerName}</strong></div>
+        <div style={{display:'inline-flex',flexDirection:'column',gap:4,textAlign:'left',background:'#fff',border:'1px solid var(--border)',borderRadius:10,padding:'12px 16px',marginBottom:14}}>
+          <div><span className="small subtle">Invoice</span> <strong style={{fontFamily:'monospace'}}>{inv.invoice_number||'—'}</strong></div>
+          <div><span className="small subtle">Total</span> <strong>RM{Number(inv.total_amount||total).toFixed(2)}</strong></div>
+          {pay ? <div><span className="small subtle">Receipt</span> <strong style={{fontFamily:'monospace'}}>{pay.receipt_number||'—'}</strong> · <span style={{color:'var(--green-tx)',fontWeight:700}}>Paid</span></div>
+               : <div><span className="small subtle">Status</span> <strong style={{color:'#F59E0B'}}>Unpaid invoice</strong></div>}
+        </div>
+        <div style={{display:'flex',gap:8,justifyContent:'center',flexWrap:'wrap'}}>
+          {pay && <button className="btn btn-primary" onClick={()=>printReceipt(pay, inv)}>🖨 Print receipt</button>}
+          <button className="btn btn-ghost" onClick={()=>onViewInvoices&&onViewInvoices()}>🧾 View in Invoices</button>
+          <button className="btn btn-ghost" onClick={reset}>+ New sale</button>
+        </div>
+      </div>
+    </div>;
+  }
+
+  return <div style={{maxWidth:820,margin:'0 auto',display:'flex',flexDirection:'column',gap:14}}>
+    <div>
+      <div style={{fontSize:20,fontWeight:800}}>🛒 Product Sale</div>
+      <div className="small subtle">Sell goods (goggles, caps, swim diapers…) as a quick cash sale or billed to an existing account. All accounts across every branch are available here.</div>
+    </div>
+
+    {/* Bill to */}
+    <div className="card">
+      <div style={{fontWeight:800,marginBottom:8}}>1 · Bill to</div>
+      <div style={{display:'flex',gap:8,marginBottom:10}}>
+        <button className={`btn small ${mode==='cash'?'btn-primary':'btn-ghost'}`} onClick={()=>setMode('cash')}>💵 Cash sale</button>
+        <button className={`btn small ${mode==='account'?'btn-primary':'btn-ghost'}`} onClick={()=>setMode('account')}>👤 Existing account</button>
+      </div>
+      {mode==='cash'
+        ? <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+            <div className="field" style={{margin:0}}><label>Name on receipt</label><input className="input" value={cashName} onChange={e=>setCashName(e.target.value)} placeholder="Cash Sale (or walk-in name)" /></div>
+            <div className="field" style={{margin:0}}><label>Phone (optional)</label><input className="input" value={cashPhone} onChange={e=>setCashPhone(e.target.value)} placeholder="" /></div>
+          </div>
+        : <div>
+            <div className="field" style={{margin:0}}><label>Search account</label><input className="input" value={acctQuery} onChange={e=>setAcctQuery(e.target.value)} placeholder="Type a parent's name…" /></div>
+            <div className="field" style={{margin:'8px 0 0'}}><label>Account ({filteredAccounts.length})</label>
+              <select className="select" value={accountKey} onChange={e=>setAccountKey(e.target.value)}>
+                <option value="">— Select an account —</option>
+                {filteredAccounts.map(a=><option key={a.key} value={a.key}>{a.name}{a.phone?` · ${a.phone}`:''}</option>)}
+              </select>
+            </div>
+            {acct && <div className="small subtle" style={{marginTop:6}}>Invoice to: <strong>{acct.name}</strong>{acct.email?` · ${acct.email}`:''}{acct.phone?` · ${acct.phone}`:''}</div>}
+          </div>}
+      <div className="field" style={{margin:'10px 0 0',maxWidth:280}}><label>Attribute to branch (optional)</label>
+        <select className="select" value={branchId} onChange={e=>setBranchId(e.target.value)}>
+          <option value="">No specific branch</option>
+          {activeBranches.map(b=><option key={b.id} value={b.id}>{b.name}{b.code?` (${b.code})`:''}</option>)}
+        </select>
+      </div>
+    </div>
+
+    {/* Items */}
+    <div className="card">
+      <div style={{fontWeight:800,marginBottom:8}}>2 · Items</div>
+      {cart.length>0 && <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:10}}>
+        {cart.map(c=>{ const q=Math.max(1,Number(c.quantity)||1); const u=Number(c.unitPrice)||0; return <div key={c.id} style={{display:'flex',alignItems:'center',gap:8,padding:'6px 10px',background:'var(--surface-2)',border:'1px solid var(--border)',borderRadius:8}}>
+          <span style={{flex:1,fontWeight:600}}>{c.description}</span>
+          <span className="small subtle">{q} × RM{u.toFixed(2)}</span>
+          <span style={{fontWeight:700,minWidth:80,textAlign:'right'}}>RM{(q*u).toFixed(2)}</span>
+          <button className="btn btn-ghost small" style={{color:'#DC2626',padding:'0 6px'}} onClick={()=>removeFromCart(c.id)} title="Remove">×</button>
+        </div>; })}
+      </div>}
+      {activeProducts.length>0 && <div style={{marginBottom:8}}>
+        <select className="select" value="" onChange={e=>{ const p=activeProducts.find(x=>x.id===e.target.value); if(p){ setPDesc(p.name); if(p.price!=null) setPPrice(String(p.price)); } }}>
+          <option value="">Pick from catalogue…</option>
+          {activeProducts.map(p=><option key={p.id} value={p.id}>{p.name}{p.price!=null?` — RM${Number(p.price).toFixed(2)}`:''}</option>)}
+        </select>
+      </div>}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 60px 100px auto',gap:8,alignItems:'end'}}>
+        <div className="field" style={{margin:0}}><label>Item</label><input className="input" value={pDesc} onChange={e=>setPDesc(e.target.value)} placeholder="e.g. Swim goggles" onKeyDown={e=>{if(e.key==='Enter')addToCart();}} /></div>
+        <div className="field" style={{margin:0}}><label>Qty</label><input className="input" type="number" min="1" step="1" value={pQty} onChange={e=>setPQty(Math.max(1,parseInt(e.target.value,10)||1))} /></div>
+        <div className="field" style={{margin:0}}><label>Unit RM</label><input className="input" type="number" min="0" step="0.01" value={pPrice} onChange={e=>setPPrice(e.target.value)} placeholder="0.00" onKeyDown={e=>{if(e.key==='Enter')addToCart();}} /></div>
+        <button className="btn btn-ghost" style={{height:38}} onClick={addToCart} disabled={!pDesc.trim()||!(Number(pPrice)>0)}>+ Add</button>
+      </div>
+      <div className="billing-total-row" style={{marginTop:12}}>
+        <span className="billing-total-label">{cart.length} item{cart.length===1?'':'s'}</span>
+        <span className="billing-total-value">RM{total.toFixed(2)}</span>
+      </div>
+    </div>
+
+    {/* Payment */}
+    <div className="card">
+      <div style={{fontWeight:800,marginBottom:8}}>3 · Payment</div>
+      <label style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,cursor:'pointer'}}>
+        <input type="checkbox" checked={paidNow} onChange={e=>setPaidNow(e.target.checked)} />
+        <span>Payment received now — issue a receipt</span>
+      </label>
+      {paidNow
+        ? <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+            <div className="field" style={{margin:0}}><label>Method</label><select className="select" value={method} onChange={e=>setMethod(e.target.value)}><option value="cash">Cash</option><option value="bank_transfer">Bank Transfer</option><option value="duitnow">DuitNow</option><option value="card">Card</option><option value="cheque">Cheque</option><option value="other">Other</option></select></div>
+            <div className="field" style={{margin:0}}><label>Date</label><input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)} /></div>
+            <div className="field" style={{margin:0}}><label>Note (optional)</label><input className="input" value={notes} onChange={e=>setNotes(e.target.value)} placeholder="" /></div>
+          </div>
+        : <div className="small subtle">An unpaid invoice will be created — record payment later from Accounts → Invoices.</div>}
+      <div style={{display:'flex',justifyContent:'flex-end',marginTop:14}}>
+        <button className="btn btn-primary" onClick={generate} disabled={!canGenerate} style={{fontSize:15,padding:'10px 18px'}}>
+          {busy ? 'Processing…' : (paidNow ? `💵 Charge & issue receipt — RM${total.toFixed(2)}` : `🧾 Create invoice — RM${total.toFixed(2)}`)}
+        </button>
+      </div>
+    </div>
+  </div>;
+}
+
 // Settings › Products — shared product / goods catalogue (name + price).
 function ProductsAdminView({ products, addProduct, updateProduct, deleteProduct }){
   const [name,setName]=useState('');
