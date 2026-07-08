@@ -2435,10 +2435,10 @@ function App(){
   }
 
   // ── Product catalogue CRUD (Settings › Products) ─────────────────────────
-  async function addCatalogProduct({ name, price }){
+  async function addCatalogProduct({ name, sku, price }){
     try{
       const next = (products||[]).length + 1;
-      await insertRows('products', { name, price: (price===''||price==null)?null:Number(price), sort_order: next, is_active: true });
+      await insertRows('products', { name, sku: sku||null, price: (price===''||price==null)?null:Number(price), sort_order: next, is_active: true });
       await loadProducts();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to add product'); }
   }
@@ -3074,7 +3074,7 @@ function App(){
         <button className={`nav-btn ${view==='schedule'?'active':''}`} onClick={()=>setView('schedule')}>📅 Schedule</button>
         <button className={`nav-btn ${view==='programme'?'active':''}`} onClick={()=>{ setView('programme'); setProgrammeSection('week'); }}>📋 Programme</button>
         <button className={`nav-btn ${view==='accounts'?'active':''}`} onClick={()=>{ setView('accounts'); setAccountSection('accounts'); }}>👤 Accounts</button>
-        <button className={`nav-btn ${view==='sales'?'active':''}`} onClick={()=>setView('sales')}>🛒 Sales</button>
+        <button className={`nav-btn ${view==='shop'?'active':''}`} onClick={()=>setView('shop')}>🛒 Shop</button>
         <button className={`nav-btn ${view==='enroll'?'active':''}`} onClick={()=>setView('enroll')}>🔍 Explore</button>
         <button type="button" className="nav-btn nav-btn-link" onClick={()=>window.open('./intake.html','_blank','noopener,noreferrer')}>📝 Intake ↗</button>
         <button className={`nav-btn ${view==='settings'?'active':''}`} onClick={()=>{ setView('settings'); setAdminSection('pools'); }}>⚙️ Settings</button>
@@ -3286,11 +3286,14 @@ function App(){
         onEdit={openProgrammeEdit}
       />}
 
-      {!loading && view==='sales' && <SalesView
+      {!loading && view==='shop' && <SalesView
         accounts={allAccountsForSale}
         products={products}
         branches={options.branches||[]}
         currentBranchId={currentBranchId}
+        invoices={invoices}
+        pmts={pmts}
+        onRefund={refundInvoice}
         onCreateSale={createProductSale}
         onViewInvoices={()=>{ setView('accounts'); setAccountSection('invoices'); }}
       />}
@@ -9817,8 +9820,25 @@ function ProgrammeSessionModal({ modal, setModal, busy, onSave, onDelete, onDupl
 // existing account (all branches, not branch-filtered). Creates an invoice
 // and, if paid now, an immediate receipt.
 // ============================================================================
-function SalesView({ accounts, products, branches, currentBranchId, onCreateSale, onViewInvoices }){
-  const [mode,setMode]=useState('cash'); // 'cash' | 'account'
+function SalesView({ accounts, products, branches, currentBranchId, invoices, pmts, onRefund, onCreateSale, onViewInvoices }){
+  const [tab,setTab]=useState('sale'); // 'sale' | 'returns'
+  return <div style={{maxWidth:860,margin:'0 auto'}}>
+    <div style={{marginBottom:12}}>
+      <div style={{fontSize:20,fontWeight:800}}>🛒 Shop</div>
+      <div className="small subtle">Sell goods as a quick cash sale or billed to an account, and process product returns. Works across every branch.</div>
+    </div>
+    <div style={{marginBottom:14,display:'flex',gap:8}}>
+      <button className={`btn small ${tab==='sale'?'btn-primary':'btn-ghost'}`} onClick={()=>setTab('sale')}>🛍 New Sale</button>
+      <button className={`btn small ${tab==='returns'?'btn-primary':'btn-ghost'}`} onClick={()=>setTab('returns')}>↩︎ Returns / Refunds</button>
+    </div>
+    {tab==='sale'
+      ? <ShopSale accounts={accounts} products={products} branches={branches} currentBranchId={currentBranchId} onCreateSale={onCreateSale} onViewInvoices={onViewInvoices} />
+      : <ShopReturns invoices={invoices} pmts={pmts} onRefund={onRefund} onViewInvoices={onViewInvoices} />}
+  </div>;
+}
+
+function ShopSale({ accounts, products, branches, currentBranchId, onCreateSale, onViewInvoices }){
+  const [mode,setMode]=useState('cash');
   const [cashName,setCashName]=useState('');
   const [cashPhone,setCashPhone]=useState('');
   const [accountKey,setAccountKey]=useState('');
@@ -9826,74 +9846,98 @@ function SalesView({ accounts, products, branches, currentBranchId, onCreateSale
   const acct=(accounts||[]).find(a=>a.key===accountKey)||null;
   const activeBranches=(branches||[]).filter(b=>b.is_active!==false);
   const [branchId,setBranchId]=useState(currentBranchId&&currentBranchId!=='all'?currentBranchId:'');
-
   const [cart,setCart]=useState([]);
-  const [pDesc,setPDesc]=useState(''); const [pQty,setPQty]=useState(1); const [pPrice,setPPrice]=useState('');
-
+  const [pSku,setPSku]=useState(''); const [pDesc,setPDesc]=useState(''); const [pQty,setPQty]=useState(1); const [pPrice,setPPrice]=useState('');
   const [paidNow,setPaidNow]=useState(true);
   const [method,setMethod]=useState('cash');
   const [date,setDate]=useState(todayStr());
   const [notes,setNotes]=useState('');
   const [busy,setBusy]=useState(false);
+  const [showPreview,setShowPreview]=useState(false);
   const [result,setResult]=useState(null);
 
   const total=cart.reduce((s,c)=>s+(Math.max(1,Number(c.quantity)||1)*(Number(c.unitPrice)||0)),0);
   const buyerName = mode==='cash' ? (cashName.trim()||'Cash Sale') : (acct?.name||'');
-  const canGenerate = cart.length>0 && (mode==='cash' || !!acct) && !busy;
+  const buyerPhone = mode==='account' ? (acct?.phone||'') : cashPhone.trim();
+  const canGenerate = cart.length>0 && (mode==='cash' || !!acct);
   const activeProducts=(products||[]).filter(p=>p.is_active!==false);
+  const branchName=(activeBranches.find(b=>b.id===branchId)||{}).name;
   const filteredAccounts = acctQuery.trim()
     ? (accounts||[]).filter(a=>(a.name||'').toLowerCase().includes(acctQuery.trim().toLowerCase()))
     : (accounts||[]);
 
-  function addToCart(){ const d=pDesc.trim(); const u=Number(pPrice)||0; const q=Math.max(1,Number(pQty)||1); if(!d||!(u>0))return; setCart([...cart,{id:Math.random().toString(36).slice(2),description:d,quantity:q,unitPrice:u}]); setPDesc('');setPQty(1);setPPrice(''); }
+  function pickProduct(id){ const p=activeProducts.find(x=>x.id===id); if(!p) return; setPDesc(p.name); setPSku(p.sku||''); if(p.price!=null) setPPrice(String(p.price)); }
+  function addToCart(){ const d=pDesc.trim(); const u=Number(pPrice)||0; const q=Math.max(1,Number(pQty)||1); if(!d||!(u>0))return; setCart([...cart,{id:Math.random().toString(36).slice(2),sku:pSku.trim(),description:d,quantity:q,unitPrice:u}]); setPDesc('');setPSku('');setPQty(1);setPPrice(''); }
   function removeFromCart(id){ setCart(cart.filter(c=>c.id!==id)); }
 
-  async function generate(){
-    if(!canGenerate) return;
+  async function confirmSale(){
     setBusy(true);
     try{
-      const lines=cart.map(c=>({ description:c.description, amount:Math.max(1,Number(c.quantity)||1)*(Number(c.unitPrice)||0), quantity:Math.max(1,Number(c.quantity)||1), lineType:'product' }));
-      const res=await onCreateSale({
-        buyerName,
-        buyerEmail: mode==='account' ? (acct?.email||null) : null,
-        buyerPhone: mode==='account' ? (acct?.phone||null) : (cashPhone.trim()||null),
-        branchId: branchId||null, lines, paid:paidNow, paymentMethod:method, paymentDate:date, notes:notes.trim()||null
-      });
-      setResult(res);
+      const lines=cart.map(c=>{ const q=Math.max(1,Number(c.quantity)||1); return { description: c.sku ? `${c.description} · SKU: ${c.sku}` : c.description, amount:q*(Number(c.unitPrice)||0), quantity:q, lineType:'product' }; });
+      const res=await onCreateSale({ buyerName, buyerEmail: mode==='account'?(acct?.email||null):null, buyerPhone: buyerPhone||null, branchId: branchId||null, lines, paid:paidNow, paymentMethod:method, paymentDate:date, notes:notes.trim()||null });
+      setResult(res); setShowPreview(false);
+      if(res && res.payment){ setTimeout(()=>printReceipt(res.payment, res.invoice), 250); }
     }catch(e){ alert(e?.message||'Failed to create sale'); }
     finally{ setBusy(false); }
   }
-  function reset(){ setResult(null); setCart([]); setCashName(''); setCashPhone(''); setAccountKey(''); setAcctQuery(''); setNotes(''); setMode('cash'); }
+  function reset(){ setResult(null); setShowPreview(false); setCart([]); setCashName(''); setCashPhone(''); setAccountKey(''); setAcctQuery(''); setNotes(''); setMode('cash'); }
 
   if(result){
     const inv=result.invoice||{}; const pay=result.payment;
-    return <div style={{maxWidth:640,margin:'0 auto'}}>
-      <div className="card" style={{textAlign:'center',borderColor:'#86EFAC',background:'#F0FDF4'}}>
-        <div style={{fontSize:34,marginBottom:6}}>✅</div>
-        <div style={{fontSize:20,fontWeight:800,marginBottom:4}}>Sale complete</div>
-        <div className="small subtle" style={{marginBottom:12}}>Billed to <strong>{inv.account_name||buyerName}</strong></div>
-        <div style={{display:'inline-flex',flexDirection:'column',gap:4,textAlign:'left',background:'#fff',border:'1px solid var(--border)',borderRadius:10,padding:'12px 16px',marginBottom:14}}>
-          <div><span className="small subtle">Invoice</span> <strong style={{fontFamily:'monospace'}}>{inv.invoice_number||'—'}</strong></div>
-          <div><span className="small subtle">Total</span> <strong>RM{Number(inv.total_amount||total).toFixed(2)}</strong></div>
-          {pay ? <div><span className="small subtle">Receipt</span> <strong style={{fontFamily:'monospace'}}>{pay.receipt_number||'—'}</strong> · <span style={{color:'var(--green-tx)',fontWeight:700}}>Paid</span></div>
-               : <div><span className="small subtle">Status</span> <strong style={{color:'#F59E0B'}}>Unpaid invoice</strong></div>}
-        </div>
-        <div style={{display:'flex',gap:8,justifyContent:'center',flexWrap:'wrap'}}>
-          {pay && <button className="btn btn-primary" onClick={()=>printReceipt(pay, inv)}>🖨 Print receipt</button>}
-          <button className="btn btn-ghost" onClick={()=>onViewInvoices&&onViewInvoices()}>🧾 View in Invoices</button>
-          <button className="btn btn-ghost" onClick={reset}>+ New sale</button>
-        </div>
+    return <div className="card" style={{textAlign:'center',borderColor:'#86EFAC',background:'#F0FDF4',maxWidth:640,margin:'0 auto'}}>
+      <div style={{fontSize:34,marginBottom:6}}>✅</div>
+      <div style={{fontSize:20,fontWeight:800,marginBottom:4}}>Sale complete</div>
+      <div className="small subtle" style={{marginBottom:12}}>Billed to <strong>{inv.account_name||buyerName}</strong></div>
+      <div style={{display:'inline-flex',flexDirection:'column',gap:4,textAlign:'left',background:'#fff',border:'1px solid var(--border)',borderRadius:10,padding:'12px 16px',marginBottom:14}}>
+        <div><span className="small subtle">Invoice</span> <strong style={{fontFamily:'monospace'}}>{inv.invoice_number||'—'}</strong></div>
+        <div><span className="small subtle">Total</span> <strong>RM{Number(inv.total_amount||total).toFixed(2)}</strong></div>
+        {pay ? <div><span className="small subtle">Receipt</span> <strong style={{fontFamily:'monospace'}}>{pay.receipt_number||'—'}</strong> · <span style={{color:'var(--green-tx)',fontWeight:700}}>Paid</span></div>
+             : <div><span className="small subtle">Status</span> <strong style={{color:'#F59E0B'}}>Unpaid invoice</strong></div>}
+      </div>
+      <div style={{display:'flex',gap:8,justifyContent:'center',flexWrap:'wrap'}}>
+        {pay && <button className="btn btn-primary" onClick={()=>printReceipt(pay, inv)}>🖨 Print receipt</button>}
+        <button className="btn btn-ghost" onClick={()=>onViewInvoices&&onViewInvoices()}>🧾 View in Invoices</button>
+        <button className="btn btn-ghost" onClick={reset}>+ New sale</button>
       </div>
     </div>;
   }
 
-  return <div style={{maxWidth:820,margin:'0 auto',display:'flex',flexDirection:'column',gap:14}}>
-    <div>
-      <div style={{fontSize:20,fontWeight:800}}>🛒 Product Sale</div>
-      <div className="small subtle">Sell goods (goggles, caps, swim diapers…) as a quick cash sale or billed to an existing account. All accounts across every branch are available here.</div>
-    </div>
+  if(showPreview){
+    return <div style={{maxWidth:640,margin:'0 auto'}}>
+      <div className="card" style={{padding:'22px 26px'}}>
+        <div style={{textAlign:'center',borderBottom:'2px solid var(--border)',paddingBottom:12,marginBottom:14}}>
+          <div style={{fontSize:18,fontWeight:800}}>Star Swim Sdn Bhd</div>
+          <div className="small subtle">Product Sale — Preview{branchName?` · ${branchName}`:''}</div>
+        </div>
+        <div style={{display:'flex',justifyContent:'space-between',fontSize:13,marginBottom:12,flexWrap:'wrap',gap:8}}>
+          <div><div className="small subtle">Bill to</div><div style={{fontWeight:700}}>{buyerName}</div>{buyerPhone&&<div className="small subtle">{buyerPhone}</div>}{mode==='account'&&acct?.email&&<div className="small subtle">{acct.email}</div>}</div>
+          <div style={{textAlign:'right'}}><div className="small subtle">Date</div><div style={{fontWeight:600}}>{date}</div><div className="small subtle" style={{marginTop:4}}>{paidNow?`Payment: ${methodLabel(method)}`:'Unpaid invoice'}</div></div>
+        </div>
+        <table style={{width:'100%',fontSize:13,borderCollapse:'collapse'}}>
+          <thead><tr style={{borderBottom:'1px solid var(--border)',textAlign:'left'}}>
+            <th style={{padding:'6px 4px'}}>Item</th><th style={{padding:'6px 4px'}}>SKU</th><th style={{padding:'6px 4px',textAlign:'center'}}>Qty</th><th style={{padding:'6px 4px',textAlign:'right'}}>Unit</th><th style={{padding:'6px 4px',textAlign:'right'}}>Amount</th>
+          </tr></thead>
+          <tbody>
+            {cart.map(c=>{ const q=Math.max(1,Number(c.quantity)||1); const u=Number(c.unitPrice)||0; return <tr key={c.id} style={{borderBottom:'1px solid #F1F5F9'}}>
+              <td style={{padding:'6px 4px',fontWeight:600}}>{c.description}</td>
+              <td style={{padding:'6px 4px',fontFamily:'monospace',fontSize:11}}>{c.sku||'—'}</td>
+              <td style={{padding:'6px 4px',textAlign:'center'}}>{q}</td>
+              <td style={{padding:'6px 4px',textAlign:'right'}}>RM{u.toFixed(2)}</td>
+              <td style={{padding:'6px 4px',textAlign:'right',fontWeight:700}}>RM{(q*u).toFixed(2)}</td>
+            </tr>; })}
+          </tbody>
+          <tfoot><tr><td colSpan={4} style={{padding:'10px 4px',textAlign:'right',fontWeight:800}}>Total</td><td style={{padding:'10px 4px',textAlign:'right',fontWeight:800,fontSize:15}}>RM{total.toFixed(2)}</td></tr></tfoot>
+        </table>
+        <div className="small subtle" style={{marginTop:8,textAlign:'center'}}>This is a preview — nothing is saved until you confirm.</div>
+      </div>
+      <div style={{display:'flex',gap:8,justifyContent:'center',marginTop:14,flexWrap:'wrap'}}>
+        <button className="btn btn-ghost" onClick={()=>setShowPreview(false)}>← Back to edit</button>
+        <button className="btn btn-primary" onClick={confirmSale} disabled={busy} style={{fontSize:15,padding:'10px 18px'}}>{busy?'Processing…':(paidNow?'✅ Confirm & Print Receipt':'✅ Confirm & Create Invoice')}</button>
+      </div>
+    </div>;
+  }
 
-    {/* Bill to */}
+  return <div style={{display:'flex',flexDirection:'column',gap:14}}>
     <div className="card">
       <div style={{fontWeight:800,marginBottom:8}}>1 · Bill to</div>
       <div style={{display:'flex',gap:8,marginBottom:10}}>
@@ -9903,7 +9947,7 @@ function SalesView({ accounts, products, branches, currentBranchId, onCreateSale
       {mode==='cash'
         ? <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
             <div className="field" style={{margin:0}}><label>Name on receipt</label><input className="input" value={cashName} onChange={e=>setCashName(e.target.value)} placeholder="Cash Sale (or walk-in name)" /></div>
-            <div className="field" style={{margin:0}}><label>Phone (optional)</label><input className="input" value={cashPhone} onChange={e=>setCashPhone(e.target.value)} placeholder="" /></div>
+            <div className="field" style={{margin:0}}><label>Phone (optional)</label><input className="input" value={cashPhone} onChange={e=>setCashPhone(e.target.value)} /></div>
           </div>
         : <div>
             <div className="field" style={{margin:0}}><label>Search account</label><input className="input" value={acctQuery} onChange={e=>setAcctQuery(e.target.value)} placeholder="Type a parent's name…" /></div>
@@ -9923,25 +9967,25 @@ function SalesView({ accounts, products, branches, currentBranchId, onCreateSale
       </div>
     </div>
 
-    {/* Items */}
     <div className="card">
       <div style={{fontWeight:800,marginBottom:8}}>2 · Items</div>
       {cart.length>0 && <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:10}}>
         {cart.map(c=>{ const q=Math.max(1,Number(c.quantity)||1); const u=Number(c.unitPrice)||0; return <div key={c.id} style={{display:'flex',alignItems:'center',gap:8,padding:'6px 10px',background:'var(--surface-2)',border:'1px solid var(--border)',borderRadius:8}}>
-          <span style={{flex:1,fontWeight:600}}>{c.description}</span>
+          <span style={{flex:1,fontWeight:600}}>{c.description}{c.sku?<span className="small subtle" style={{fontFamily:'monospace',marginLeft:6}}>[{c.sku}]</span>:null}</span>
           <span className="small subtle">{q} × RM{u.toFixed(2)}</span>
           <span style={{fontWeight:700,minWidth:80,textAlign:'right'}}>RM{(q*u).toFixed(2)}</span>
           <button className="btn btn-ghost small" style={{color:'#DC2626',padding:'0 6px'}} onClick={()=>removeFromCart(c.id)} title="Remove">×</button>
         </div>; })}
       </div>}
       {activeProducts.length>0 && <div style={{marginBottom:8}}>
-        <select className="select" value="" onChange={e=>{ const p=activeProducts.find(x=>x.id===e.target.value); if(p){ setPDesc(p.name); if(p.price!=null) setPPrice(String(p.price)); } }}>
+        <select className="select" value="" onChange={e=>pickProduct(e.target.value)}>
           <option value="">Pick from catalogue…</option>
-          {activeProducts.map(p=><option key={p.id} value={p.id}>{p.name}{p.price!=null?` — RM${Number(p.price).toFixed(2)}`:''}</option>)}
+          {activeProducts.map(p=><option key={p.id} value={p.id}>{p.name}{p.sku?` [${p.sku}]`:''}{p.price!=null?` — RM${Number(p.price).toFixed(2)}`:''}</option>)}
         </select>
       </div>}
-      <div style={{display:'grid',gridTemplateColumns:'1fr 60px 100px auto',gap:8,alignItems:'end'}}>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 110px 56px 92px auto',gap:8,alignItems:'end'}}>
         <div className="field" style={{margin:0}}><label>Item</label><input className="input" value={pDesc} onChange={e=>setPDesc(e.target.value)} placeholder="e.g. Swim goggles" onKeyDown={e=>{if(e.key==='Enter')addToCart();}} /></div>
+        <div className="field" style={{margin:0}}><label>SKU</label><input className="input" value={pSku} onChange={e=>setPSku(e.target.value)} placeholder="optional" /></div>
         <div className="field" style={{margin:0}}><label>Qty</label><input className="input" type="number" min="1" step="1" value={pQty} onChange={e=>setPQty(Math.max(1,parseInt(e.target.value,10)||1))} /></div>
         <div className="field" style={{margin:0}}><label>Unit RM</label><input className="input" type="number" min="0" step="0.01" value={pPrice} onChange={e=>setPPrice(e.target.value)} placeholder="0.00" onKeyDown={e=>{if(e.key==='Enter')addToCart();}} /></div>
         <button className="btn btn-ghost" style={{height:38}} onClick={addToCart} disabled={!pDesc.trim()||!(Number(pPrice)>0)}>+ Add</button>
@@ -9952,7 +9996,6 @@ function SalesView({ accounts, products, branches, currentBranchId, onCreateSale
       </div>
     </div>
 
-    {/* Payment */}
     <div className="card">
       <div style={{fontWeight:800,marginBottom:8}}>3 · Payment</div>
       <label style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,cursor:'pointer'}}>
@@ -9963,51 +10006,117 @@ function SalesView({ accounts, products, branches, currentBranchId, onCreateSale
         ? <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
             <div className="field" style={{margin:0}}><label>Method</label><select className="select" value={method} onChange={e=>setMethod(e.target.value)}><option value="cash">Cash</option><option value="bank_transfer">Bank Transfer</option><option value="duitnow">DuitNow</option><option value="card">Card</option><option value="cheque">Cheque</option><option value="other">Other</option></select></div>
             <div className="field" style={{margin:0}}><label>Date</label><input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)} /></div>
-            <div className="field" style={{margin:0}}><label>Note (optional)</label><input className="input" value={notes} onChange={e=>setNotes(e.target.value)} placeholder="" /></div>
+            <div className="field" style={{margin:0}}><label>Note (optional)</label><input className="input" value={notes} onChange={e=>setNotes(e.target.value)} /></div>
           </div>
         : <div className="small subtle">An unpaid invoice will be created — record payment later from Accounts → Invoices.</div>}
       <div style={{display:'flex',justifyContent:'flex-end',marginTop:14}}>
-        <button className="btn btn-primary" onClick={generate} disabled={!canGenerate} style={{fontSize:15,padding:'10px 18px'}}>
-          {busy ? 'Processing…' : (paidNow ? `💵 Charge & issue receipt — RM${total.toFixed(2)}` : `🧾 Create invoice — RM${total.toFixed(2)}`)}
-        </button>
+        <button className="btn btn-primary" onClick={()=>setShowPreview(true)} disabled={!canGenerate} style={{fontSize:15,padding:'10px 18px'}}>👁 Preview Bill — RM{total.toFixed(2)}</button>
       </div>
     </div>
   </div>;
 }
 
-// Settings › Products — shared product / goods catalogue (name + price).
+function ShopReturns({ invoices, pmts, onRefund, onViewInvoices }){
+  const [q,setQ]=useState('');
+  const [selId,setSelId]=useState('');
+  const [reason,setReason]=useState('');
+  const [busy,setBusy]=useState(false);
+  const [done,setDone]=useState(null);
+  const refundable=(invoices||[]).filter(i=>Number(i.amount_paid)>0 && i.status!=='void' && i.status!=='refunded');
+  const term=q.trim().toLowerCase();
+  const matches=term
+    ? refundable.filter(i=>(i.invoice_number||'').toLowerCase().includes(term)||(i.account_name||'').toLowerCase().includes(term)||(pmts||[]).some(p=>p.invoice_id===i.id&&(p.receipt_number||'').toLowerCase().includes(term)))
+    : refundable.slice(0,8);
+  const sel=(invoices||[]).find(i=>i.id===selId)||null;
+  const selPaid=sel?Number(sel.amount_paid)||0:0;
+
+  async function process(){
+    if(!sel) return;
+    setBusy(true);
+    try{ await onRefund({ invoiceId:sel.id, amount:selPaid, refundDate:todayStr(), method:'cash', reference:null, reason:(reason.trim()||'Product return') }); setDone({ invoiceNumber:sel.invoice_number, amount:selPaid }); setSelId(''); setReason(''); }
+    catch(e){ alert(e?.message||'Failed to process return'); }
+    finally{ setBusy(false); }
+  }
+
+  if(done){
+    return <div className="card" style={{textAlign:'center',borderColor:'#FCA5A5',background:'#FEF2F2',maxWidth:560,margin:'0 auto'}}>
+      <div style={{fontSize:32,marginBottom:6}}>↩︎</div>
+      <div style={{fontSize:18,fontWeight:800,marginBottom:4}}>Return processed</div>
+      <div className="small subtle" style={{marginBottom:12}}>Refunded <strong>RM{done.amount.toFixed(2)}</strong> on invoice <strong style={{fontFamily:'monospace'}}>{done.invoiceNumber}</strong>. It's now marked <strong>Refunded</strong>.</div>
+      <div style={{display:'flex',gap:8,justifyContent:'center'}}>
+        <button className="btn btn-ghost" onClick={()=>onViewInvoices&&onViewInvoices()}>🧾 View in Invoices</button>
+        <button className="btn btn-primary" onClick={()=>setDone(null)}>↩︎ New return</button>
+      </div>
+    </div>;
+  }
+
+  return <div style={{display:'flex',flexDirection:'column',gap:14}}>
+    <div className="card">
+      <div style={{fontWeight:800,marginBottom:4}}>Find the sale to return</div>
+      <div className="small subtle" style={{marginBottom:10}}>Search by receipt number, invoice number, or buyer name. Processing a return records a refund receipt (money back) and marks the invoice Refunded.</div>
+      <input className="input" value={q} onChange={e=>{setQ(e.target.value);setSelId('');}} placeholder="e.g. RCT-000123, INV-000045, or a name…" />
+      <div style={{marginTop:10,display:'flex',flexDirection:'column',gap:6,maxHeight:280,overflowY:'auto'}}>
+        {matches.length===0 && <div className="empty" style={{padding:16}}>No matching paid sales found.</div>}
+        {matches.map(i=>{ const rcpt=(pmts||[]).find(p=>p.invoice_id===i.id&&Number(p.amount)>0); return <div key={i.id} onClick={()=>setSelId(i.id)} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',borderRadius:8,cursor:'pointer',border:`1px solid ${selId===i.id?'var(--primary)':'var(--border)'}`,background:selId===i.id?'#EFF6FF':'var(--surface)'}}>
+          <div style={{flex:1,minWidth:0}}><div style={{fontWeight:700}}>{i.account_name||'—'}</div><div className="small subtle" style={{fontFamily:'monospace'}}>{i.invoice_number}{rcpt?` · ${rcpt.receipt_number}`:''} · {i.issue_date||''}</div></div>
+          <div style={{fontWeight:700,whiteSpace:'nowrap'}}>RM{(Number(i.amount_paid)||0).toFixed(2)}</div>
+        </div>; })}
+      </div>
+    </div>
+
+    {sel && <div className="card">
+      <div style={{fontWeight:800,marginBottom:8}}>Process return — {sel.account_name}</div>
+      <div style={{background:'var(--surface-2)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 12px',marginBottom:10,display:'flex',justifyContent:'space-between'}}>
+        <span className="small subtle">Refund amount (full)</span><strong style={{fontSize:16,color:'#DC2626'}}>RM{selPaid.toFixed(2)}</strong>
+      </div>
+      <div className="field"><label>Reason (optional)</label><input className="input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="e.g. Wrong size, faulty goggles" /></div>
+      <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:12}}>
+        <button className="btn btn-ghost small" onClick={()=>setSelId('')}>Cancel</button>
+        <button className="btn btn-danger" onClick={process} disabled={busy}>{busy?'Processing…':`↩︎ Refund RM${selPaid.toFixed(2)}`}</button>
+      </div>
+      <div className="small subtle" style={{marginTop:8}}>Tip: for a partial return (some items kept), open the invoice under Accounts → Invoices and use its Refund action with a custom amount.</div>
+    </div>}
+  </div>;
+}
+
+
+// Settings › Products — shared product / goods catalogue (name + price + optional SKU).
 function ProductsAdminView({ products, addProduct, updateProduct, deleteProduct }){
   const [name,setName]=useState('');
+  const [sku,setSku]=useState('');
   const [price,setPrice]=useState('');
   const [editingId,setEditingId]=useState(null);
-  const [editForm,setEditForm]=useState({name:'',price:''});
-  function startEdit(p){ setEditingId(p.id); setEditForm({name:p.name||'',price:p.price!=null?String(p.price):''}); }
-  async function saveEdit(){ if(!editForm.name.trim()) return; await updateProduct(editingId,{ name:editForm.name.trim(), price:(editForm.price===''?null:Number(editForm.price)) }); setEditingId(null); }
+  const [editForm,setEditForm]=useState({name:'',sku:'',price:''});
+  function startEdit(p){ setEditingId(p.id); setEditForm({name:p.name||'',sku:p.sku||'',price:p.price!=null?String(p.price):''}); }
+  async function saveEdit(){ if(!editForm.name.trim()) return; await updateProduct(editingId,{ name:editForm.name.trim(), sku:editForm.sku.trim()||null, price:(editForm.price===''?null:Number(editForm.price)) }); setEditingId(null); }
   return <>
     <div className="card" style={{marginBottom:12}}>
       <div style={{fontSize:18,fontWeight:800,marginBottom:4}}>🛍 Products / Goods</div>
-      <div className="small subtle" style={{marginBottom:14}}>Items you sell to swimmers and parents (goggles, swim caps, swim diapers…). Saved here so you can pick them — with the price pre-filled — when billing products on an invoice. Shared across all branches; the price stays editable per sale.</div>
-      <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) 150px auto',gap:10,alignItems:'end'}}>
+      <div className="small subtle" style={{marginBottom:14}}>Items you sell to swimmers and parents (goggles, swim caps, swim diapers…). Saved here so you can pick them — with the price pre-filled — when billing products. SKU is optional and prints on the bill when set. Shared across all branches; price stays editable per sale.</div>
+      <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) 140px 130px auto',gap:10,alignItems:'end'}}>
         <div className="field" style={{margin:0}}><label>Product name</label><input className="input" placeholder="e.g. Swim goggles" value={name} onChange={e=>setName(e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>SKU <span className="subtle">(optional)</span></label><input className="input" placeholder="e.g. SG-001" value={sku} onChange={e=>setSku(e.target.value)} /></div>
         <div className="field" style={{margin:0}}><label>Default price (RM)</label><input className="input" type="number" min="0" step="0.01" placeholder="0.00" value={price} onChange={e=>setPrice(e.target.value)} /></div>
-        <button className="btn btn-primary" style={{height:38}} disabled={!name.trim()} onClick={async()=>{ if(!name.trim()) return; await addProduct({ name:name.trim(), price }); setName(''); setPrice(''); }}>+ Add Product</button>
+        <button className="btn btn-primary" style={{height:38}} disabled={!name.trim()} onClick={async()=>{ if(!name.trim()) return; await addProduct({ name:name.trim(), sku:sku.trim()||null, price }); setName(''); setSku(''); setPrice(''); }}>+ Add Product</button>
       </div>
     </div>
     <div className="card" style={{padding:0,overflow:'hidden'}}>
       <div className="table-wrap" style={{border:'none',borderRadius:0}}>
         <table>
-          <thead><tr><th style={{width:'55%'}}>Product</th><th style={{width:140,textAlign:'right'}}>Default price</th><th style={{width:180,textAlign:'right'}}>Actions</th></tr></thead>
+          <thead><tr><th style={{width:'42%'}}>Product</th><th style={{width:130}}>SKU</th><th style={{width:130,textAlign:'right'}}>Default price</th><th style={{width:180,textAlign:'right'}}>Actions</th></tr></thead>
           <tbody>
-            {(products||[]).length===0 && <tr><td colSpan={3} className="empty">No products yet. Add one above.</td></tr>}
+            {(products||[]).length===0 && <tr><td colSpan={4} className="empty">No products yet. Add one above.</td></tr>}
             {(products||[]).map(p => editingId===p.id ? (
               <tr key={p.id}>
                 <td><input className="input" value={editForm.name} onChange={e=>setEditForm({...editForm,name:e.target.value})} /></td>
+                <td><input className="input" value={editForm.sku} onChange={e=>setEditForm({...editForm,sku:e.target.value})} /></td>
                 <td><input className="input" type="number" min="0" step="0.01" style={{textAlign:'right'}} value={editForm.price} onChange={e=>setEditForm({...editForm,price:e.target.value})} /></td>
                 <td style={{textAlign:'right'}}><button className="btn btn-primary small" onClick={saveEdit} style={{marginRight:6}}>Save</button><button className="btn btn-ghost small" onClick={()=>setEditingId(null)}>Cancel</button></td>
               </tr>
             ) : (
               <tr key={p.id}>
                 <td style={{fontWeight:600}}>{p.name}</td>
+                <td style={{fontFamily:'monospace',fontSize:12}}>{p.sku||<span className="subtle">—</span>}</td>
                 <td style={{textAlign:'right'}}>{p.price!=null?`RM${Number(p.price).toFixed(2)}`:<span className="subtle">—</span>}</td>
                 <td style={{textAlign:'right'}}><button className="btn btn-ghost small" onClick={()=>startEdit(p)} style={{marginRight:6}}>✎ Edit</button><button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>deleteProduct(p.id)}>Delete</button></td>
               </tr>
