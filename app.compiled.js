@@ -3607,7 +3607,8 @@ function App() {
   async function addCatalogProduct({
     name,
     sku,
-    price
+    price,
+    imageUrl
   }) {
     try {
       const next = (products || []).length + 1;
@@ -3615,6 +3616,7 @@ function App() {
         name,
         sku: sku || null,
         price: price === '' || price == null ? null : Number(price),
+        image_url: imageUrl || null,
         sort_order: next,
         is_active: true
       });
@@ -16566,7 +16568,7 @@ function InvoiceDetailPanel({
 }) {
   const [showPayForm, setShowPayForm] = useState(false);
   const [lastReceipt, setLastReceipt] = useState(null);
-  const outstanding = Math.max(0, (Number(invoice.total_amount) || 0) - (Number(invoice.amount_paid) || 0));
+  const outstanding = invoice.status === 'refunded' || invoice.status === 'void' ? 0 : Math.max(0, (Number(invoice.total_amount) || 0) - (Number(invoice.amount_paid) || 0));
   const [payAmt, setPayAmt] = useState('');
   const [payDate, setPayDate] = useState(todayStr());
   const [payMethod, setPayMethod] = useState('cash');
@@ -17019,7 +17021,7 @@ function InvoiceDetailPanel({
     style: {
       marginTop: 4
     }
-  }, "Paid RM ", Number(invoice.amount_paid || 0).toFixed(2), " · Outstanding RM ", outstanding.toFixed(2))), showVoidForm && /*#__PURE__*/React.createElement("div", {
+  }, invoice.status === 'refunded' ? 'Refunded — payment returned to customer' : invoice.status === 'void' ? 'Voided — no balance' : `Paid RM ${Number(invoice.amount_paid || 0).toFixed(2)} · Outstanding RM ${outstanding.toFixed(2)}`)), showVoidForm && /*#__PURE__*/React.createElement("div", {
     className: "inv-pay-form",
     style: {
       borderColor: 'var(--red-bd)',
@@ -17155,7 +17157,7 @@ function InvoiceDetailPanel({
       background: '#7C3AED',
       borderColor: '#7C3AED'
     }
-  }, refBusy ? 'Processing…' : 'Confirm Refund'))), !showPayForm && outstanding > 0 && invoice.status !== 'void' && /*#__PURE__*/React.createElement("button", {
+  }, refBusy ? 'Processing…' : 'Confirm Refund'))), !showPayForm && outstanding > 0 && invoice.status !== 'void' && invoice.status !== 'refunded' && /*#__PURE__*/React.createElement("button", {
     className: "btn btn-primary small",
     onClick: () => {
       setPayAmt(outstanding.toFixed(2));
@@ -18403,6 +18405,44 @@ function ProgrammeSessionModal({
 // existing account (all branches, not branch-filtered). Creates an invoice
 // and, if paid now, an immediate receipt.
 // ============================================================================
+// Read an image file and return a small compressed JPEG data URL (keeps DB rows
+// light — product thumbnails end up ~10–40 KB).
+function fileToThumbnail(file, maxDim = 340, quality = 0.72) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width,
+          h = img.height;
+        if (w > h) {
+          if (w > maxDim) {
+            h = Math.round(h * maxDim / w);
+            w = maxDim;
+          }
+        } else {
+          if (h > maxDim) {
+            w = Math.round(w * maxDim / h);
+            h = maxDim;
+          }
+        }
+        const c = document.createElement('canvas');
+        c.width = w;
+        c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        try {
+          resolve(c.toDataURL('image/jpeg', quality));
+        } catch (err) {
+          reject(err);
+        }
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 function SalesView({
   accounts,
   products,
@@ -18478,6 +18518,7 @@ function ShopSale({
   const [pDesc, setPDesc] = useState('');
   const [pQty, setPQty] = useState(1);
   const [pPrice, setPPrice] = useState('');
+  const [pImg, setPImg] = useState('');
   const [paidNow, setPaidNow] = useState(true);
   const [method, setMethod] = useState('cash');
   const [date, setDate] = useState(todayStr());
@@ -18497,6 +18538,7 @@ function ShopSale({
     if (!p) return;
     setPDesc(p.name);
     setPSku(p.sku || '');
+    setPImg(p.image_url || '');
     if (p.price != null) setPPrice(String(p.price));
   }
   function addToCart() {
@@ -18507,12 +18549,14 @@ function ShopSale({
     setCart([...cart, {
       id: Math.random().toString(36).slice(2),
       sku: pSku.trim(),
+      image: pImg,
       description: d,
       quantity: q,
       unitPrice: u
     }]);
     setPDesc('');
     setPSku('');
+    setPImg('');
     setPQty(1);
     setPPrice('');
   }
@@ -18753,7 +18797,24 @@ function ShopSale({
           padding: '6px 4px',
           fontWeight: 600
         }
-      }, c.description), /*#__PURE__*/React.createElement("td", {
+      }, /*#__PURE__*/React.createElement("div", {
+        style: {
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8
+        }
+      }, c.image ? /*#__PURE__*/React.createElement("img", {
+        src: c.image,
+        alt: "",
+        style: {
+          width: 34,
+          height: 34,
+          borderRadius: 6,
+          objectFit: 'cover',
+          border: '1px solid var(--border)',
+          flexShrink: 0
+        }
+      }) : null, /*#__PURE__*/React.createElement("span", null, c.description))), /*#__PURE__*/React.createElement("td", {
         style: {
           padding: '6px 4px',
           fontFamily: 'monospace',
@@ -18939,7 +19000,18 @@ function ShopSale({
         border: '1px solid var(--border)',
         borderRadius: 8
       }
-    }, /*#__PURE__*/React.createElement("span", {
+    }, c.image ? /*#__PURE__*/React.createElement("img", {
+      src: c.image,
+      alt: "",
+      style: {
+        width: 36,
+        height: 36,
+        borderRadius: 6,
+        objectFit: 'cover',
+        border: '1px solid var(--border)',
+        flexShrink: 0
+      }
+    }) : null, /*#__PURE__*/React.createElement("span", {
       style: {
         flex: 1,
         fontWeight: 600
@@ -18969,10 +19041,16 @@ function ShopSale({
     }, "×"));
   })), activeProducts.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
-      marginBottom: 8
+      marginBottom: 8,
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10
     }
   }, /*#__PURE__*/React.createElement("select", {
     className: "select",
+    style: {
+      flex: 1
+    },
     value: "",
     onChange: e => pickProduct(e.target.value)
   }, /*#__PURE__*/React.createElement("option", {
@@ -18980,7 +19058,19 @@ function ShopSale({
   }, "Pick from catalogue…"), activeProducts.map(p => /*#__PURE__*/React.createElement("option", {
     key: p.id,
     value: p.id
-  }, p.name, p.sku ? ` [${p.sku}]` : '', p.price != null ? ` — RM${Number(p.price).toFixed(2)}` : '')))), /*#__PURE__*/React.createElement("div", {
+  }, p.name, p.sku ? ` [${p.sku}]` : '', p.price != null ? ` — RM${Number(p.price).toFixed(2)}` : ''))), pImg ? /*#__PURE__*/React.createElement("img", {
+    src: pImg,
+    alt: "",
+    style: {
+      width: 44,
+      height: 44,
+      borderRadius: 8,
+      objectFit: 'cover',
+      border: '1px solid var(--border)',
+      flexShrink: 0
+    },
+    title: "Selected product photo"
+  }) : null), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: '1fr 110px 56px 92px auto',
@@ -19349,7 +19439,7 @@ function ShopReturns({
   }, "Tip: for a partial return (some items kept), open the invoice under Accounts → Invoices and use its Refund action with a custom amount.")));
 }
 
-// Settings › Products — shared product / goods catalogue (name + price + optional SKU).
+// Settings › Products — shared product / goods catalogue (name + price + optional SKU + photo).
 function ProductsAdminView({
   products,
   addProduct,
@@ -19359,18 +19449,21 @@ function ProductsAdminView({
   const [name, setName] = useState('');
   const [sku, setSku] = useState('');
   const [price, setPrice] = useState('');
+  const [img, setImg] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({
     name: '',
     sku: '',
-    price: ''
+    price: '',
+    image: ''
   });
   function startEdit(p) {
     setEditingId(p.id);
     setEditForm({
       name: p.name || '',
       sku: p.sku || '',
-      price: p.price != null ? String(p.price) : ''
+      price: p.price != null ? String(p.price) : '',
+      image: p.image_url || ''
     });
   }
   async function saveEdit() {
@@ -19378,10 +19471,36 @@ function ProductsAdminView({
     await updateProduct(editingId, {
       name: editForm.name.trim(),
       sku: editForm.sku.trim() || null,
-      price: editForm.price === '' ? null : Number(editForm.price)
+      price: editForm.price === '' ? null : Number(editForm.price),
+      image_url: editForm.image || null
     });
     setEditingId(null);
   }
+  async function onPick(file, setter) {
+    if (!file) return;
+    try {
+      const t = await fileToThumbnail(file);
+      setter(t);
+    } catch (_) {
+      alert('Could not read that image.');
+    }
+  }
+  const box = {
+    width: 56,
+    height: 56,
+    borderRadius: 8,
+    border: '1px dashed var(--border)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    background: 'var(--surface-2)',
+    cursor: 'pointer',
+    flexShrink: 0,
+    fontSize: 10,
+    color: 'var(--text-3)',
+    textAlign: 'center'
+  };
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
@@ -19398,14 +19517,44 @@ function ProductsAdminView({
     style: {
       marginBottom: 14
     }
-  }, "Items you sell to swimmers and parents (goggles, swim caps, swim diapers…). Saved here so you can pick them — with the price pre-filled — when billing products. SKU is optional and prints on the bill when set. Shared across all branches; price stays editable per sale."), /*#__PURE__*/React.createElement("div", {
+  }, "Items you sell (goggles, swim caps, swim diapers…). Add a photo, SKU (optional) and price. The photo shows in the Shop so staff can confirm the right item. Shared across all branches; price stays editable per sale."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: 'minmax(0,1fr) 140px 130px auto',
+      gridTemplateColumns: '56px minmax(0,1fr) 130px 120px auto',
       gap: 10,
       alignItems: 'end'
     }
-  }, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: box,
+    title: "Add photo"
+  }, img ? /*#__PURE__*/React.createElement("img", {
+    src: img,
+    alt: "",
+    style: {
+      width: '100%',
+      height: '100%',
+      objectFit: 'cover'
+    }
+  }) : /*#__PURE__*/React.createElement("span", null, "＋ Photo"), /*#__PURE__*/React.createElement("input", {
+    type: "file",
+    accept: "image/*",
+    style: {
+      display: 'none'
+    },
+    onChange: e => {
+      onPick(e.target.files?.[0], setImg);
+      e.target.value = '';
+    }
+  })), img && /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    style: {
+      padding: '0 4px',
+      marginTop: 2,
+      color: '#DC2626',
+      fontSize: 10
+    },
+    onClick: () => setImg('')
+  }, "remove")), /*#__PURE__*/React.createElement("div", {
     className: "field",
     style: {
       margin: 0
@@ -19451,11 +19600,13 @@ function ProductsAdminView({
       await addProduct({
         name: name.trim(),
         sku: sku.trim() || null,
-        price
+        price,
+        imageUrl: img || null
       });
       setName('');
       setSku('');
       setPrice('');
+      setImg('');
     }
   }, "+ Add Product"))), /*#__PURE__*/React.createElement("div", {
     className: "card",
@@ -19471,28 +19622,67 @@ function ProductsAdminView({
     }
   }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
     style: {
-      width: '42%'
+      width: 56
     }
-  }, "Product"), /*#__PURE__*/React.createElement("th", {
+  }), /*#__PURE__*/React.createElement("th", null, "Product"), /*#__PURE__*/React.createElement("th", {
     style: {
-      width: 130
+      width: 120
     }
   }, "SKU"), /*#__PURE__*/React.createElement("th", {
     style: {
-      width: 130,
+      width: 120,
       textAlign: 'right'
     }
-  }, "Default price"), /*#__PURE__*/React.createElement("th", {
+  }, "Price"), /*#__PURE__*/React.createElement("th", {
     style: {
       width: 180,
       textAlign: 'right'
     }
   }, "Actions"))), /*#__PURE__*/React.createElement("tbody", null, (products || []).length === 0 && /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
-    colSpan: 4,
+    colSpan: 5,
     className: "empty"
   }, "No products yet. Add one above.")), (products || []).map(p => editingId === p.id ? /*#__PURE__*/React.createElement("tr", {
     key: p.id
-  }, /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("input", {
+  }, /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("label", {
+    style: {
+      ...box,
+      width: 44,
+      height: 44
+    },
+    title: "Change photo"
+  }, editForm.image ? /*#__PURE__*/React.createElement("img", {
+    src: editForm.image,
+    alt: "",
+    style: {
+      width: '100%',
+      height: '100%',
+      objectFit: 'cover'
+    }
+  }) : /*#__PURE__*/React.createElement("span", null, "＋"), /*#__PURE__*/React.createElement("input", {
+    type: "file",
+    accept: "image/*",
+    style: {
+      display: 'none'
+    },
+    onChange: e => {
+      onPick(e.target.files?.[0], v => setEditForm(f => ({
+        ...f,
+        image: v
+      })));
+      e.target.value = '';
+    }
+  })), editForm.image && /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    style: {
+      padding: '0 4px',
+      color: '#DC2626',
+      fontSize: 10
+    },
+    onClick: () => setEditForm(f => ({
+      ...f,
+      image: ''
+    }))
+  }, "×")), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("input", {
     className: "input",
     value: editForm.name,
     onChange: e => setEditForm({
@@ -19534,7 +19724,25 @@ function ProductsAdminView({
     onClick: () => setEditingId(null)
   }, "Cancel"))) : /*#__PURE__*/React.createElement("tr", {
     key: p.id
-  }, /*#__PURE__*/React.createElement("td", {
+  }, /*#__PURE__*/React.createElement("td", null, p.image_url ? /*#__PURE__*/React.createElement("img", {
+    src: p.image_url,
+    alt: "",
+    style: {
+      width: 44,
+      height: 44,
+      borderRadius: 8,
+      objectFit: 'cover',
+      border: '1px solid var(--border)'
+    }
+  }) : /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...box,
+      width: 44,
+      height: 44,
+      cursor: 'default',
+      border: '1px solid var(--border)'
+    }
+  }, "—")), /*#__PURE__*/React.createElement("td", {
     style: {
       fontWeight: 600
     }
