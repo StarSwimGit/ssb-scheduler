@@ -19580,6 +19580,146 @@ function ShopReturns({
 }
 
 // Settings › Products — product catalogue (photo, name, SKU, description, price).
+// Stable, top-level edit card (defining it inside ProductsAdminView caused the
+// inputs to remount and lose focus on every keystroke).
+function ProductEditCard({
+  vals,
+  setVals,
+  onSave,
+  onCancel,
+  saveLabel
+}) {
+  const upBox = {
+    width: '100%',
+    height: 120,
+    borderRadius: 10,
+    border: '1px dashed var(--border)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    background: 'var(--surface-2)',
+    cursor: 'pointer',
+    fontSize: 12,
+    color: 'var(--text-3)'
+  };
+  async function onPick(file) {
+    if (!file) return;
+    try {
+      const t = await fileToThumbnail(file);
+      setVals({
+        ...vals,
+        image: t
+      });
+    } catch (_) {
+      alert('Could not read that image.');
+    }
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      padding: 12,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: upBox,
+    title: "Add / change photo"
+  }, vals.image ? /*#__PURE__*/React.createElement("img", {
+    src: vals.image,
+    alt: "",
+    style: {
+      width: '100%',
+      height: '100%',
+      objectFit: 'cover'
+    }
+  }) : /*#__PURE__*/React.createElement("span", null, "＋ Add photo"), /*#__PURE__*/React.createElement("input", {
+    type: "file",
+    accept: "image/*",
+    style: {
+      display: 'none'
+    },
+    onChange: e => {
+      onPick(e.target.files?.[0]);
+      e.target.value = '';
+    }
+  })), vals.image && /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    style: {
+      alignSelf: 'flex-start',
+      color: '#DC2626',
+      padding: '0 4px',
+      fontSize: 11
+    },
+    onClick: () => setVals({
+      ...vals,
+      image: ''
+    })
+  }, "remove photo"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    placeholder: "Product name",
+    value: vals.name,
+    onChange: e => setVals({
+      ...vals,
+      name: e.target.value
+    })
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    placeholder: "SKU (optional)",
+    value: vals.sku,
+    onChange: e => setVals({
+      ...vals,
+      sku: e.target.value
+    }),
+    style: {
+      flex: 1
+    }
+  }), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "number",
+    min: "0",
+    step: "0.01",
+    placeholder: "Price RM",
+    value: vals.price,
+    onChange: e => setVals({
+      ...vals,
+      price: e.target.value
+    }),
+    style: {
+      width: 110
+    }
+  })), /*#__PURE__*/React.createElement("textarea", {
+    className: "textarea",
+    style: {
+      minHeight: 60
+    },
+    placeholder: "Description (optional)",
+    value: vals.description,
+    onChange: e => setVals({
+      ...vals,
+      description: e.target.value
+    })
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      justifyContent: 'flex-end'
+    }
+  }, onCancel && /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: onCancel
+  }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary small",
+    disabled: !vals.name.trim(),
+    onClick: onSave
+  }, saveLabel)));
+}
 function ProductsAdminView({
   products,
   addProduct,
@@ -19596,15 +19736,6 @@ function ProductsAdminView({
   const [form, setForm] = useState(blank);
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState(blank);
-  async function onPick(file, apply) {
-    if (!file) return;
-    try {
-      const t = await fileToThumbnail(file);
-      apply(t);
-    } catch (_) {
-      alert('Could not read that image.');
-    }
-  }
   function startEdit(p) {
     setEditingId(p.id);
     setEditForm({
@@ -19637,135 +19768,6 @@ function ProductsAdminView({
     });
     setForm(blank);
   }
-  const upBox = {
-    width: '100%',
-    height: 120,
-    borderRadius: 10,
-    border: '1px dashed var(--border)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-    background: 'var(--surface-2)',
-    cursor: 'pointer',
-    fontSize: 12,
-    color: 'var(--text-3)'
-  };
-  function EditCard({
-    vals,
-    setVals,
-    onSave,
-    onCancel,
-    saveLabel
-  }) {
-    return /*#__PURE__*/React.createElement("div", {
-      className: "card",
-      style: {
-        padding: 12,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 8
-      }
-    }, /*#__PURE__*/React.createElement("label", {
-      style: upBox,
-      title: "Add / change photo"
-    }, vals.image ? /*#__PURE__*/React.createElement("img", {
-      src: vals.image,
-      alt: "",
-      style: {
-        width: '100%',
-        height: '100%',
-        objectFit: 'cover'
-      }
-    }) : /*#__PURE__*/React.createElement("span", null, "＋ Add photo"), /*#__PURE__*/React.createElement("input", {
-      type: "file",
-      accept: "image/*",
-      style: {
-        display: 'none'
-      },
-      onChange: e => {
-        onPick(e.target.files?.[0], v => setVals({
-          ...vals,
-          image: v
-        }));
-        e.target.value = '';
-      }
-    })), vals.image && /*#__PURE__*/React.createElement("button", {
-      className: "btn btn-ghost small",
-      style: {
-        alignSelf: 'flex-start',
-        color: '#DC2626',
-        padding: '0 4px',
-        fontSize: 11
-      },
-      onClick: () => setVals({
-        ...vals,
-        image: ''
-      })
-    }, "remove photo"), /*#__PURE__*/React.createElement("input", {
-      className: "input",
-      placeholder: "Product name",
-      value: vals.name,
-      onChange: e => setVals({
-        ...vals,
-        name: e.target.value
-      })
-    }), /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        gap: 8
-      }
-    }, /*#__PURE__*/React.createElement("input", {
-      className: "input",
-      placeholder: "SKU (optional)",
-      value: vals.sku,
-      onChange: e => setVals({
-        ...vals,
-        sku: e.target.value
-      }),
-      style: {
-        flex: 1
-      }
-    }), /*#__PURE__*/React.createElement("input", {
-      className: "input",
-      type: "number",
-      min: "0",
-      step: "0.01",
-      placeholder: "Price RM",
-      value: vals.price,
-      onChange: e => setVals({
-        ...vals,
-        price: e.target.value
-      }),
-      style: {
-        width: 110
-      }
-    })), /*#__PURE__*/React.createElement("textarea", {
-      className: "textarea",
-      style: {
-        minHeight: 60
-      },
-      placeholder: "Description (optional)",
-      value: vals.description,
-      onChange: e => setVals({
-        ...vals,
-        description: e.target.value
-      })
-    }), /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        gap: 8,
-        justifyContent: 'flex-end'
-      }
-    }, onCancel && /*#__PURE__*/React.createElement("button", {
-      className: "btn btn-ghost small",
-      onClick: onCancel
-    }, "Cancel"), /*#__PURE__*/React.createElement("button", {
-      className: "btn btn-primary small",
-      disabled: !vals.name.trim(),
-      onClick: onSave
-    }, saveLabel)));
-  }
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
@@ -19792,7 +19794,7 @@ function ProductsAdminView({
       fontWeight: 700,
       marginBottom: 6
     }
-  }, "＋ New product"), /*#__PURE__*/React.createElement(EditCard, {
+  }, "＋ New product"), /*#__PURE__*/React.createElement(ProductEditCard, {
     vals: form,
     setVals: setForm,
     onSave: addNew,
@@ -19806,7 +19808,7 @@ function ProductsAdminView({
       fontWeight: 700,
       marginBottom: 6
     }
-  }, "Editing"), /*#__PURE__*/React.createElement(EditCard, {
+  }, "Editing"), /*#__PURE__*/React.createElement(ProductEditCard, {
     vals: editForm,
     setVals: setEditForm,
     onSave: saveEdit,
