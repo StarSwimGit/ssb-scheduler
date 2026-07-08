@@ -3606,12 +3606,14 @@ function App() {
   // ── Product catalogue CRUD (Settings › Products) ─────────────────────────
   async function addCatalogProduct({
     name,
+    sku,
     price
   }) {
     try {
       const next = (products || []).length + 1;
       await insertRows('products', {
         name,
+        sku: sku || null,
         price: price === '' || price == null ? null : Number(price),
         sort_order: next,
         is_active: true
@@ -4589,9 +4591,9 @@ function App() {
       setAccountSection('accounts');
     }
   }, "👤 Accounts"), /*#__PURE__*/React.createElement("button", {
-    className: `nav-btn ${view === 'sales' ? 'active' : ''}`,
-    onClick: () => setView('sales')
-  }, "🛒 Sales"), /*#__PURE__*/React.createElement("button", {
+    className: `nav-btn ${view === 'shop' ? 'active' : ''}`,
+    onClick: () => setView('shop')
+  }, "🛒 Shop"), /*#__PURE__*/React.createElement("button", {
     className: `nav-btn ${view === 'enroll' ? 'active' : ''}`,
     onClick: () => setView('enroll')
   }, "🔍 Explore"), /*#__PURE__*/React.createElement("button", {
@@ -4922,11 +4924,14 @@ function App() {
     instructorById: progInstructorById,
     onAdd: openProgrammeCreate,
     onEdit: openProgrammeEdit
-  }), !loading && view === 'sales' && /*#__PURE__*/React.createElement(SalesView, {
+  }), !loading && view === 'shop' && /*#__PURE__*/React.createElement(SalesView, {
     accounts: allAccountsForSale,
     products: products,
     branches: options.branches || [],
     currentBranchId: currentBranchId,
+    invoices: invoices,
+    pmts: pmts,
+    onRefund: refundInvoice,
     onCreateSale: createProductSale,
     onViewInvoices: () => {
       setView('accounts');
@@ -18403,10 +18408,64 @@ function SalesView({
   products,
   branches,
   currentBranchId,
+  invoices,
+  pmts,
+  onRefund,
   onCreateSale,
   onViewInvoices
 }) {
-  const [mode, setMode] = useState('cash'); // 'cash' | 'account'
+  const [tab, setTab] = useState('sale'); // 'sale' | 'returns'
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxWidth: 860,
+      margin: '0 auto'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 20,
+      fontWeight: 800
+    }
+  }, "🛒 Shop"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle"
+  }, "Sell goods as a quick cash sale or billed to an account, and process product returns. Works across every branch.")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 14,
+      display: 'flex',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: `btn small ${tab === 'sale' ? 'btn-primary' : 'btn-ghost'}`,
+    onClick: () => setTab('sale')
+  }, "🛍 New Sale"), /*#__PURE__*/React.createElement("button", {
+    className: `btn small ${tab === 'returns' ? 'btn-primary' : 'btn-ghost'}`,
+    onClick: () => setTab('returns')
+  }, "↩︎ Returns / Refunds")), tab === 'sale' ? /*#__PURE__*/React.createElement(ShopSale, {
+    accounts: accounts,
+    products: products,
+    branches: branches,
+    currentBranchId: currentBranchId,
+    onCreateSale: onCreateSale,
+    onViewInvoices: onViewInvoices
+  }) : /*#__PURE__*/React.createElement(ShopReturns, {
+    invoices: invoices,
+    pmts: pmts,
+    onRefund: onRefund,
+    onViewInvoices: onViewInvoices
+  }));
+}
+function ShopSale({
+  accounts,
+  products,
+  branches,
+  currentBranchId,
+  onCreateSale,
+  onViewInvoices
+}) {
+  const [mode, setMode] = useState('cash');
   const [cashName, setCashName] = useState('');
   const [cashPhone, setCashPhone] = useState('');
   const [accountKey, setAccountKey] = useState('');
@@ -18415,6 +18474,7 @@ function SalesView({
   const activeBranches = (branches || []).filter(b => b.is_active !== false);
   const [branchId, setBranchId] = useState(currentBranchId && currentBranchId !== 'all' ? currentBranchId : '');
   const [cart, setCart] = useState([]);
+  const [pSku, setPSku] = useState('');
   const [pDesc, setPDesc] = useState('');
   const [pQty, setPQty] = useState(1);
   const [pPrice, setPPrice] = useState('');
@@ -18423,12 +18483,22 @@ function SalesView({
   const [date, setDate] = useState(todayStr());
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
   const [result, setResult] = useState(null);
   const total = cart.reduce((s, c) => s + Math.max(1, Number(c.quantity) || 1) * (Number(c.unitPrice) || 0), 0);
   const buyerName = mode === 'cash' ? cashName.trim() || 'Cash Sale' : acct?.name || '';
-  const canGenerate = cart.length > 0 && (mode === 'cash' || !!acct) && !busy;
+  const buyerPhone = mode === 'account' ? acct?.phone || '' : cashPhone.trim();
+  const canGenerate = cart.length > 0 && (mode === 'cash' || !!acct);
   const activeProducts = (products || []).filter(p => p.is_active !== false);
+  const branchName = (activeBranches.find(b => b.id === branchId) || {}).name;
   const filteredAccounts = acctQuery.trim() ? (accounts || []).filter(a => (a.name || '').toLowerCase().includes(acctQuery.trim().toLowerCase())) : accounts || [];
+  function pickProduct(id) {
+    const p = activeProducts.find(x => x.id === id);
+    if (!p) return;
+    setPDesc(p.name);
+    setPSku(p.sku || '');
+    if (p.price != null) setPPrice(String(p.price));
+  }
   function addToCart() {
     const d = pDesc.trim();
     const u = Number(pPrice) || 0;
@@ -18436,31 +18506,35 @@ function SalesView({
     if (!d || !(u > 0)) return;
     setCart([...cart, {
       id: Math.random().toString(36).slice(2),
+      sku: pSku.trim(),
       description: d,
       quantity: q,
       unitPrice: u
     }]);
     setPDesc('');
+    setPSku('');
     setPQty(1);
     setPPrice('');
   }
   function removeFromCart(id) {
     setCart(cart.filter(c => c.id !== id));
   }
-  async function generate() {
-    if (!canGenerate) return;
+  async function confirmSale() {
     setBusy(true);
     try {
-      const lines = cart.map(c => ({
-        description: c.description,
-        amount: Math.max(1, Number(c.quantity) || 1) * (Number(c.unitPrice) || 0),
-        quantity: Math.max(1, Number(c.quantity) || 1),
-        lineType: 'product'
-      }));
+      const lines = cart.map(c => {
+        const q = Math.max(1, Number(c.quantity) || 1);
+        return {
+          description: c.sku ? `${c.description} · SKU: ${c.sku}` : c.description,
+          amount: q * (Number(c.unitPrice) || 0),
+          quantity: q,
+          lineType: 'product'
+        };
+      });
       const res = await onCreateSale({
         buyerName,
         buyerEmail: mode === 'account' ? acct?.email || null : null,
-        buyerPhone: mode === 'account' ? acct?.phone || null : cashPhone.trim() || null,
+        buyerPhone: buyerPhone || null,
         branchId: branchId || null,
         lines,
         paid: paidNow,
@@ -18469,6 +18543,10 @@ function SalesView({
         notes: notes.trim() || null
       });
       setResult(res);
+      setShowPreview(false);
+      if (res && res.payment) {
+        setTimeout(() => printReceipt(res.payment, res.invoice), 250);
+      }
     } catch (e) {
       alert(e?.message || 'Failed to create sale');
     } finally {
@@ -18477,6 +18555,7 @@ function SalesView({
   }
   function reset() {
     setResult(null);
+    setShowPreview(false);
     setCart([]);
     setCashName('');
     setCashPhone('');
@@ -18489,16 +18568,13 @@ function SalesView({
     const inv = result.invoice || {};
     const pay = result.payment;
     return /*#__PURE__*/React.createElement("div", {
-      style: {
-        maxWidth: 640,
-        margin: '0 auto'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
       className: "card",
       style: {
         textAlign: 'center',
         borderColor: '#86EFAC',
-        background: '#F0FDF4'
+        background: '#F0FDF4',
+        maxWidth: 640,
+        margin: '0 auto'
       }
     }, /*#__PURE__*/React.createElement("div", {
       style: {
@@ -18569,24 +18645,185 @@ function SalesView({
     }, "🧾 View in Invoices"), /*#__PURE__*/React.createElement("button", {
       className: "btn btn-ghost",
       onClick: reset
-    }, "+ New sale"))));
+    }, "+ New sale")));
+  }
+  if (showPreview) {
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        maxWidth: 640,
+        margin: '0 auto'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "card",
+      style: {
+        padding: '22px 26px'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: 'center',
+        borderBottom: '2px solid var(--border)',
+        paddingBottom: 12,
+        marginBottom: 14
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 18,
+        fontWeight: 800
+      }
+    }, "Star Swim Sdn Bhd"), /*#__PURE__*/React.createElement("div", {
+      className: "small subtle"
+    }, "Product Sale — Preview", branchName ? ` · ${branchName}` : '')), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        fontSize: 13,
+        marginBottom: 12,
+        flexWrap: 'wrap',
+        gap: 8
+      }
+    }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+      className: "small subtle"
+    }, "Bill to"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: 700
+      }
+    }, buyerName), buyerPhone && /*#__PURE__*/React.createElement("div", {
+      className: "small subtle"
+    }, buyerPhone), mode === 'account' && acct?.email && /*#__PURE__*/React.createElement("div", {
+      className: "small subtle"
+    }, acct.email)), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: 'right'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "small subtle"
+    }, "Date"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: 600
+      }
+    }, date), /*#__PURE__*/React.createElement("div", {
+      className: "small subtle",
+      style: {
+        marginTop: 4
+      }
+    }, paidNow ? `Payment: ${methodLabel(method)}` : 'Unpaid invoice'))), /*#__PURE__*/React.createElement("table", {
+      style: {
+        width: '100%',
+        fontSize: 13,
+        borderCollapse: 'collapse'
+      }
+    }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", {
+      style: {
+        borderBottom: '1px solid var(--border)',
+        textAlign: 'left'
+      }
+    }, /*#__PURE__*/React.createElement("th", {
+      style: {
+        padding: '6px 4px'
+      }
+    }, "Item"), /*#__PURE__*/React.createElement("th", {
+      style: {
+        padding: '6px 4px'
+      }
+    }, "SKU"), /*#__PURE__*/React.createElement("th", {
+      style: {
+        padding: '6px 4px',
+        textAlign: 'center'
+      }
+    }, "Qty"), /*#__PURE__*/React.createElement("th", {
+      style: {
+        padding: '6px 4px',
+        textAlign: 'right'
+      }
+    }, "Unit"), /*#__PURE__*/React.createElement("th", {
+      style: {
+        padding: '6px 4px',
+        textAlign: 'right'
+      }
+    }, "Amount"))), /*#__PURE__*/React.createElement("tbody", null, cart.map(c => {
+      const q = Math.max(1, Number(c.quantity) || 1);
+      const u = Number(c.unitPrice) || 0;
+      return /*#__PURE__*/React.createElement("tr", {
+        key: c.id,
+        style: {
+          borderBottom: '1px solid #F1F5F9'
+        }
+      }, /*#__PURE__*/React.createElement("td", {
+        style: {
+          padding: '6px 4px',
+          fontWeight: 600
+        }
+      }, c.description), /*#__PURE__*/React.createElement("td", {
+        style: {
+          padding: '6px 4px',
+          fontFamily: 'monospace',
+          fontSize: 11
+        }
+      }, c.sku || '—'), /*#__PURE__*/React.createElement("td", {
+        style: {
+          padding: '6px 4px',
+          textAlign: 'center'
+        }
+      }, q), /*#__PURE__*/React.createElement("td", {
+        style: {
+          padding: '6px 4px',
+          textAlign: 'right'
+        }
+      }, "RM", u.toFixed(2)), /*#__PURE__*/React.createElement("td", {
+        style: {
+          padding: '6px 4px',
+          textAlign: 'right',
+          fontWeight: 700
+        }
+      }, "RM", (q * u).toFixed(2)));
+    })), /*#__PURE__*/React.createElement("tfoot", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
+      colSpan: 4,
+      style: {
+        padding: '10px 4px',
+        textAlign: 'right',
+        fontWeight: 800
+      }
+    }, "Total"), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: '10px 4px',
+        textAlign: 'right',
+        fontWeight: 800,
+        fontSize: 15
+      }
+    }, "RM", total.toFixed(2))))), /*#__PURE__*/React.createElement("div", {
+      className: "small subtle",
+      style: {
+        marginTop: 8,
+        textAlign: 'center'
+      }
+    }, "This is a preview — nothing is saved until you confirm.")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 8,
+        justifyContent: 'center',
+        marginTop: 14,
+        flexWrap: 'wrap'
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost",
+      onClick: () => setShowPreview(false)
+    }, "← Back to edit"), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-primary",
+      onClick: confirmSale,
+      disabled: busy,
+      style: {
+        fontSize: 15,
+        padding: '10px 18px'
+      }
+    }, busy ? 'Processing…' : paidNow ? '✅ Confirm & Print Receipt' : '✅ Confirm & Create Invoice')));
   }
   return /*#__PURE__*/React.createElement("div", {
     style: {
-      maxWidth: 820,
-      margin: '0 auto',
       display: 'flex',
       flexDirection: 'column',
       gap: 14
     }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 20,
-      fontWeight: 800
-    }
-  }, "🛒 Product Sale"), /*#__PURE__*/React.createElement("div", {
-    className: "small subtle"
-  }, "Sell goods (goggles, caps, swim diapers…) as a quick cash sale or billed to an existing account. All accounts across every branch are available here.")), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", {
     className: "card"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -18629,8 +18866,7 @@ function SalesView({
   }, /*#__PURE__*/React.createElement("label", null, "Phone (optional)"), /*#__PURE__*/React.createElement("input", {
     className: "input",
     value: cashPhone,
-    onChange: e => setCashPhone(e.target.value),
-    placeholder: ""
+    onChange: e => setCashPhone(e.target.value)
   }))) : /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "field",
     style: {
@@ -18708,7 +18944,13 @@ function SalesView({
         flex: 1,
         fontWeight: 600
       }
-    }, c.description), /*#__PURE__*/React.createElement("span", {
+    }, c.description, c.sku ? /*#__PURE__*/React.createElement("span", {
+      className: "small subtle",
+      style: {
+        fontFamily: 'monospace',
+        marginLeft: 6
+      }
+    }, "[", c.sku, "]") : null), /*#__PURE__*/React.createElement("span", {
       className: "small subtle"
     }, q, " × RM", u.toFixed(2)), /*#__PURE__*/React.createElement("span", {
       style: {
@@ -18732,22 +18974,16 @@ function SalesView({
   }, /*#__PURE__*/React.createElement("select", {
     className: "select",
     value: "",
-    onChange: e => {
-      const p = activeProducts.find(x => x.id === e.target.value);
-      if (p) {
-        setPDesc(p.name);
-        if (p.price != null) setPPrice(String(p.price));
-      }
-    }
+    onChange: e => pickProduct(e.target.value)
   }, /*#__PURE__*/React.createElement("option", {
     value: ""
   }, "Pick from catalogue…"), activeProducts.map(p => /*#__PURE__*/React.createElement("option", {
     key: p.id,
     value: p.id
-  }, p.name, p.price != null ? ` — RM${Number(p.price).toFixed(2)}` : '')))), /*#__PURE__*/React.createElement("div", {
+  }, p.name, p.sku ? ` [${p.sku}]` : '', p.price != null ? ` — RM${Number(p.price).toFixed(2)}` : '')))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: '1fr 60px 100px auto',
+      gridTemplateColumns: '1fr 110px 56px 92px auto',
       gap: 8,
       alignItems: 'end'
     }
@@ -18764,6 +19000,16 @@ function SalesView({
     onKeyDown: e => {
       if (e.key === 'Enter') addToCart();
     }
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "SKU"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: pSku,
+    onChange: e => setPSku(e.target.value),
+    placeholder: "optional"
   })), /*#__PURE__*/React.createElement("div", {
     className: "field",
     style: {
@@ -18872,8 +19118,7 @@ function SalesView({
   }, /*#__PURE__*/React.createElement("label", null, "Note (optional)"), /*#__PURE__*/React.createElement("input", {
     className: "input",
     value: notes,
-    onChange: e => setNotes(e.target.value),
-    placeholder: ""
+    onChange: e => setNotes(e.target.value)
   }))) : /*#__PURE__*/React.createElement("div", {
     className: "small subtle"
   }, "An unpaid invoice will be created — record payment later from Accounts → Invoices."), /*#__PURE__*/React.createElement("div", {
@@ -18884,16 +19129,227 @@ function SalesView({
     }
   }, /*#__PURE__*/React.createElement("button", {
     className: "btn btn-primary",
-    onClick: generate,
+    onClick: () => setShowPreview(true),
     disabled: !canGenerate,
     style: {
       fontSize: 15,
       padding: '10px 18px'
     }
-  }, busy ? 'Processing…' : paidNow ? `💵 Charge & issue receipt — RM${total.toFixed(2)}` : `🧾 Create invoice — RM${total.toFixed(2)}`))));
+  }, "👁 Preview Bill — RM", total.toFixed(2)))));
+}
+function ShopReturns({
+  invoices,
+  pmts,
+  onRefund,
+  onViewInvoices
+}) {
+  const [q, setQ] = useState('');
+  const [selId, setSelId] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(null);
+  const refundable = (invoices || []).filter(i => Number(i.amount_paid) > 0 && i.status !== 'void' && i.status !== 'refunded');
+  const term = q.trim().toLowerCase();
+  const matches = term ? refundable.filter(i => (i.invoice_number || '').toLowerCase().includes(term) || (i.account_name || '').toLowerCase().includes(term) || (pmts || []).some(p => p.invoice_id === i.id && (p.receipt_number || '').toLowerCase().includes(term))) : refundable.slice(0, 8);
+  const sel = (invoices || []).find(i => i.id === selId) || null;
+  const selPaid = sel ? Number(sel.amount_paid) || 0 : 0;
+  async function process() {
+    if (!sel) return;
+    setBusy(true);
+    try {
+      await onRefund({
+        invoiceId: sel.id,
+        amount: selPaid,
+        refundDate: todayStr(),
+        method: 'cash',
+        reference: null,
+        reason: reason.trim() || 'Product return'
+      });
+      setDone({
+        invoiceNumber: sel.invoice_number,
+        amount: selPaid
+      });
+      setSelId('');
+      setReason('');
+    } catch (e) {
+      alert(e?.message || 'Failed to process return');
+    } finally {
+      setBusy(false);
+    }
+  }
+  if (done) {
+    return /*#__PURE__*/React.createElement("div", {
+      className: "card",
+      style: {
+        textAlign: 'center',
+        borderColor: '#FCA5A5',
+        background: '#FEF2F2',
+        maxWidth: 560,
+        margin: '0 auto'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 32,
+        marginBottom: 6
+      }
+    }, "↩︎"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 18,
+        fontWeight: 800,
+        marginBottom: 4
+      }
+    }, "Return processed"), /*#__PURE__*/React.createElement("div", {
+      className: "small subtle",
+      style: {
+        marginBottom: 12
+      }
+    }, "Refunded ", /*#__PURE__*/React.createElement("strong", null, "RM", done.amount.toFixed(2)), " on invoice ", /*#__PURE__*/React.createElement("strong", {
+      style: {
+        fontFamily: 'monospace'
+      }
+    }, done.invoiceNumber), ". It's now marked ", /*#__PURE__*/React.createElement("strong", null, "Refunded"), "."), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 8,
+        justifyContent: 'center'
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost",
+      onClick: () => onViewInvoices && onViewInvoices()
+    }, "🧾 View in Invoices"), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-primary",
+      onClick: () => setDone(null)
+    }, "↩︎ New return")));
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 800,
+      marginBottom: 4
+    }
+  }, "Find the sale to return"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginBottom: 10
+    }
+  }, "Search by receipt number, invoice number, or buyer name. Processing a return records a refund receipt (money back) and marks the invoice Refunded."), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: q,
+    onChange: e => {
+      setQ(e.target.value);
+      setSelId('');
+    },
+    placeholder: "e.g. RCT-000123, INV-000045, or a name…"
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 10,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 6,
+      maxHeight: 280,
+      overflowY: 'auto'
+    }
+  }, matches.length === 0 && /*#__PURE__*/React.createElement("div", {
+    className: "empty",
+    style: {
+      padding: 16
+    }
+  }, "No matching paid sales found."), matches.map(i => {
+    const rcpt = (pmts || []).find(p => p.invoice_id === i.id && Number(p.amount) > 0);
+    return /*#__PURE__*/React.createElement("div", {
+      key: i.id,
+      onClick: () => setSelId(i.id),
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '8px 10px',
+        borderRadius: 8,
+        cursor: 'pointer',
+        border: `1px solid ${selId === i.id ? 'var(--primary)' : 'var(--border)'}`,
+        background: selId === i.id ? '#EFF6FF' : 'var(--surface)'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1,
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: 700
+      }
+    }, i.account_name || '—'), /*#__PURE__*/React.createElement("div", {
+      className: "small subtle",
+      style: {
+        fontFamily: 'monospace'
+      }
+    }, i.invoice_number, rcpt ? ` · ${rcpt.receipt_number}` : '', " · ", i.issue_date || '')), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: 700,
+        whiteSpace: 'nowrap'
+      }
+    }, "RM", (Number(i.amount_paid) || 0).toFixed(2)));
+  }))), sel && /*#__PURE__*/React.createElement("div", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 800,
+      marginBottom: 8
+    }
+  }, "Process return — ", sel.account_name), /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'var(--surface-2)',
+      border: '1px solid var(--border)',
+      borderRadius: 8,
+      padding: '10px 12px',
+      marginBottom: 10,
+      display: 'flex',
+      justifyContent: 'space-between'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "small subtle"
+  }, "Refund amount (full)"), /*#__PURE__*/React.createElement("strong", {
+    style: {
+      fontSize: 16,
+      color: '#DC2626'
+    }
+  }, "RM", selPaid.toFixed(2))), /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", null, "Reason (optional)"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: reason,
+    onChange: e => setReason(e.target.value),
+    placeholder: "e.g. Wrong size, faulty goggles"
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'flex-end',
+      gap: 8,
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => setSelId('')
+  }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-danger",
+    onClick: process,
+    disabled: busy
+  }, busy ? 'Processing…' : `↩︎ Refund RM${selPaid.toFixed(2)}`)), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginTop: 8
+    }
+  }, "Tip: for a partial return (some items kept), open the invoice under Accounts → Invoices and use its Refund action with a custom amount.")));
 }
 
-// Settings › Products — shared product / goods catalogue (name + price).
+// Settings › Products — shared product / goods catalogue (name + price + optional SKU).
 function ProductsAdminView({
   products,
   addProduct,
@@ -18901,16 +19357,19 @@ function ProductsAdminView({
   deleteProduct
 }) {
   const [name, setName] = useState('');
+  const [sku, setSku] = useState('');
   const [price, setPrice] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({
     name: '',
+    sku: '',
     price: ''
   });
   function startEdit(p) {
     setEditingId(p.id);
     setEditForm({
       name: p.name || '',
+      sku: p.sku || '',
       price: p.price != null ? String(p.price) : ''
     });
   }
@@ -18918,6 +19377,7 @@ function ProductsAdminView({
     if (!editForm.name.trim()) return;
     await updateProduct(editingId, {
       name: editForm.name.trim(),
+      sku: editForm.sku.trim() || null,
       price: editForm.price === '' ? null : Number(editForm.price)
     });
     setEditingId(null);
@@ -18938,10 +19398,10 @@ function ProductsAdminView({
     style: {
       marginBottom: 14
     }
-  }, "Items you sell to swimmers and parents (goggles, swim caps, swim diapers…). Saved here so you can pick them — with the price pre-filled — when billing products on an invoice. Shared across all branches; the price stays editable per sale."), /*#__PURE__*/React.createElement("div", {
+  }, "Items you sell to swimmers and parents (goggles, swim caps, swim diapers…). Saved here so you can pick them — with the price pre-filled — when billing products. SKU is optional and prints on the bill when set. Shared across all branches; price stays editable per sale."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: 'minmax(0,1fr) 150px auto',
+      gridTemplateColumns: 'minmax(0,1fr) 140px 130px auto',
       gap: 10,
       alignItems: 'end'
     }
@@ -18955,6 +19415,18 @@ function ProductsAdminView({
     placeholder: "e.g. Swim goggles",
     value: name,
     onChange: e => setName(e.target.value)
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "SKU ", /*#__PURE__*/React.createElement("span", {
+    className: "subtle"
+  }, "(optional)")), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    placeholder: "e.g. SG-001",
+    value: sku,
+    onChange: e => setSku(e.target.value)
   })), /*#__PURE__*/React.createElement("div", {
     className: "field",
     style: {
@@ -18978,9 +19450,11 @@ function ProductsAdminView({
       if (!name.trim()) return;
       await addProduct({
         name: name.trim(),
+        sku: sku.trim() || null,
         price
       });
       setName('');
+      setSku('');
       setPrice('');
     }
   }, "+ Add Product"))), /*#__PURE__*/React.createElement("div", {
@@ -18997,11 +19471,15 @@ function ProductsAdminView({
     }
   }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
     style: {
-      width: '55%'
+      width: '42%'
     }
   }, "Product"), /*#__PURE__*/React.createElement("th", {
     style: {
-      width: 140,
+      width: 130
+    }
+  }, "SKU"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 130,
       textAlign: 'right'
     }
   }, "Default price"), /*#__PURE__*/React.createElement("th", {
@@ -19010,7 +19488,7 @@ function ProductsAdminView({
       textAlign: 'right'
     }
   }, "Actions"))), /*#__PURE__*/React.createElement("tbody", null, (products || []).length === 0 && /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
-    colSpan: 3,
+    colSpan: 4,
     className: "empty"
   }, "No products yet. Add one above.")), (products || []).map(p => editingId === p.id ? /*#__PURE__*/React.createElement("tr", {
     key: p.id
@@ -19020,6 +19498,13 @@ function ProductsAdminView({
     onChange: e => setEditForm({
       ...editForm,
       name: e.target.value
+    })
+  })), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: editForm.sku,
+    onChange: e => setEditForm({
+      ...editForm,
+      sku: e.target.value
     })
   })), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("input", {
     className: "input",
@@ -19054,6 +19539,13 @@ function ProductsAdminView({
       fontWeight: 600
     }
   }, p.name), /*#__PURE__*/React.createElement("td", {
+    style: {
+      fontFamily: 'monospace',
+      fontSize: 12
+    }
+  }, p.sku || /*#__PURE__*/React.createElement("span", {
+    className: "subtle"
+  }, "—")), /*#__PURE__*/React.createElement("td", {
     style: {
       textAlign: 'right'
     }
