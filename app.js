@@ -10132,37 +10132,38 @@ function ShopReturns({ invoices, pmts, onRefund, onViewInvoices }){
 
 
 // Settings › Products — product catalogue (photo, name, SKU, description, price).
+// Stable, top-level edit card (defining it inside ProductsAdminView caused the
+// inputs to remount and lose focus on every keystroke).
+function ProductEditCard({ vals, setVals, onSave, onCancel, saveLabel }){
+  const upBox={width:'100%',height:120,borderRadius:10,border:'1px dashed var(--border)',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',background:'var(--surface-2)',cursor:'pointer',fontSize:12,color:'var(--text-3)'};
+  async function onPick(file){ if(!file) return; try{ const t=await fileToThumbnail(file); setVals({...vals,image:t}); }catch(_){ alert('Could not read that image.'); } }
+  return <div className="card" style={{padding:12,display:'flex',flexDirection:'column',gap:8}}>
+    <label style={upBox} title="Add / change photo">
+      {vals.image ? <img src={vals.image} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : <span>＋ Add photo</span>}
+      <input type="file" accept="image/*" style={{display:'none'}} onChange={e=>{ onPick(e.target.files?.[0]); e.target.value=''; }} />
+    </label>
+    {vals.image && <button className="btn btn-ghost small" style={{alignSelf:'flex-start',color:'#DC2626',padding:'0 4px',fontSize:11}} onClick={()=>setVals({...vals,image:''})}>remove photo</button>}
+    <input className="input" placeholder="Product name" value={vals.name} onChange={e=>setVals({...vals,name:e.target.value})} />
+    <div style={{display:'flex',gap:8}}>
+      <input className="input" placeholder="SKU (optional)" value={vals.sku} onChange={e=>setVals({...vals,sku:e.target.value})} style={{flex:1}} />
+      <input className="input" type="number" min="0" step="0.01" placeholder="Price RM" value={vals.price} onChange={e=>setVals({...vals,price:e.target.value})} style={{width:110}} />
+    </div>
+    <textarea className="textarea" style={{minHeight:60}} placeholder="Description (optional)" value={vals.description} onChange={e=>setVals({...vals,description:e.target.value})} />
+    <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+      {onCancel && <button className="btn btn-ghost small" onClick={onCancel}>Cancel</button>}
+      <button className="btn btn-primary small" disabled={!vals.name.trim()} onClick={onSave}>{saveLabel}</button>
+    </div>
+  </div>;
+}
+
 function ProductsAdminView({ products, addProduct, updateProduct, deleteProduct }){
   const blank={name:'',sku:'',price:'',image:'',description:''};
   const [form,setForm]=useState(blank);
   const [editingId,setEditingId]=useState(null);
   const [editForm,setEditForm]=useState(blank);
-  async function onPick(file, apply){ if(!file) return; try{ const t=await fileToThumbnail(file); apply(t); }catch(_){ alert('Could not read that image.'); } }
   function startEdit(p){ setEditingId(p.id); setEditForm({name:p.name||'',sku:p.sku||'',price:p.price!=null?String(p.price):'',image:p.image_url||'',description:p.description||''}); }
   async function saveEdit(){ if(!editForm.name.trim()) return; await updateProduct(editingId,{ name:editForm.name.trim(), sku:editForm.sku.trim()||null, price:(editForm.price===''?null:Number(editForm.price)), image_url:editForm.image||null, description:editForm.description.trim()||null }); setEditingId(null); }
   async function addNew(){ if(!form.name.trim()) return; await addProduct({ name:form.name.trim(), sku:form.sku.trim()||null, price:form.price, imageUrl:form.image||null, description:form.description.trim()||null }); setForm(blank); }
-
-  const upBox={width:'100%',height:120,borderRadius:10,border:'1px dashed var(--border)',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',background:'var(--surface-2)',cursor:'pointer',fontSize:12,color:'var(--text-3)'};
-
-  function EditCard({ vals, setVals, onSave, onCancel, saveLabel }){
-    return <div className="card" style={{padding:12,display:'flex',flexDirection:'column',gap:8}}>
-      <label style={upBox} title="Add / change photo">
-        {vals.image ? <img src={vals.image} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : <span>＋ Add photo</span>}
-        <input type="file" accept="image/*" style={{display:'none'}} onChange={e=>{ onPick(e.target.files?.[0], v=>setVals({...vals,image:v})); e.target.value=''; }} />
-      </label>
-      {vals.image && <button className="btn btn-ghost small" style={{alignSelf:'flex-start',color:'#DC2626',padding:'0 4px',fontSize:11}} onClick={()=>setVals({...vals,image:''})}>remove photo</button>}
-      <input className="input" placeholder="Product name" value={vals.name} onChange={e=>setVals({...vals,name:e.target.value})} />
-      <div style={{display:'flex',gap:8}}>
-        <input className="input" placeholder="SKU (optional)" value={vals.sku} onChange={e=>setVals({...vals,sku:e.target.value})} style={{flex:1}} />
-        <input className="input" type="number" min="0" step="0.01" placeholder="Price RM" value={vals.price} onChange={e=>setVals({...vals,price:e.target.value})} style={{width:110}} />
-      </div>
-      <textarea className="textarea" style={{minHeight:60}} placeholder="Description (optional)" value={vals.description} onChange={e=>setVals({...vals,description:e.target.value})} />
-      <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
-        {onCancel && <button className="btn btn-ghost small" onClick={onCancel}>Cancel</button>}
-        <button className="btn btn-primary small" disabled={!vals.name.trim()} onClick={onSave}>{saveLabel}</button>
-      </div>
-    </div>;
-  }
 
   return <>
     <div className="card" style={{marginBottom:14}}>
@@ -10174,12 +10175,12 @@ function ProductsAdminView({ products, addProduct, updateProduct, deleteProduct 
       {/* Add-new card */}
       <div>
         <div className="small subtle" style={{fontWeight:700,marginBottom:6}}>＋ New product</div>
-        <EditCard vals={form} setVals={setForm} onSave={addNew} onCancel={null} saveLabel="Add Product" />
+        <ProductEditCard vals={form} setVals={setForm} onSave={addNew} onCancel={null} saveLabel="Add Product" />
       </div>
 
       {/* Existing products */}
       {(products||[]).map(p => editingId===p.id
-        ? <div key={p.id}><div className="small subtle" style={{fontWeight:700,marginBottom:6}}>Editing</div><EditCard vals={editForm} setVals={setEditForm} onSave={saveEdit} onCancel={()=>setEditingId(null)} saveLabel="Save" /></div>
+        ? <div key={p.id}><div className="small subtle" style={{fontWeight:700,marginBottom:6}}>Editing</div><ProductEditCard vals={editForm} setVals={setEditForm} onSave={saveEdit} onCancel={()=>setEditingId(null)} saveLabel="Save" /></div>
         : <div key={p.id} className="card" style={{padding:0,overflow:'hidden',display:'flex',flexDirection:'column'}}>
             <div style={{height:130,background:'var(--surface-2)',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}}>
               {p.image_url ? <img src={p.image_url} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : <span className="small subtle">No photo</span>}
