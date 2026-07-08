@@ -2435,10 +2435,10 @@ function App(){
   }
 
   // ── Product catalogue CRUD (Settings › Products) ─────────────────────────
-  async function addCatalogProduct({ name, sku, price, imageUrl }){
+  async function addCatalogProduct({ name, sku, price, imageUrl, description }){
     try{
       const next = (products||[]).length + 1;
-      await insertRows('products', { name, sku: sku||null, price: (price===''||price==null)?null:Number(price), image_url: imageUrl||null, sort_order: next, is_active: true });
+      await insertRows('products', { name, sku: sku||null, price: (price===''||price==null)?null:Number(price), image_url: imageUrl||null, description: description||null, sort_order: next, is_active: true });
       await loadProducts();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to add product'); }
   }
@@ -9820,6 +9820,34 @@ function ProgrammeSessionModal({ modal, setModal, busy, onSave, onDelete, onDupl
 // existing account (all branches, not branch-filtered). Creates an invoice
 // and, if paid now, an immediate receipt.
 // ============================================================================
+// Visual product picker popup for the Shop — cards with photo, title, SKU,
+// description and price.
+function ProductPickerModal({ products, onPick, onClose }){
+  const [q,setQ]=useState('');
+  const term=q.trim().toLowerCase();
+  const list=(products||[]).filter(p=>p.is_active!==false).filter(p=>!term || (p.name||'').toLowerCase().includes(term) || (p.sku||'').toLowerCase().includes(term) || (p.description||'').toLowerCase().includes(term));
+  return <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-card" onClick={e=>e.stopPropagation()} style={{width:'min(780px,96vw)',maxHeight:'88vh',display:'flex',flexDirection:'column'}}>
+      <div style={{padding:'14px 18px',borderBottom:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center',gap:12}}>
+        <div style={{fontWeight:800,fontSize:16}}>Choose a product</div>
+        <button className="btn btn-ghost small" onClick={onClose}>✕</button>
+      </div>
+      <div style={{padding:'10px 18px'}}><input className="input" autoFocus value={q} onChange={e=>setQ(e.target.value)} placeholder="Search name, SKU or description…" /></div>
+      <div style={{padding:'0 18px 18px',overflowY:'auto',display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:12}}>
+        {list.length===0 && <div className="empty" style={{gridColumn:'1/-1',padding:24}}>No products found.</div>}
+        {list.map(p=><button key={p.id} onClick={()=>onPick(p)} style={{textAlign:'left',padding:0,border:'1px solid var(--border)',borderRadius:10,overflow:'hidden',background:'var(--surface)',cursor:'pointer',display:'flex',flexDirection:'column'}}>
+          <div style={{height:118,background:'var(--surface-2)',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}}>{p.image_url?<img src={p.image_url} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} />:<span className="small subtle">No photo</span>}</div>
+          <div style={{padding:'8px 10px',display:'flex',flexDirection:'column',gap:2}}>
+            <div style={{display:'flex',justifyContent:'space-between',gap:6,alignItems:'baseline'}}><span style={{fontWeight:700,fontSize:13}}>{p.name}</span><span style={{fontWeight:800,whiteSpace:'nowrap'}}>{p.price!=null?`RM${Number(p.price).toFixed(2)}`:'—'}</span></div>
+            {p.sku&&<div className="small subtle" style={{fontFamily:'monospace',fontSize:10}}>{p.sku}</div>}
+            {p.description&&<div className="small subtle" style={{fontSize:11,lineHeight:1.35,maxHeight:44,overflow:'hidden'}}>{p.description}</div>}
+          </div>
+        </button>)}
+      </div>
+    </div>
+  </div>;
+}
+
 // Read an image file and return a small compressed JPEG data URL (keeps DB rows
 // light — product thumbnails end up ~10–40 KB).
 function fileToThumbnail(file, maxDim=340, quality=0.72){
@@ -9843,7 +9871,7 @@ function fileToThumbnail(file, maxDim=340, quality=0.72){
 
 function SalesView({ accounts, products, branches, currentBranchId, invoices, pmts, onRefund, onCreateSale, onViewInvoices }){
   const [tab,setTab]=useState('sale'); // 'sale' | 'returns'
-  return <div style={{maxWidth:860,margin:'0 auto'}}>
+  return <div style={{maxWidth:860,margin:'18px auto 0'}}>
     <div style={{marginBottom:12}}>
       <div style={{fontSize:20,fontWeight:800}}>🛒 Shop</div>
       <div className="small subtle">Sell goods as a quick cash sale or billed to an account, and process product returns. Works across every branch.</div>
@@ -9875,6 +9903,7 @@ function ShopSale({ accounts, products, branches, currentBranchId, onCreateSale,
   const [notes,setNotes]=useState('');
   const [busy,setBusy]=useState(false);
   const [showPreview,setShowPreview]=useState(false);
+  const [showPicker,setShowPicker]=useState(false);
   const [result,setResult]=useState(null);
 
   const total=cart.reduce((s,c)=>s+(Math.max(1,Number(c.quantity)||1)*(Number(c.unitPrice)||0)),0);
@@ -9999,12 +10028,10 @@ function ShopSale({ accounts, products, branches, currentBranchId, onCreateSale,
           <button className="btn btn-ghost small" style={{color:'#DC2626',padding:'0 6px'}} onClick={()=>removeFromCart(c.id)} title="Remove">×</button>
         </div>; })}
       </div>}
-      {activeProducts.length>0 && <div style={{marginBottom:8,display:'flex',alignItems:'center',gap:10}}>
-        <select className="select" style={{flex:1}} value="" onChange={e=>pickProduct(e.target.value)}>
-          <option value="">Pick from catalogue…</option>
-          {activeProducts.map(p=><option key={p.id} value={p.id}>{p.name}{p.sku?` [${p.sku}]`:''}{p.price!=null?` — RM${Number(p.price).toFixed(2)}`:''}</option>)}
-        </select>
-        {pImg ? <img src={pImg} alt="" style={{width:44,height:44,borderRadius:8,objectFit:'cover',border:'1px solid var(--border)',flexShrink:0}} title="Selected product photo" /> : null}
+      {activeProducts.length>0 && <div style={{marginBottom:8,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+        <button className="btn btn-ghost" onClick={()=>setShowPicker(true)}>🔍 Browse catalogue ({activeProducts.length})</button>
+        {pImg ? <img src={pImg} alt="" style={{width:40,height:40,borderRadius:8,objectFit:'cover',border:'1px solid var(--border)'}} title="Selected product photo" /> : null}
+        {pDesc ? <span className="small subtle">Selected: <strong>{pDesc}</strong>{pPrice?` · RM${Number(pPrice).toFixed(2)}`:''} — set qty and press Add</span> : null}
       </div>}
       <div style={{display:'grid',gridTemplateColumns:'1fr 110px 56px 92px auto',gap:8,alignItems:'end'}}>
         <div className="field" style={{margin:0}}><label>Item</label><input className="input" value={pDesc} onChange={e=>setPDesc(e.target.value)} placeholder="e.g. Swim goggles" onKeyDown={e=>{if(e.key==='Enter')addToCart();}} /></div>
@@ -10036,6 +10063,7 @@ function ShopSale({ accounts, products, branches, currentBranchId, onCreateSale,
         <button className="btn btn-primary" onClick={()=>setShowPreview(true)} disabled={!canGenerate} style={{fontSize:15,padding:'10px 18px'}}>👁 Preview Bill — RM{total.toFixed(2)}</button>
       </div>
     </div>
+    {showPicker && <ProductPickerModal products={products} onPick={p=>{ pickProduct(p.id); setShowPicker(false); }} onClose={()=>setShowPicker(false)} />}
   </div>;
 }
 
@@ -10103,68 +10131,73 @@ function ShopReturns({ invoices, pmts, onRefund, onViewInvoices }){
 }
 
 
-// Settings › Products — shared product / goods catalogue (name + price + optional SKU + photo).
+// Settings › Products — product catalogue (photo, name, SKU, description, price).
 function ProductsAdminView({ products, addProduct, updateProduct, deleteProduct }){
-  const [name,setName]=useState('');
-  const [sku,setSku]=useState('');
-  const [price,setPrice]=useState('');
-  const [img,setImg]=useState('');
+  const blank={name:'',sku:'',price:'',image:'',description:''};
+  const [form,setForm]=useState(blank);
   const [editingId,setEditingId]=useState(null);
-  const [editForm,setEditForm]=useState({name:'',sku:'',price:'',image:''});
-  function startEdit(p){ setEditingId(p.id); setEditForm({name:p.name||'',sku:p.sku||'',price:p.price!=null?String(p.price):'',image:p.image_url||''}); }
-  async function saveEdit(){ if(!editForm.name.trim()) return; await updateProduct(editingId,{ name:editForm.name.trim(), sku:editForm.sku.trim()||null, price:(editForm.price===''?null:Number(editForm.price)), image_url:editForm.image||null }); setEditingId(null); }
-  async function onPick(file, setter){ if(!file) return; try{ const t=await fileToThumbnail(file); setter(t); }catch(_){ alert('Could not read that image.'); } }
-  const box={width:56,height:56,borderRadius:8,border:'1px dashed var(--border)',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',background:'var(--surface-2)',cursor:'pointer',flexShrink:0,fontSize:10,color:'var(--text-3)',textAlign:'center'};
+  const [editForm,setEditForm]=useState(blank);
+  async function onPick(file, apply){ if(!file) return; try{ const t=await fileToThumbnail(file); apply(t); }catch(_){ alert('Could not read that image.'); } }
+  function startEdit(p){ setEditingId(p.id); setEditForm({name:p.name||'',sku:p.sku||'',price:p.price!=null?String(p.price):'',image:p.image_url||'',description:p.description||''}); }
+  async function saveEdit(){ if(!editForm.name.trim()) return; await updateProduct(editingId,{ name:editForm.name.trim(), sku:editForm.sku.trim()||null, price:(editForm.price===''?null:Number(editForm.price)), image_url:editForm.image||null, description:editForm.description.trim()||null }); setEditingId(null); }
+  async function addNew(){ if(!form.name.trim()) return; await addProduct({ name:form.name.trim(), sku:form.sku.trim()||null, price:form.price, imageUrl:form.image||null, description:form.description.trim()||null }); setForm(blank); }
+
+  const upBox={width:'100%',height:120,borderRadius:10,border:'1px dashed var(--border)',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',background:'var(--surface-2)',cursor:'pointer',fontSize:12,color:'var(--text-3)'};
+
+  function EditCard({ vals, setVals, onSave, onCancel, saveLabel }){
+    return <div className="card" style={{padding:12,display:'flex',flexDirection:'column',gap:8}}>
+      <label style={upBox} title="Add / change photo">
+        {vals.image ? <img src={vals.image} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : <span>＋ Add photo</span>}
+        <input type="file" accept="image/*" style={{display:'none'}} onChange={e=>{ onPick(e.target.files?.[0], v=>setVals({...vals,image:v})); e.target.value=''; }} />
+      </label>
+      {vals.image && <button className="btn btn-ghost small" style={{alignSelf:'flex-start',color:'#DC2626',padding:'0 4px',fontSize:11}} onClick={()=>setVals({...vals,image:''})}>remove photo</button>}
+      <input className="input" placeholder="Product name" value={vals.name} onChange={e=>setVals({...vals,name:e.target.value})} />
+      <div style={{display:'flex',gap:8}}>
+        <input className="input" placeholder="SKU (optional)" value={vals.sku} onChange={e=>setVals({...vals,sku:e.target.value})} style={{flex:1}} />
+        <input className="input" type="number" min="0" step="0.01" placeholder="Price RM" value={vals.price} onChange={e=>setVals({...vals,price:e.target.value})} style={{width:110}} />
+      </div>
+      <textarea className="textarea" style={{minHeight:60}} placeholder="Description (optional)" value={vals.description} onChange={e=>setVals({...vals,description:e.target.value})} />
+      <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+        {onCancel && <button className="btn btn-ghost small" onClick={onCancel}>Cancel</button>}
+        <button className="btn btn-primary small" disabled={!vals.name.trim()} onClick={onSave}>{saveLabel}</button>
+      </div>
+    </div>;
+  }
+
   return <>
-    <div className="card" style={{marginBottom:12}}>
-      <div style={{fontSize:18,fontWeight:800,marginBottom:4}}>🛍 Products / Goods</div>
-      <div className="small subtle" style={{marginBottom:14}}>Items you sell (goggles, swim caps, swim diapers…). Add a photo, SKU (optional) and price. The photo shows in the Shop so staff can confirm the right item. Shared across all branches; price stays editable per sale.</div>
-      <div style={{display:'grid',gridTemplateColumns:'56px minmax(0,1fr) 130px 120px auto',gap:10,alignItems:'end'}}>
-        <div>
-          <label style={box} title="Add photo">
-            {img ? <img src={img} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : <span>＋ Photo</span>}
-            <input type="file" accept="image/*" style={{display:'none'}} onChange={e=>{ onPick(e.target.files?.[0], setImg); e.target.value=''; }} />
-          </label>
-          {img && <button className="btn btn-ghost small" style={{padding:'0 4px',marginTop:2,color:'#DC2626',fontSize:10}} onClick={()=>setImg('')}>remove</button>}
-        </div>
-        <div className="field" style={{margin:0}}><label>Product name</label><input className="input" placeholder="e.g. Swim goggles" value={name} onChange={e=>setName(e.target.value)} /></div>
-        <div className="field" style={{margin:0}}><label>SKU <span className="subtle">(optional)</span></label><input className="input" placeholder="e.g. SG-001" value={sku} onChange={e=>setSku(e.target.value)} /></div>
-        <div className="field" style={{margin:0}}><label>Default price (RM)</label><input className="input" type="number" min="0" step="0.01" placeholder="0.00" value={price} onChange={e=>setPrice(e.target.value)} /></div>
-        <button className="btn btn-primary" style={{height:38}} disabled={!name.trim()} onClick={async()=>{ if(!name.trim()) return; await addProduct({ name:name.trim(), sku:sku.trim()||null, price, imageUrl:img||null }); setName(''); setSku(''); setPrice(''); setImg(''); }}>+ Add Product</button>
-      </div>
+    <div className="card" style={{marginBottom:14}}>
+      <div style={{fontSize:18,fontWeight:800,marginBottom:4}}>🛍 Product Catalogue</div>
+      <div className="small subtle">Items you sell (goggles, caps, swim diapers…). Add a photo, SKU, description and price — the photo and details show in the Shop so staff pick the right item. Shared across all branches; price stays editable per sale.</div>
     </div>
-    <div className="card" style={{padding:0,overflow:'hidden'}}>
-      <div className="table-wrap" style={{border:'none',borderRadius:0}}>
-        <table>
-          <thead><tr><th style={{width:56}}></th><th>Product</th><th style={{width:120}}>SKU</th><th style={{width:120,textAlign:'right'}}>Price</th><th style={{width:180,textAlign:'right'}}>Actions</th></tr></thead>
-          <tbody>
-            {(products||[]).length===0 && <tr><td colSpan={5} className="empty">No products yet. Add one above.</td></tr>}
-            {(products||[]).map(p => editingId===p.id ? (
-              <tr key={p.id}>
-                <td>
-                  <label style={{...box,width:44,height:44}} title="Change photo">
-                    {editForm.image ? <img src={editForm.image} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : <span>＋</span>}
-                    <input type="file" accept="image/*" style={{display:'none'}} onChange={e=>{ onPick(e.target.files?.[0], v=>setEditForm(f=>({...f,image:v}))); e.target.value=''; }} />
-                  </label>
-                  {editForm.image && <button className="btn btn-ghost small" style={{padding:'0 4px',color:'#DC2626',fontSize:10}} onClick={()=>setEditForm(f=>({...f,image:''}))}>×</button>}
-                </td>
-                <td><input className="input" value={editForm.name} onChange={e=>setEditForm({...editForm,name:e.target.value})} /></td>
-                <td><input className="input" value={editForm.sku} onChange={e=>setEditForm({...editForm,sku:e.target.value})} /></td>
-                <td><input className="input" type="number" min="0" step="0.01" style={{textAlign:'right'}} value={editForm.price} onChange={e=>setEditForm({...editForm,price:e.target.value})} /></td>
-                <td style={{textAlign:'right'}}><button className="btn btn-primary small" onClick={saveEdit} style={{marginRight:6}}>Save</button><button className="btn btn-ghost small" onClick={()=>setEditingId(null)}>Cancel</button></td>
-              </tr>
-            ) : (
-              <tr key={p.id}>
-                <td>{p.image_url ? <img src={p.image_url} alt="" style={{width:44,height:44,borderRadius:8,objectFit:'cover',border:'1px solid var(--border)'}} /> : <div style={{...box,width:44,height:44,cursor:'default',border:'1px solid var(--border)'}}>—</div>}</td>
-                <td style={{fontWeight:600}}>{p.name}</td>
-                <td style={{fontFamily:'monospace',fontSize:12}}>{p.sku||<span className="subtle">—</span>}</td>
-                <td style={{textAlign:'right'}}>{p.price!=null?`RM${Number(p.price).toFixed(2)}`:<span className="subtle">—</span>}</td>
-                <td style={{textAlign:'right'}}><button className="btn btn-ghost small" onClick={()=>startEdit(p)} style={{marginRight:6}}>✎ Edit</button><button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>deleteProduct(p.id)}>Delete</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+
+    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(230px,1fr))',gap:14,alignItems:'start'}}>
+      {/* Add-new card */}
+      <div>
+        <div className="small subtle" style={{fontWeight:700,marginBottom:6}}>＋ New product</div>
+        <EditCard vals={form} setVals={setForm} onSave={addNew} onCancel={null} saveLabel="Add Product" />
       </div>
+
+      {/* Existing products */}
+      {(products||[]).map(p => editingId===p.id
+        ? <div key={p.id}><div className="small subtle" style={{fontWeight:700,marginBottom:6}}>Editing</div><EditCard vals={editForm} setVals={setEditForm} onSave={saveEdit} onCancel={()=>setEditingId(null)} saveLabel="Save" /></div>
+        : <div key={p.id} className="card" style={{padding:0,overflow:'hidden',display:'flex',flexDirection:'column'}}>
+            <div style={{height:130,background:'var(--surface-2)',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}}>
+              {p.image_url ? <img src={p.image_url} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : <span className="small subtle">No photo</span>}
+            </div>
+            <div style={{padding:'10px 12px',display:'flex',flexDirection:'column',gap:4,flex:1}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',gap:8}}>
+                <div style={{fontWeight:700,fontSize:14}}>{p.name}</div>
+                <div style={{fontWeight:800,whiteSpace:'nowrap'}}>{p.price!=null?`RM${Number(p.price).toFixed(2)}`:'—'}</div>
+              </div>
+              {p.sku && <div className="small subtle" style={{fontFamily:'monospace',fontSize:11}}>SKU: {p.sku}</div>}
+              {p.description && <div className="small subtle" style={{fontSize:12,lineHeight:1.4}}>{p.description}</div>}
+              <div style={{display:'flex',gap:6,marginTop:'auto',paddingTop:8}}>
+                <button className="btn btn-ghost small" onClick={()=>startEdit(p)}>✎ Edit</button>
+                <button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>deleteProduct(p.id)}>Delete</button>
+              </div>
+            </div>
+          </div>
+      )}
     </div>
   </>;
 }
