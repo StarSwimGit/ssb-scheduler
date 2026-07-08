@@ -2435,10 +2435,10 @@ function App(){
   }
 
   // ── Product catalogue CRUD (Settings › Products) ─────────────────────────
-  async function addCatalogProduct({ name, sku, price }){
+  async function addCatalogProduct({ name, sku, price, imageUrl }){
     try{
       const next = (products||[]).length + 1;
-      await insertRows('products', { name, sku: sku||null, price: (price===''||price==null)?null:Number(price), sort_order: next, is_active: true });
+      await insertRows('products', { name, sku: sku||null, price: (price===''||price==null)?null:Number(price), image_url: imageUrl||null, sort_order: next, is_active: true });
       await loadProducts();
     } catch(err){ handleErr(err); alert(err.message || 'Failed to add product'); }
   }
@@ -9047,7 +9047,7 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
 function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, membersByGroup, products, onVoid, onDelete, onRefund, onEditVoidReason, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine }){
   const [showPayForm,setShowPayForm]=useState(false);
   const [lastReceipt,setLastReceipt]=useState(null);
-  const outstanding=Math.max(0,(Number(invoice.total_amount)||0)-(Number(invoice.amount_paid)||0));
+  const outstanding=(invoice.status==='refunded'||invoice.status==='void')?0:Math.max(0,(Number(invoice.total_amount)||0)-(Number(invoice.amount_paid)||0));
   const [payAmt,setPayAmt]=useState('');
   const [payDate,setPayDate]=useState(todayStr());
   const [payMethod,setPayMethod]=useState('cash');
@@ -9225,7 +9225,7 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
           </tr>; })}</tbody>
         </table>
       </div>
-      <div className="small subtle" style={{marginTop:4}}>Paid RM {Number(invoice.amount_paid||0).toFixed(2)} · Outstanding RM {outstanding.toFixed(2)}</div>
+      <div className="small subtle" style={{marginTop:4}}>{invoice.status==='refunded' ? 'Refunded — payment returned to customer' : invoice.status==='void' ? 'Voided — no balance' : `Paid RM ${Number(invoice.amount_paid||0).toFixed(2)} · Outstanding RM ${outstanding.toFixed(2)}`}</div>
     </div>}
     {showVoidForm&&<div className="inv-pay-form" style={{borderColor:'var(--red-bd)',background:'#FFF5F5'}}>
       <div style={{fontWeight:700,marginBottom:6,color:'#B91C1C'}}>Void Invoice</div>
@@ -9253,7 +9253,7 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
         <button className="btn btn-primary small" onClick={submitRefund} disabled={refBusy} style={{background:'#7C3AED',borderColor:'#7C3AED'}}>{refBusy?'Processing…':'Confirm Refund'}</button>
       </div>
     </div>}
-    {!showPayForm&&outstanding>0&&invoice.status!=='void'&&
+    {!showPayForm&&outstanding>0&&invoice.status!=='void'&&invoice.status!=='refunded'&&
       <button className="btn btn-primary small" onClick={()=>{setPayAmt(outstanding.toFixed(2));setShowPayForm(true);}}>+ Record Payment</button>}
     {showPayForm&&<div className="inv-pay-form">
       <div style={{fontWeight:700,marginBottom:8}}>Record Payment</div>
@@ -9820,6 +9820,27 @@ function ProgrammeSessionModal({ modal, setModal, busy, onSave, onDelete, onDupl
 // existing account (all branches, not branch-filtered). Creates an invoice
 // and, if paid now, an immediate receipt.
 // ============================================================================
+// Read an image file and return a small compressed JPEG data URL (keeps DB rows
+// light — product thumbnails end up ~10–40 KB).
+function fileToThumbnail(file, maxDim=340, quality=0.72){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>{
+      const img=new Image();
+      img.onload=()=>{
+        let w=img.width, h=img.height;
+        if(w>h){ if(w>maxDim){ h=Math.round(h*maxDim/w); w=maxDim; } }
+        else   { if(h>maxDim){ w=Math.round(w*maxDim/h); h=maxDim; } }
+        const c=document.createElement('canvas'); c.width=w; c.height=h;
+        c.getContext('2d').drawImage(img,0,0,w,h);
+        try{ resolve(c.toDataURL('image/jpeg',quality)); }catch(err){ reject(err); }
+      };
+      img.onerror=reject; img.src=reader.result;
+    };
+    reader.onerror=reject; reader.readAsDataURL(file);
+  });
+}
+
 function SalesView({ accounts, products, branches, currentBranchId, invoices, pmts, onRefund, onCreateSale, onViewInvoices }){
   const [tab,setTab]=useState('sale'); // 'sale' | 'returns'
   return <div style={{maxWidth:860,margin:'0 auto'}}>
@@ -9847,7 +9868,7 @@ function ShopSale({ accounts, products, branches, currentBranchId, onCreateSale,
   const activeBranches=(branches||[]).filter(b=>b.is_active!==false);
   const [branchId,setBranchId]=useState(currentBranchId&&currentBranchId!=='all'?currentBranchId:'');
   const [cart,setCart]=useState([]);
-  const [pSku,setPSku]=useState(''); const [pDesc,setPDesc]=useState(''); const [pQty,setPQty]=useState(1); const [pPrice,setPPrice]=useState('');
+  const [pSku,setPSku]=useState(''); const [pDesc,setPDesc]=useState(''); const [pQty,setPQty]=useState(1); const [pPrice,setPPrice]=useState(''); const [pImg,setPImg]=useState('');
   const [paidNow,setPaidNow]=useState(true);
   const [method,setMethod]=useState('cash');
   const [date,setDate]=useState(todayStr());
@@ -9866,8 +9887,8 @@ function ShopSale({ accounts, products, branches, currentBranchId, onCreateSale,
     ? (accounts||[]).filter(a=>(a.name||'').toLowerCase().includes(acctQuery.trim().toLowerCase()))
     : (accounts||[]);
 
-  function pickProduct(id){ const p=activeProducts.find(x=>x.id===id); if(!p) return; setPDesc(p.name); setPSku(p.sku||''); if(p.price!=null) setPPrice(String(p.price)); }
-  function addToCart(){ const d=pDesc.trim(); const u=Number(pPrice)||0; const q=Math.max(1,Number(pQty)||1); if(!d||!(u>0))return; setCart([...cart,{id:Math.random().toString(36).slice(2),sku:pSku.trim(),description:d,quantity:q,unitPrice:u}]); setPDesc('');setPSku('');setPQty(1);setPPrice(''); }
+  function pickProduct(id){ const p=activeProducts.find(x=>x.id===id); if(!p) return; setPDesc(p.name); setPSku(p.sku||''); setPImg(p.image_url||''); if(p.price!=null) setPPrice(String(p.price)); }
+  function addToCart(){ const d=pDesc.trim(); const u=Number(pPrice)||0; const q=Math.max(1,Number(pQty)||1); if(!d||!(u>0))return; setCart([...cart,{id:Math.random().toString(36).slice(2),sku:pSku.trim(),image:pImg,description:d,quantity:q,unitPrice:u}]); setPDesc('');setPSku('');setPImg('');setPQty(1);setPPrice(''); }
   function removeFromCart(id){ setCart(cart.filter(c=>c.id!==id)); }
 
   async function confirmSale(){
@@ -9919,7 +9940,7 @@ function ShopSale({ accounts, products, branches, currentBranchId, onCreateSale,
           </tr></thead>
           <tbody>
             {cart.map(c=>{ const q=Math.max(1,Number(c.quantity)||1); const u=Number(c.unitPrice)||0; return <tr key={c.id} style={{borderBottom:'1px solid #F1F5F9'}}>
-              <td style={{padding:'6px 4px',fontWeight:600}}>{c.description}</td>
+              <td style={{padding:'6px 4px',fontWeight:600}}><div style={{display:'flex',alignItems:'center',gap:8}}>{c.image ? <img src={c.image} alt="" style={{width:34,height:34,borderRadius:6,objectFit:'cover',border:'1px solid var(--border)',flexShrink:0}} /> : null}<span>{c.description}</span></div></td>
               <td style={{padding:'6px 4px',fontFamily:'monospace',fontSize:11}}>{c.sku||'—'}</td>
               <td style={{padding:'6px 4px',textAlign:'center'}}>{q}</td>
               <td style={{padding:'6px 4px',textAlign:'right'}}>RM{u.toFixed(2)}</td>
@@ -9971,17 +9992,19 @@ function ShopSale({ accounts, products, branches, currentBranchId, onCreateSale,
       <div style={{fontWeight:800,marginBottom:8}}>2 · Items</div>
       {cart.length>0 && <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:10}}>
         {cart.map(c=>{ const q=Math.max(1,Number(c.quantity)||1); const u=Number(c.unitPrice)||0; return <div key={c.id} style={{display:'flex',alignItems:'center',gap:8,padding:'6px 10px',background:'var(--surface-2)',border:'1px solid var(--border)',borderRadius:8}}>
+          {c.image ? <img src={c.image} alt="" style={{width:36,height:36,borderRadius:6,objectFit:'cover',border:'1px solid var(--border)',flexShrink:0}} /> : null}
           <span style={{flex:1,fontWeight:600}}>{c.description}{c.sku?<span className="small subtle" style={{fontFamily:'monospace',marginLeft:6}}>[{c.sku}]</span>:null}</span>
           <span className="small subtle">{q} × RM{u.toFixed(2)}</span>
           <span style={{fontWeight:700,minWidth:80,textAlign:'right'}}>RM{(q*u).toFixed(2)}</span>
           <button className="btn btn-ghost small" style={{color:'#DC2626',padding:'0 6px'}} onClick={()=>removeFromCart(c.id)} title="Remove">×</button>
         </div>; })}
       </div>}
-      {activeProducts.length>0 && <div style={{marginBottom:8}}>
-        <select className="select" value="" onChange={e=>pickProduct(e.target.value)}>
+      {activeProducts.length>0 && <div style={{marginBottom:8,display:'flex',alignItems:'center',gap:10}}>
+        <select className="select" style={{flex:1}} value="" onChange={e=>pickProduct(e.target.value)}>
           <option value="">Pick from catalogue…</option>
           {activeProducts.map(p=><option key={p.id} value={p.id}>{p.name}{p.sku?` [${p.sku}]`:''}{p.price!=null?` — RM${Number(p.price).toFixed(2)}`:''}</option>)}
         </select>
+        {pImg ? <img src={pImg} alt="" style={{width:44,height:44,borderRadius:8,objectFit:'cover',border:'1px solid var(--border)',flexShrink:0}} title="Selected product photo" /> : null}
       </div>}
       <div style={{display:'grid',gridTemplateColumns:'1fr 110px 56px 92px auto',gap:8,alignItems:'end'}}>
         <div className="field" style={{margin:0}}><label>Item</label><input className="input" value={pDesc} onChange={e=>setPDesc(e.target.value)} placeholder="e.g. Swim goggles" onKeyDown={e=>{if(e.key==='Enter')addToCart();}} /></div>
@@ -10080,34 +10103,51 @@ function ShopReturns({ invoices, pmts, onRefund, onViewInvoices }){
 }
 
 
-// Settings › Products — shared product / goods catalogue (name + price + optional SKU).
+// Settings › Products — shared product / goods catalogue (name + price + optional SKU + photo).
 function ProductsAdminView({ products, addProduct, updateProduct, deleteProduct }){
   const [name,setName]=useState('');
   const [sku,setSku]=useState('');
   const [price,setPrice]=useState('');
+  const [img,setImg]=useState('');
   const [editingId,setEditingId]=useState(null);
-  const [editForm,setEditForm]=useState({name:'',sku:'',price:''});
-  function startEdit(p){ setEditingId(p.id); setEditForm({name:p.name||'',sku:p.sku||'',price:p.price!=null?String(p.price):''}); }
-  async function saveEdit(){ if(!editForm.name.trim()) return; await updateProduct(editingId,{ name:editForm.name.trim(), sku:editForm.sku.trim()||null, price:(editForm.price===''?null:Number(editForm.price)) }); setEditingId(null); }
+  const [editForm,setEditForm]=useState({name:'',sku:'',price:'',image:''});
+  function startEdit(p){ setEditingId(p.id); setEditForm({name:p.name||'',sku:p.sku||'',price:p.price!=null?String(p.price):'',image:p.image_url||''}); }
+  async function saveEdit(){ if(!editForm.name.trim()) return; await updateProduct(editingId,{ name:editForm.name.trim(), sku:editForm.sku.trim()||null, price:(editForm.price===''?null:Number(editForm.price)), image_url:editForm.image||null }); setEditingId(null); }
+  async function onPick(file, setter){ if(!file) return; try{ const t=await fileToThumbnail(file); setter(t); }catch(_){ alert('Could not read that image.'); } }
+  const box={width:56,height:56,borderRadius:8,border:'1px dashed var(--border)',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',background:'var(--surface-2)',cursor:'pointer',flexShrink:0,fontSize:10,color:'var(--text-3)',textAlign:'center'};
   return <>
     <div className="card" style={{marginBottom:12}}>
       <div style={{fontSize:18,fontWeight:800,marginBottom:4}}>🛍 Products / Goods</div>
-      <div className="small subtle" style={{marginBottom:14}}>Items you sell to swimmers and parents (goggles, swim caps, swim diapers…). Saved here so you can pick them — with the price pre-filled — when billing products. SKU is optional and prints on the bill when set. Shared across all branches; price stays editable per sale.</div>
-      <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) 140px 130px auto',gap:10,alignItems:'end'}}>
+      <div className="small subtle" style={{marginBottom:14}}>Items you sell (goggles, swim caps, swim diapers…). Add a photo, SKU (optional) and price. The photo shows in the Shop so staff can confirm the right item. Shared across all branches; price stays editable per sale.</div>
+      <div style={{display:'grid',gridTemplateColumns:'56px minmax(0,1fr) 130px 120px auto',gap:10,alignItems:'end'}}>
+        <div>
+          <label style={box} title="Add photo">
+            {img ? <img src={img} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : <span>＋ Photo</span>}
+            <input type="file" accept="image/*" style={{display:'none'}} onChange={e=>{ onPick(e.target.files?.[0], setImg); e.target.value=''; }} />
+          </label>
+          {img && <button className="btn btn-ghost small" style={{padding:'0 4px',marginTop:2,color:'#DC2626',fontSize:10}} onClick={()=>setImg('')}>remove</button>}
+        </div>
         <div className="field" style={{margin:0}}><label>Product name</label><input className="input" placeholder="e.g. Swim goggles" value={name} onChange={e=>setName(e.target.value)} /></div>
         <div className="field" style={{margin:0}}><label>SKU <span className="subtle">(optional)</span></label><input className="input" placeholder="e.g. SG-001" value={sku} onChange={e=>setSku(e.target.value)} /></div>
         <div className="field" style={{margin:0}}><label>Default price (RM)</label><input className="input" type="number" min="0" step="0.01" placeholder="0.00" value={price} onChange={e=>setPrice(e.target.value)} /></div>
-        <button className="btn btn-primary" style={{height:38}} disabled={!name.trim()} onClick={async()=>{ if(!name.trim()) return; await addProduct({ name:name.trim(), sku:sku.trim()||null, price }); setName(''); setSku(''); setPrice(''); }}>+ Add Product</button>
+        <button className="btn btn-primary" style={{height:38}} disabled={!name.trim()} onClick={async()=>{ if(!name.trim()) return; await addProduct({ name:name.trim(), sku:sku.trim()||null, price, imageUrl:img||null }); setName(''); setSku(''); setPrice(''); setImg(''); }}>+ Add Product</button>
       </div>
     </div>
     <div className="card" style={{padding:0,overflow:'hidden'}}>
       <div className="table-wrap" style={{border:'none',borderRadius:0}}>
         <table>
-          <thead><tr><th style={{width:'42%'}}>Product</th><th style={{width:130}}>SKU</th><th style={{width:130,textAlign:'right'}}>Default price</th><th style={{width:180,textAlign:'right'}}>Actions</th></tr></thead>
+          <thead><tr><th style={{width:56}}></th><th>Product</th><th style={{width:120}}>SKU</th><th style={{width:120,textAlign:'right'}}>Price</th><th style={{width:180,textAlign:'right'}}>Actions</th></tr></thead>
           <tbody>
-            {(products||[]).length===0 && <tr><td colSpan={4} className="empty">No products yet. Add one above.</td></tr>}
+            {(products||[]).length===0 && <tr><td colSpan={5} className="empty">No products yet. Add one above.</td></tr>}
             {(products||[]).map(p => editingId===p.id ? (
               <tr key={p.id}>
+                <td>
+                  <label style={{...box,width:44,height:44}} title="Change photo">
+                    {editForm.image ? <img src={editForm.image} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : <span>＋</span>}
+                    <input type="file" accept="image/*" style={{display:'none'}} onChange={e=>{ onPick(e.target.files?.[0], v=>setEditForm(f=>({...f,image:v}))); e.target.value=''; }} />
+                  </label>
+                  {editForm.image && <button className="btn btn-ghost small" style={{padding:'0 4px',color:'#DC2626',fontSize:10}} onClick={()=>setEditForm(f=>({...f,image:''}))}>×</button>}
+                </td>
                 <td><input className="input" value={editForm.name} onChange={e=>setEditForm({...editForm,name:e.target.value})} /></td>
                 <td><input className="input" value={editForm.sku} onChange={e=>setEditForm({...editForm,sku:e.target.value})} /></td>
                 <td><input className="input" type="number" min="0" step="0.01" style={{textAlign:'right'}} value={editForm.price} onChange={e=>setEditForm({...editForm,price:e.target.value})} /></td>
@@ -10115,6 +10155,7 @@ function ProductsAdminView({ products, addProduct, updateProduct, deleteProduct 
               </tr>
             ) : (
               <tr key={p.id}>
+                <td>{p.image_url ? <img src={p.image_url} alt="" style={{width:44,height:44,borderRadius:8,objectFit:'cover',border:'1px solid var(--border)'}} /> : <div style={{...box,width:44,height:44,cursor:'default',border:'1px solid var(--border)'}}>—</div>}</td>
                 <td style={{fontWeight:600}}>{p.name}</td>
                 <td style={{fontFamily:'monospace',fontSize:12}}>{p.sku||<span className="subtle">—</span>}</td>
                 <td style={{textAlign:'right'}}>{p.price!=null?`RM${Number(p.price).toFixed(2)}`:<span className="subtle">—</span>}</td>
