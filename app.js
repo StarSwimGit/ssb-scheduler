@@ -3144,18 +3144,8 @@ function App(){
     </div></div>}
 
     {/* ── Sub-bar: admin tabs ── */}
-    {!loading && view==='settings' && <div className="sub-bar"><div className="sub-bar-inner">
-      <button className={`sub-tab ${adminSection==='summary'?'active':''}`} onClick={()=>setAdminSection('summary')}>Summary</button>
-      <button className={`sub-tab ${adminSection==='branches'?'active':''}`} onClick={()=>setAdminSection('branches')}>Branches</button>
-      <button className={`sub-tab ${adminSection==='pools'?'active':''}`} onClick={()=>setAdminSection('pools')}>Pools & Hours</button>
-      <button className={`sub-tab ${adminSection==='instructors'?'active':''}`} onClick={()=>setAdminSection('instructors')}>Instructors</button>
-      <button className={`sub-tab ${adminSection==='lessonTypes'?'active':''}`} onClick={()=>setAdminSection('lessonTypes')}>Lesson Types</button>
-      <button className={`sub-tab ${adminSection==='programme'?'active':''}`} onClick={()=>setAdminSection('programme')}>Programme</button>
-      <button className={`sub-tab ${adminSection==='terms'?'active':''}`} onClick={()=>setAdminSection('terms')}>Terms</button>
-      <button className={`sub-tab ${adminSection==='billingTerms'?'active':''}`} onClick={()=>setAdminSection('billingTerms')}>Billing Terms</button>
-      <button className={`sub-tab ${adminSection==='products'?'active':''}`} onClick={()=>setAdminSection('products')}>Products</button>
-      <button className={`sub-tab ${adminSection==='invoiceSettings'?'active':''}`} onClick={()=>setAdminSection('invoiceSettings')}>Invoice Numbering</button>
-    </div></div>}
+    {/* Settings navigation is now a left-column nav rendered with the content below. */}
+
 
     <div className="wrap">
       {loading ? <div className="card" style={{textAlign:'center',padding:'42px'}}><div style={{fontSize:34,marginBottom:10}}>⏳</div><div>Loading scheduler…</div><div className="small subtle" style={{marginTop:6}}>{status || 'Connecting'}</div></div> : null}
@@ -3460,71 +3450,78 @@ function App(){
         addStudent={addStudent} updateStudent={updateStudent} deleteStudent={deleteStudent} deleteAccount={deleteAccount}
       />}
 
-      {/* ── Admin (pools / instructors / lesson types / summary) ── */}
-      {/* ── Admin (side-nav + content) ── */}
-      {/* ── Admin views (no side column — sub-bar handles navigation) ── */}
-      {!loading && view==='settings' && adminSection==='summary' && <SummaryView summary={summary} pools={activePools()} />}
-      {!loading && view==='settings' && adminSection==='branches' && <BranchesAdminView
-        branches={options.branches||[]}
-        addBranch={addBranch}
-        updateBranch={updateBranch}
-        deleteBranch={deleteBranch}
-      />}
-      {!loading && view==='settings' && adminSection==='programme' && <ProgrammeCategoriesView
-        categories={programmeCategories}
-        addCategory={addProgrammeCategory}
-        updateCategory={updateProgrammeCategory}
-        deleteCategory={deleteProgrammeCategory}
-      />}
-      {!loading && view==='settings' && adminSection==='terms' && <TermsAdminView
-        branches={options.branches||[]}
-        currentBranchId={currentBranchId}
-        defaultTerms={defaultTermsText()}
-        onSave={saveBranchTerms}
-      />}
-      {!loading && view==='settings' && adminSection==='billingTerms' && <BillingTermsAdminView
-        terms={billingTerms}
-        branches={options.branches||[]}
-        currentBranchId={currentBranchId}
-        addTerm={addBillingTerm}
-        updateTerm={updateBillingTerm}
-        deleteTerm={deleteBillingTerm}
-      />}
-      {!loading && view==='settings' && adminSection==='products' && <ProductsAdminView
-        products={products}
-        addProduct={addCatalogProduct}
-        updateProduct={updateCatalogProduct}
-        deleteProduct={deleteCatalogProduct}
-        reorderProducts={reorderProducts}
-      />}
-      {!loading && view==='settings' && adminSection==='invoiceSettings' && <div className="card">
-        <div style={{fontWeight:800,fontSize:18,marginBottom:4}}>Invoice Numbering &amp; Permissions</div>
-        <div className="small subtle" style={{marginBottom:16}}>These are sensitive settings. Invoice deletion is irreversible — enable the delete permission only for authorised users.</div>
-        <InvoiceSettingsPanel settings={invoiceSettings} onSave={saveInvoiceSettings} formatInvoiceNumber={formatInvoiceNumber} formatReceiptNumber={formatReceiptNumber} />
+      {/* ── Settings: left-column nav + content ── */}
+      {!loading && view==='settings' && <div className="settings-shell">
+        <nav className="settings-nav">
+          {[['summary','Summary'],['branches','Branches'],['pools','Pools & Hours'],['instructors','Instructors'],['lessonTypes','Lesson Types'],['programme','Programme'],['terms','Terms'],['billingTerms','Billing Terms'],['products','Products'],['invoiceSettings','Invoice Numbering']].map(([k,l])=>
+            <button key={k} className={`settings-nav-btn${adminSection===k?' active':''}`} onClick={()=>setAdminSection(k)}>{l}</button>
+          )}
+        </nav>
+        <div className="settings-content">
+          {adminSection==='summary' && <SummaryView summary={summary} pools={activePools()} />}
+          {adminSection==='branches' && <BranchesAdminView
+            branches={options.branches||[]}
+            addBranch={addBranch}
+            updateBranch={updateBranch}
+            deleteBranch={deleteBranch}
+          />}
+          {adminSection==='programme' && <ProgrammeCategoriesView
+            categories={programmeCategories}
+            addCategory={addProgrammeCategory}
+            updateCategory={updateProgrammeCategory}
+            deleteCategory={deleteProgrammeCategory}
+          />}
+          {adminSection==='terms' && <TermsAdminView
+            branches={options.branches||[]}
+            currentBranchId={currentBranchId}
+            defaultTerms={defaultTermsText()}
+            onSave={saveBranchTerms}
+          />}
+          {adminSection==='billingTerms' && <BillingTermsAdminView
+            terms={billingTerms}
+            branches={options.branches||[]}
+            currentBranchId={currentBranchId}
+            addTerm={addBillingTerm}
+            updateTerm={updateBillingTerm}
+            deleteTerm={deleteBillingTerm}
+          />}
+          {adminSection==='products' && <ProductsAdminView
+            products={products}
+            addProduct={addCatalogProduct}
+            updateProduct={updateCatalogProduct}
+            deleteProduct={deleteCatalogProduct}
+            reorderProducts={reorderProducts}
+          />}
+          {adminSection==='invoiceSettings' && <div className="card">
+            <div style={{fontWeight:800,fontSize:18,marginBottom:4}}>Invoice Numbering &amp; Permissions</div>
+            <div className="small subtle" style={{marginBottom:16}}>These are sensitive settings. Invoice deletion is irreversible — enable the delete permission only for authorised users.</div>
+            <InvoiceSettingsPanel settings={invoiceSettings} onSave={saveInvoiceSettings} formatInvoiceNumber={formatInvoiceNumber} formatReceiptNumber={formatReceiptNumber} />
+          </div>}
+          {(adminSection==='pools'||adminSection==='instructors'||adminSection==='lessonTypes') && <SettingsView
+            section={adminSection}
+            options={options}
+            currentBranchId={currentBranchId}
+            addOption={addOption}
+            toggleOption={toggleOption}
+            deleteOption={deleteOption}
+            deleteInstructor={deleteInstructor}
+            patchOption={patchOption}
+            reorderOption={reorderOption}
+            moveOption={moveOption}
+            saveLessonType={saveLessonType}
+            deleteLessonType={deleteLessonType}
+            lessonTypeCounts={lessonTypeCounts}
+            codes={codes}
+            students={students}
+            packages={options.packages}
+            addCode={addCode}
+            updateCode={updateCode}
+            deleteCode={deleteCode}
+            pools={activePools()}
+            onUpdatePool={updatePool}
+          />}
+        </div>
       </div>}
-      {!loading && view==='settings' && (adminSection==='pools'||adminSection==='instructors'||adminSection==='lessonTypes') && <SettingsView
-        section={adminSection}
-        options={options}
-        currentBranchId={currentBranchId}
-        addOption={addOption}
-        toggleOption={toggleOption}
-        deleteOption={deleteOption}
-        deleteInstructor={deleteInstructor}
-        patchOption={patchOption}
-        reorderOption={reorderOption}
-        moveOption={moveOption}
-        saveLessonType={saveLessonType}
-        deleteLessonType={deleteLessonType}
-        lessonTypeCounts={lessonTypeCounts}
-        codes={codes}
-        students={students}
-        packages={options.packages}
-        addCode={addCode}
-        updateCode={updateCode}
-        deleteCode={deleteCode}
-        pools={activePools()}
-        onUpdatePool={updatePool}
-      />}
 
     </div>{/* end .wrap */}
 
