@@ -3651,6 +3651,19 @@ function App() {
       alert(err.message || 'Failed to delete product');
     }
   }
+  async function reorderProducts(orderedIds) {
+    try {
+      await Promise.all((orderedIds || []).map((id, idx) => patchRows('products', {
+        id
+      }, {
+        sort_order: idx + 1
+      })));
+      await loadProducts();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to reorder products');
+    }
+  }
 
   // Reorder a settings list by reindexing sort_order across the whole list, so
   // the result is clean and gap-free regardless of the existing values.
@@ -5187,7 +5200,8 @@ function App() {
     products: products,
     addProduct: addCatalogProduct,
     updateProduct: updateCatalogProduct,
-    deleteProduct: deleteCatalogProduct
+    deleteProduct: deleteCatalogProduct,
+    reorderProducts: reorderProducts
   }), !loading && view === 'settings' && adminSection === 'invoiceSettings' && /*#__PURE__*/React.createElement("div", {
     className: "card"
   }, /*#__PURE__*/React.createElement("div", {
@@ -19724,7 +19738,8 @@ function ProductsAdminView({
   products,
   addProduct,
   updateProduct,
-  deleteProduct
+  deleteProduct,
+  reorderProducts
 }) {
   const blank = {
     name: '',
@@ -19736,6 +19751,8 @@ function ProductsAdminView({
   const [form, setForm] = useState(blank);
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState(blank);
+  const [dragId, setDragId] = useState(null);
+  const [overId, setOverId] = useState(null);
   function startEdit(p) {
     setEditingId(p.id);
     setEditForm({
@@ -19768,6 +19785,19 @@ function ProductsAdminView({
     });
     setForm(blank);
   }
+  function onDrop(targetId) {
+    if (dragId && dragId !== targetId && reorderProducts) {
+      const ids = (products || []).map(p => p.id);
+      const from = ids.indexOf(dragId),
+        to = ids.indexOf(targetId);
+      if (from > -1 && to > -1) {
+        ids.splice(to, 0, ids.splice(from, 1)[0]);
+        reorderProducts(ids);
+      }
+    }
+    setDragId(null);
+    setOverId(null);
+  }
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
@@ -19781,14 +19811,12 @@ function ProductsAdminView({
     }
   }, "🛍 Product Catalogue"), /*#__PURE__*/React.createElement("div", {
     className: "small subtle"
-  }, "Items you sell (goggles, caps, swim diapers…). Add a photo, SKU, description and price — the photo and details show in the Shop so staff pick the right item. Shared across all branches; price stays editable per sale.")), /*#__PURE__*/React.createElement("div", {
+  }, "Items you sell (goggles, caps, swim diapers…). Add a photo, SKU, description and price — the photo and details show in the Shop so staff pick the right item. Drag the ⠿ handle on a card to re-order the catalogue. Shared across all branches; price stays editable per sale.")), /*#__PURE__*/React.createElement("div", {
     style: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fill,minmax(230px,1fr))',
-      gap: 14,
-      alignItems: 'start'
+      marginBottom: 18,
+      maxWidth: 300
     }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", {
     className: "small subtle",
     style: {
       fontWeight: 700,
@@ -19800,7 +19828,20 @@ function ProductsAdminView({
     onSave: addNew,
     onCancel: null,
     saveLabel: "Add Product"
-  })), (products || []).map(p => editingId === p.id ? /*#__PURE__*/React.createElement("div", {
+  })), (products || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      fontWeight: 700,
+      marginBottom: 8
+    }
+  }, "Catalogue (", (products || []).length, ")"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fill,minmax(230px,1fr))',
+      gap: 14,
+      alignItems: 'start'
+    }
+  }, (products || []).map(p => editingId === p.id ? /*#__PURE__*/React.createElement("div", {
     key: p.id
   }, /*#__PURE__*/React.createElement("div", {
     className: "small subtle",
@@ -19817,13 +19858,60 @@ function ProductsAdminView({
   })) : /*#__PURE__*/React.createElement("div", {
     key: p.id,
     className: "card",
+    onDragOver: e => {
+      e.preventDefault();
+      if (overId !== p.id) setOverId(p.id);
+    },
+    onDrop: e => {
+      e.preventDefault();
+      onDrop(p.id);
+    },
     style: {
       padding: 0,
       overflow: 'hidden',
       display: 'flex',
-      flexDirection: 'column'
+      flexDirection: 'column',
+      position: 'relative',
+      opacity: dragId === p.id ? 0.4 : 1,
+      outline: overId === p.id && dragId && dragId !== p.id ? '2px solid var(--primary)' : 'none',
+      outlineOffset: '-1px',
+      transition: 'opacity .12s'
     }
   }, /*#__PURE__*/React.createElement("div", {
+    draggable: true,
+    onDragStart: e => {
+      setDragId(p.id);
+      e.dataTransfer.effectAllowed = 'move';
+    },
+    onDragEnd: () => {
+      setDragId(null);
+      setOverId(null);
+    },
+    title: "Drag to re-order",
+    "aria-label": "Drag to re-order",
+    style: {
+      position: 'absolute',
+      top: 6,
+      left: 6,
+      zIndex: 2,
+      display: 'inline-grid',
+      gridTemplateColumns: '5px 5px',
+      gap: 3,
+      padding: 6,
+      borderRadius: 6,
+      background: 'rgba(255,255,255,.85)',
+      boxShadow: '0 1px 3px rgba(0,0,0,.18)',
+      cursor: 'grab'
+    }
+  }, [0, 1, 2, 3].map(i => /*#__PURE__*/React.createElement("span", {
+    key: i,
+    style: {
+      width: 5,
+      height: 5,
+      borderRadius: '50%',
+      background: '#64748B'
+    }
+  }))), /*#__PURE__*/React.createElement("div", {
     style: {
       height: 130,
       background: 'var(--surface-2)',
