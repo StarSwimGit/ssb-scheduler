@@ -4704,45 +4704,7 @@ function App() {
     style: {
       marginLeft: 6
     }
-  }, "This Week")))), !loading && view === 'accounts' && /*#__PURE__*/React.createElement("div", {
-    className: "sub-bar"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "sub-bar-inner"
-  }, /*#__PURE__*/React.createElement("button", {
-    className: `sub-tab ${accountSection === 'accounts' ? 'active' : ''}`,
-    onClick: () => setAccountSection('accounts')
-  }, "Accounts"), /*#__PURE__*/React.createElement("button", {
-    className: `sub-tab ${accountSection === 'familyGroups' ? 'active' : ''}`,
-    onClick: () => setAccountSection('familyGroups')
-  }, "Groups"), /*#__PURE__*/React.createElement("button", {
-    className: `sub-tab ${accountSection === 'swimmers' ? 'active' : ''}`,
-    onClick: () => setAccountSection('swimmers')
-  }, "Swimmers"), /*#__PURE__*/React.createElement("button", {
-    className: `sub-tab ${accountSection === 'invoices' ? 'active' : ''}`,
-    onClick: () => setAccountSection('invoices')
-  }, "Invoices"), /*#__PURE__*/React.createElement("button", {
-    className: `sub-tab ${accountSection === 'receipts' ? 'active' : ''}`,
-    onClick: () => setAccountSection('receipts')
-  }, "Receipts"), /*#__PURE__*/React.createElement("button", {
-    className: `sub-tab ${accountSection === 'pendingCredits' ? 'active' : ''}`,
-    onClick: () => setAccountSection('pendingCredits')
-  }, "Pending Credits"), /*#__PURE__*/React.createElement("button", {
-    className: `sub-tab ${accountSection === 'aging' ? 'active' : ''}`,
-    onClick: () => setAccountSection('aging')
-  }, "Aging"), /*#__PURE__*/React.createElement("button", {
-    className: `sub-tab ${accountSection === 'codes' ? 'active' : ''}`,
-    onClick: () => setAccountSection('codes')
-  }, "Discounts"), /*#__PURE__*/React.createElement("button", {
-    className: `sub-tab ${accountSection === 'reports' ? 'active' : ''}`,
-    onClick: () => setAccountSection('reports')
-  }, "Reports"), ['accounts', 'familyGroups', 'swimmers', 'invoices', 'receipts'].includes(accountSection) && /*#__PURE__*/React.createElement("div", {
-    className: "sub-bar-spacer"
-  }, /*#__PURE__*/React.createElement("input", {
-    className: "input sub-bar-search",
-    placeholder: accountSection === 'swimmers' ? 'Search swimmer, parent, phone…' : accountSection === 'invoices' ? 'Search invoice # or account…' : accountSection === 'receipts' ? 'Search receipt #, invoice, account…' : accountSection === 'familyGroups' ? 'Search group or member…' : 'Search account, email, phone, swimmer…',
-    value: accountSearchQ,
-    onChange: e => setAccountSearchQ(e.target.value)
-  })))), /*#__PURE__*/React.createElement("div", {
+  }, "This Week")))), /*#__PURE__*/React.createElement("div", {
     className: "wrap"
   }, loading ? /*#__PURE__*/React.createElement("div", {
     className: "card",
@@ -4920,7 +4882,27 @@ function App() {
       setView('accounts');
       setAccountSection('invoices');
     }
-  }), !loading && view === 'accounts' && (accountSection === 'accounts' || accountSection === 'familyGroups') && /*#__PURE__*/React.createElement(ParentsView, {
+  }), !loading && view === 'accounts' && /*#__PURE__*/React.createElement("div", {
+    className: "side-shell"
+  }, /*#__PURE__*/React.createElement("nav", {
+    className: "side-nav"
+  }, [['accounts', 'Accounts'], ['familyGroups', 'Groups'], ['swimmers', 'Swimmers'], ['invoices', 'Invoices'], ['receipts', 'Receipts'], ['pendingCredits', 'Pending Credits'], ['aging', 'Aging'], ['codes', 'Discounts'], ['reports', 'Reports']].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
+    key: k,
+    className: `side-nav-btn${accountSection === k ? ' active' : ''}`,
+    onClick: () => setAccountSection(k)
+  }, l))), /*#__PURE__*/React.createElement("div", {
+    className: "side-content"
+  }, ['accounts', 'familyGroups', 'swimmers', 'invoices', 'receipts'].includes(accountSection) && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 12,
+      maxWidth: 440
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: accountSearchQ,
+    onChange: e => setAccountSearchQ(e.target.value),
+    placeholder: accountSection === 'swimmers' ? 'Search swimmer, parent, phone…' : accountSection === 'invoices' ? 'Search invoice # or account…' : accountSection === 'receipts' ? 'Search receipt #, invoice, account…' : accountSection === 'familyGroups' ? 'Search group or member…' : 'Search account, email, phone, swimmer…'
+  })), !loading && view === 'accounts' && (accountSection === 'accounts' || accountSection === 'familyGroups') && /*#__PURE__*/React.createElement(ParentsView, {
     externalSearchQ: accountSearchQ,
     branches: options.branches || [],
     accountSection: accountSection,
@@ -5084,7 +5066,7 @@ function App() {
     deleteCode: deleteCode,
     pools: activePools(),
     onUpdatePool: updatePool
-  }), !loading && view === 'enroll' && /*#__PURE__*/React.createElement(EnrollView, {
+  }))), !loading && view === 'enroll' && /*#__PURE__*/React.createElement(EnrollView, {
     sessions: sessions.filter(s => {
       if (!currentBranchId || currentBranchId === 'all') return true;
       // A session belongs to a branch via its pool's branch_id
@@ -5138,15 +5120,15 @@ function App() {
     deleteStudent: deleteStudent,
     deleteAccount: deleteAccount
   }), !loading && view === 'settings' && /*#__PURE__*/React.createElement("div", {
-    className: "settings-shell"
+    className: "side-shell"
   }, /*#__PURE__*/React.createElement("nav", {
-    className: "settings-nav"
+    className: "side-nav"
   }, [['summary', 'Summary'], ['branches', 'Branches'], ['pools', 'Pools & Hours'], ['instructors', 'Instructors'], ['lessonTypes', 'Lesson Types'], ['programme', 'Programme'], ['terms', 'Terms'], ['billingTerms', 'Billing Terms'], ['products', 'Products'], ['invoiceSettings', 'Invoice Numbering']].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
     key: k,
-    className: `settings-nav-btn${adminSection === k ? ' active' : ''}`,
+    className: `side-nav-btn${adminSection === k ? ' active' : ''}`,
     onClick: () => setAdminSection(k)
   }, l))), /*#__PURE__*/React.createElement("div", {
-    className: "settings-content"
+    className: "side-content"
   }, adminSection === 'summary' && /*#__PURE__*/React.createElement(SummaryView, {
     summary: summary,
     pools: activePools()
