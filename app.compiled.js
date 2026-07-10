@@ -4742,41 +4742,7 @@ function App() {
     placeholder: accountSection === 'swimmers' ? 'Search swimmer, parent, phone…' : accountSection === 'invoices' ? 'Search invoice # or account…' : accountSection === 'receipts' ? 'Search receipt #, invoice, account…' : accountSection === 'familyGroups' ? 'Search group or member…' : 'Search account, email, phone, swimmer…',
     value: accountSearchQ,
     onChange: e => setAccountSearchQ(e.target.value)
-  })))), !loading && view === 'settings' && /*#__PURE__*/React.createElement("div", {
-    className: "sub-bar"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "sub-bar-inner"
-  }, /*#__PURE__*/React.createElement("button", {
-    className: `sub-tab ${adminSection === 'summary' ? 'active' : ''}`,
-    onClick: () => setAdminSection('summary')
-  }, "Summary"), /*#__PURE__*/React.createElement("button", {
-    className: `sub-tab ${adminSection === 'branches' ? 'active' : ''}`,
-    onClick: () => setAdminSection('branches')
-  }, "Branches"), /*#__PURE__*/React.createElement("button", {
-    className: `sub-tab ${adminSection === 'pools' ? 'active' : ''}`,
-    onClick: () => setAdminSection('pools')
-  }, "Pools & Hours"), /*#__PURE__*/React.createElement("button", {
-    className: `sub-tab ${adminSection === 'instructors' ? 'active' : ''}`,
-    onClick: () => setAdminSection('instructors')
-  }, "Instructors"), /*#__PURE__*/React.createElement("button", {
-    className: `sub-tab ${adminSection === 'lessonTypes' ? 'active' : ''}`,
-    onClick: () => setAdminSection('lessonTypes')
-  }, "Lesson Types"), /*#__PURE__*/React.createElement("button", {
-    className: `sub-tab ${adminSection === 'programme' ? 'active' : ''}`,
-    onClick: () => setAdminSection('programme')
-  }, "Programme"), /*#__PURE__*/React.createElement("button", {
-    className: `sub-tab ${adminSection === 'terms' ? 'active' : ''}`,
-    onClick: () => setAdminSection('terms')
-  }, "Terms"), /*#__PURE__*/React.createElement("button", {
-    className: `sub-tab ${adminSection === 'billingTerms' ? 'active' : ''}`,
-    onClick: () => setAdminSection('billingTerms')
-  }, "Billing Terms"), /*#__PURE__*/React.createElement("button", {
-    className: `sub-tab ${adminSection === 'products' ? 'active' : ''}`,
-    onClick: () => setAdminSection('products')
-  }, "Products"), /*#__PURE__*/React.createElement("button", {
-    className: `sub-tab ${adminSection === 'invoiceSettings' ? 'active' : ''}`,
-    onClick: () => setAdminSection('invoiceSettings')
-  }, "Invoice Numbering"))), /*#__PURE__*/React.createElement("div", {
+  })))), /*#__PURE__*/React.createElement("div", {
     className: "wrap"
   }, loading ? /*#__PURE__*/React.createElement("div", {
     className: "card",
@@ -5171,38 +5137,48 @@ function App() {
     updateStudent: updateStudent,
     deleteStudent: deleteStudent,
     deleteAccount: deleteAccount
-  }), !loading && view === 'settings' && adminSection === 'summary' && /*#__PURE__*/React.createElement(SummaryView, {
+  }), !loading && view === 'settings' && /*#__PURE__*/React.createElement("div", {
+    className: "settings-shell"
+  }, /*#__PURE__*/React.createElement("nav", {
+    className: "settings-nav"
+  }, [['summary', 'Summary'], ['branches', 'Branches'], ['pools', 'Pools & Hours'], ['instructors', 'Instructors'], ['lessonTypes', 'Lesson Types'], ['programme', 'Programme'], ['terms', 'Terms'], ['billingTerms', 'Billing Terms'], ['products', 'Products'], ['invoiceSettings', 'Invoice Numbering']].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
+    key: k,
+    className: `settings-nav-btn${adminSection === k ? ' active' : ''}`,
+    onClick: () => setAdminSection(k)
+  }, l))), /*#__PURE__*/React.createElement("div", {
+    className: "settings-content"
+  }, adminSection === 'summary' && /*#__PURE__*/React.createElement(SummaryView, {
     summary: summary,
     pools: activePools()
-  }), !loading && view === 'settings' && adminSection === 'branches' && /*#__PURE__*/React.createElement(BranchesAdminView, {
+  }), adminSection === 'branches' && /*#__PURE__*/React.createElement(BranchesAdminView, {
     branches: options.branches || [],
     addBranch: addBranch,
     updateBranch: updateBranch,
     deleteBranch: deleteBranch
-  }), !loading && view === 'settings' && adminSection === 'programme' && /*#__PURE__*/React.createElement(ProgrammeCategoriesView, {
+  }), adminSection === 'programme' && /*#__PURE__*/React.createElement(ProgrammeCategoriesView, {
     categories: programmeCategories,
     addCategory: addProgrammeCategory,
     updateCategory: updateProgrammeCategory,
     deleteCategory: deleteProgrammeCategory
-  }), !loading && view === 'settings' && adminSection === 'terms' && /*#__PURE__*/React.createElement(TermsAdminView, {
+  }), adminSection === 'terms' && /*#__PURE__*/React.createElement(TermsAdminView, {
     branches: options.branches || [],
     currentBranchId: currentBranchId,
     defaultTerms: defaultTermsText(),
     onSave: saveBranchTerms
-  }), !loading && view === 'settings' && adminSection === 'billingTerms' && /*#__PURE__*/React.createElement(BillingTermsAdminView, {
+  }), adminSection === 'billingTerms' && /*#__PURE__*/React.createElement(BillingTermsAdminView, {
     terms: billingTerms,
     branches: options.branches || [],
     currentBranchId: currentBranchId,
     addTerm: addBillingTerm,
     updateTerm: updateBillingTerm,
     deleteTerm: deleteBillingTerm
-  }), !loading && view === 'settings' && adminSection === 'products' && /*#__PURE__*/React.createElement(ProductsAdminView, {
+  }), adminSection === 'products' && /*#__PURE__*/React.createElement(ProductsAdminView, {
     products: products,
     addProduct: addCatalogProduct,
     updateProduct: updateCatalogProduct,
     deleteProduct: deleteCatalogProduct,
     reorderProducts: reorderProducts
-  }), !loading && view === 'settings' && adminSection === 'invoiceSettings' && /*#__PURE__*/React.createElement("div", {
+  }), adminSection === 'invoiceSettings' && /*#__PURE__*/React.createElement("div", {
     className: "card"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5220,7 +5196,7 @@ function App() {
     onSave: saveInvoiceSettings,
     formatInvoiceNumber: formatInvoiceNumber,
     formatReceiptNumber: formatReceiptNumber
-  })), !loading && view === 'settings' && (adminSection === 'pools' || adminSection === 'instructors' || adminSection === 'lessonTypes') && /*#__PURE__*/React.createElement(SettingsView, {
+  })), (adminSection === 'pools' || adminSection === 'instructors' || adminSection === 'lessonTypes') && /*#__PURE__*/React.createElement(SettingsView, {
     section: adminSection,
     options: options,
     currentBranchId: currentBranchId,
@@ -5242,7 +5218,7 @@ function App() {
     deleteCode: deleteCode,
     pools: activePools(),
     onUpdatePool: updatePool
-  })), modal ? /*#__PURE__*/React.createElement(SessionModal, {
+  })))), modal ? /*#__PURE__*/React.createElement(SessionModal, {
     modal: modal,
     setModal: setModal,
     saveBusy: saveBusy,
