@@ -3118,30 +3118,7 @@ function App(){
     </div></div>}
 
     {/* ── Sub-bar: accounts tabs ── */}
-    {!loading && view==='accounts' && <div className="sub-bar"><div className="sub-bar-inner">
-      <button className={`sub-tab ${accountSection==='accounts'?'active':''}`} onClick={()=>setAccountSection('accounts')}>Accounts</button>
-      <button className={`sub-tab ${accountSection==='familyGroups'?'active':''}`} onClick={()=>setAccountSection('familyGroups')}>Groups</button>
-      <button className={`sub-tab ${accountSection==='swimmers'?'active':''}`} onClick={()=>setAccountSection('swimmers')}>Swimmers</button>
-      <button className={`sub-tab ${accountSection==='invoices'?'active':''}`} onClick={()=>setAccountSection('invoices')}>Invoices</button>
-      <button className={`sub-tab ${accountSection==='receipts'?'active':''}`} onClick={()=>setAccountSection('receipts')}>Receipts</button>
-      <button className={`sub-tab ${accountSection==='pendingCredits'?'active':''}`} onClick={()=>setAccountSection('pendingCredits')}>Pending Credits</button>
-      <button className={`sub-tab ${accountSection==='aging'?'active':''}`} onClick={()=>setAccountSection('aging')}>Aging</button>
-      <button className={`sub-tab ${accountSection==='codes'?'active':''}`} onClick={()=>setAccountSection('codes')}>Discounts</button>
-      <button className={`sub-tab ${accountSection==='reports'?'active':''}`} onClick={()=>setAccountSection('reports')}>Reports</button>
-      {/* Inline search for the modules that use it */}
-      {['accounts','familyGroups','swimmers','invoices','receipts'].includes(accountSection) && <div className="sub-bar-spacer">
-        <input
-          className="input sub-bar-search"
-          placeholder={accountSection==='swimmers' ? 'Search swimmer, parent, phone…'
-                     : accountSection==='invoices' ? 'Search invoice # or account…'
-                     : accountSection==='receipts' ? 'Search receipt #, invoice, account…'
-                     : accountSection==='familyGroups' ? 'Search group or member…'
-                     : 'Search account, email, phone, swimmer…'}
-          value={accountSearchQ}
-          onChange={e=>setAccountSearchQ(e.target.value)}
-        />
-      </div>}
-    </div></div>}
+    {/* Accounts navigation is now a left-column nav rendered with the content below. */}
 
     {/* ── Sub-bar: admin tabs ── */}
     {/* Settings navigation is now a left-column nav rendered with the content below. */}
@@ -3295,6 +3272,22 @@ function App(){
       />}
 
       {/* ── Accounts views (no side-column for billing sub-sections) ── */}
+      {/* ── Accounts: left-column nav + content ── */}
+      {!loading && view==='accounts' && <div className="side-shell">
+        <nav className="side-nav">
+          {[['accounts','Accounts'],['familyGroups','Groups'],['swimmers','Swimmers'],['invoices','Invoices'],['receipts','Receipts'],['pendingCredits','Pending Credits'],['aging','Aging'],['codes','Discounts'],['reports','Reports']].map(([k,l])=>
+            <button key={k} className={`side-nav-btn${accountSection===k?' active':''}`} onClick={()=>setAccountSection(k)}>{l}</button>
+          )}
+        </nav>
+        <div className="side-content">
+          {['accounts','familyGroups','swimmers','invoices','receipts'].includes(accountSection) && <div style={{marginBottom:12,maxWidth:440}}>
+            <input className="input" value={accountSearchQ} onChange={e=>setAccountSearchQ(e.target.value)}
+              placeholder={accountSection==='swimmers' ? 'Search swimmer, parent, phone…'
+                         : accountSection==='invoices' ? 'Search invoice # or account…'
+                         : accountSection==='receipts' ? 'Search receipt #, invoice, account…'
+                         : accountSection==='familyGroups' ? 'Search group or member…'
+                         : 'Search account, email, phone, swimmer…'} />
+          </div>}
       {!loading && view==='accounts' && (accountSection==='accounts'||accountSection==='familyGroups') && <ParentsView
         externalSearchQ={accountSearchQ}
         branches={options.branches||[]}
@@ -3417,6 +3410,8 @@ function App(){
         addCode={addCode} updateCode={updateCode} deleteCode={deleteCode}
         pools={activePools()} onUpdatePool={updatePool}
       />}
+        </div>
+      </div>}
 
       {/* ── Explore ── */}
       {!loading && view==='enroll' && <EnrollView
@@ -3451,13 +3446,13 @@ function App(){
       />}
 
       {/* ── Settings: left-column nav + content ── */}
-      {!loading && view==='settings' && <div className="settings-shell">
-        <nav className="settings-nav">
+      {!loading && view==='settings' && <div className="side-shell">
+        <nav className="side-nav">
           {[['summary','Summary'],['branches','Branches'],['pools','Pools & Hours'],['instructors','Instructors'],['lessonTypes','Lesson Types'],['programme','Programme'],['terms','Terms'],['billingTerms','Billing Terms'],['products','Products'],['invoiceSettings','Invoice Numbering']].map(([k,l])=>
-            <button key={k} className={`settings-nav-btn${adminSection===k?' active':''}`} onClick={()=>setAdminSection(k)}>{l}</button>
+            <button key={k} className={`side-nav-btn${adminSection===k?' active':''}`} onClick={()=>setAdminSection(k)}>{l}</button>
           )}
         </nav>
-        <div className="settings-content">
+        <div className="side-content">
           {adminSection==='summary' && <SummaryView summary={summary} pools={activePools()} />}
           {adminSection==='branches' && <BranchesAdminView
             branches={options.branches||[]}
