@@ -18423,6 +18423,62 @@ function ProgrammeSessionModal({
 // ============================================================================
 // Visual product picker popup for the Shop — cards with photo, title, SKU,
 // description and price.
+// Full-screen image viewer. Click the backdrop (anywhere outside the image),
+// press Esc, or the ✕ to close.
+function ImageLightbox({
+  src,
+  onClose
+}) {
+  React.useEffect(() => {
+    function onKey(e) {
+      if (e.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return /*#__PURE__*/React.createElement("div", {
+    onClick: onClose,
+    style: {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 1000,
+      background: 'rgba(0,0,0,.82)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 24,
+      cursor: 'zoom-out'
+    }
+  }, /*#__PURE__*/React.createElement("img", {
+    src: src,
+    alt: "",
+    onClick: e => e.stopPropagation(),
+    style: {
+      maxWidth: '92vw',
+      maxHeight: '90vh',
+      objectFit: 'contain',
+      borderRadius: 8,
+      boxShadow: '0 10px 40px rgba(0,0,0,.5)',
+      cursor: 'default'
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: onClose,
+    "aria-label": "Close",
+    style: {
+      position: 'absolute',
+      top: 16,
+      right: 20,
+      background: 'rgba(255,255,255,.92)',
+      border: 'none',
+      borderRadius: '50%',
+      width: 38,
+      height: 38,
+      fontSize: 18,
+      cursor: 'pointer',
+      fontWeight: 700
+    }
+  }, "✕"));
+}
 function ProductPickerModal({
   products,
   onPick,
@@ -18610,7 +18666,7 @@ function SalesView({
   const [tab, setTab] = useState('sale'); // 'sale' | 'returns'
   return /*#__PURE__*/React.createElement("div", {
     style: {
-      maxWidth: 860,
+      maxWidth: 1120,
       margin: '18px auto 0'
     }
   }, /*#__PURE__*/React.createElement("div", {
@@ -18667,52 +18723,76 @@ function ShopSale({
   const activeBranches = (branches || []).filter(b => b.is_active !== false);
   const [branchId, setBranchId] = useState(currentBranchId && currentBranchId !== 'all' ? currentBranchId : '');
   const [cart, setCart] = useState([]);
-  const [pSku, setPSku] = useState('');
-  const [pDesc, setPDesc] = useState('');
-  const [pQty, setPQty] = useState(1);
-  const [pPrice, setPPrice] = useState('');
-  const [pImg, setPImg] = useState('');
   const [paidNow, setPaidNow] = useState(true);
   const [method, setMethod] = useState('cash');
   const [date, setDate] = useState(todayStr());
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
-  const [showPicker, setShowPicker] = useState(false);
   const [result, setResult] = useState(null);
+  const [page, setPage] = useState(0);
+  const [catQuery, setCatQuery] = useState('');
+  const [lightboxSrc, setLightboxSrc] = useState(null);
+  const [showCustom, setShowCustom] = useState(false);
+  const [cDesc, setCDesc] = useState('');
+  const [cPrice, setCPrice] = useState('');
+  const [cQty, setCQty] = useState(1);
+  const activeProducts = (products || []).filter(p => p.is_active !== false);
+  const term = catQuery.trim().toLowerCase();
+  const catFiltered = term ? activeProducts.filter(p => (p.name || '').toLowerCase().includes(term) || (p.sku || '').toLowerCase().includes(term) || (p.description || '').toLowerCase().includes(term)) : activeProducts;
+  const PAGE = 25;
+  const pageCount = Math.max(1, Math.ceil(catFiltered.length / PAGE));
+  const curPage = Math.min(page, pageCount - 1);
+  const pageItems = catFiltered.slice(curPage * PAGE, curPage * PAGE + PAGE);
   const total = cart.reduce((s, c) => s + Math.max(1, Number(c.quantity) || 1) * (Number(c.unitPrice) || 0), 0);
   const buyerName = mode === 'cash' ? cashName.trim() || 'Cash Sale' : acct?.name || '';
   const buyerPhone = mode === 'account' ? acct?.phone || '' : cashPhone.trim();
   const canGenerate = cart.length > 0 && (mode === 'cash' || !!acct);
-  const activeProducts = (products || []).filter(p => p.is_active !== false);
   const branchName = (activeBranches.find(b => b.id === branchId) || {}).name;
   const filteredAccounts = acctQuery.trim() ? (accounts || []).filter(a => (a.name || '').toLowerCase().includes(acctQuery.trim().toLowerCase())) : accounts || [];
-  function pickProduct(id) {
-    const p = activeProducts.find(x => x.id === id);
-    if (!p) return;
-    setPDesc(p.name);
-    setPSku(p.sku || '');
-    setPImg(p.image_url || '');
-    if (p.price != null) setPPrice(String(p.price));
+  function addFromCatalogue(p) {
+    const ex = cart.find(c => c.productId === p.id);
+    if (ex) {
+      setCart(cart.map(c => c.id === ex.id ? {
+        ...c,
+        quantity: c.quantity + 1
+      } : c));
+    } else {
+      setCart([...cart, {
+        id: Math.random().toString(36).slice(2),
+        productId: p.id,
+        sku: p.sku || '',
+        image: p.image_url || '',
+        description: p.name,
+        quantity: 1,
+        unitPrice: Number(p.price) || 0
+      }]);
+    }
   }
-  function addToCart() {
-    const d = pDesc.trim();
-    const u = Number(pPrice) || 0;
-    const q = Math.max(1, Number(pQty) || 1);
+  function addCustom() {
+    const d = cDesc.trim();
+    const u = Number(cPrice) || 0;
+    const q = Math.max(1, Number(cQty) || 1);
     if (!d || !(u > 0)) return;
     setCart([...cart, {
       id: Math.random().toString(36).slice(2),
-      sku: pSku.trim(),
-      image: pImg,
+      productId: null,
+      sku: '',
+      image: '',
       description: d,
       quantity: q,
       unitPrice: u
     }]);
-    setPDesc('');
-    setPSku('');
-    setPImg('');
-    setPQty(1);
-    setPPrice('');
+    setCDesc('');
+    setCPrice('');
+    setCQty(1);
+    setShowCustom(false);
+  }
+  function setQty(id, q) {
+    setCart(cart.map(c => c.id === id ? {
+      ...c,
+      quantity: Math.max(1, q)
+    } : c));
   }
   function removeFromCart(id) {
     setCart(cart.filter(c => c.id !== id));
@@ -18761,6 +18841,8 @@ function ShopSale({
     setAcctQuery('');
     setNotes('');
     setMode('cash');
+    setPage(0);
+    setCatQuery('');
   }
   if (result) {
     const inv = result.invoice || {};
@@ -19032,113 +19114,250 @@ function ShopSale({
       }
     }, busy ? 'Processing…' : paidNow ? '✅ Confirm & Print Receipt' : '✅ Confirm & Create Invoice')));
   }
-  return /*#__PURE__*/React.createElement("div", {
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "shop-layout"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 10,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: {
+      flex: 1,
+      minWidth: 180
+    },
+    value: catQuery,
+    onChange: e => {
+      setCatQuery(e.target.value);
+      setPage(0);
+    },
+    placeholder: "Search products by name, SKU or description…"
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => setShowCustom(s => !s)
+  }, "＋ Custom item")), showCustom && /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 10,
+      display: 'flex',
+      gap: 8,
+      alignItems: 'end',
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0,
+      flex: 1,
+      minWidth: 140
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Off-catalogue item"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: cDesc,
+    onChange: e => setCDesc(e.target.value),
+    placeholder: "e.g. Ear plugs"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0,
+      width: 64
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Qty"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "number",
+    min: "1",
+    value: cQty,
+    onChange: e => setCQty(Math.max(1, parseInt(e.target.value, 10) || 1))
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0,
+      width: 96
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Unit RM"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "number",
+    min: "0",
+    step: "0.01",
+    value: cPrice,
+    onChange: e => setCPrice(e.target.value),
+    placeholder: "0.00"
+  })), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary small",
+    onClick: addCustom,
+    disabled: !cDesc.trim() || !(Number(cPrice) > 0)
+  }, "Add to cart")), catFiltered.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "empty",
+    style: {
+      padding: 30
+    }
+  }, "No products found. Add items in Settings › Products.") : /*#__PURE__*/React.createElement("div", {
+    className: "shop-grid"
+  }, pageItems.map(p => /*#__PURE__*/React.createElement("div", {
+    key: p.id,
+    className: "card",
+    style: {
+      padding: 0,
+      overflow: 'hidden',
+      display: 'flex',
+      flexDirection: 'column'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: () => p.image_url && setLightboxSrc(p.image_url),
+    title: p.image_url ? 'Click to enlarge' : undefined,
+    style: {
+      height: 104,
+      background: 'var(--surface-2)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      overflow: 'hidden',
+      cursor: p.image_url ? 'zoom-in' : 'default'
+    }
+  }, p.image_url ? /*#__PURE__*/React.createElement("img", {
+    src: p.image_url,
+    alt: "",
+    style: {
+      width: '100%',
+      height: '100%',
+      objectFit: 'cover'
+    }
+  }) : /*#__PURE__*/React.createElement("span", {
+    className: "small subtle"
+  }, "No photo")), /*#__PURE__*/React.createElement("div", {
+    onClick: () => {
+      if (window.confirm('Add product to cart?')) addFromCatalogue(p);
+    },
+    title: "Add to cart",
+    style: {
+      padding: '8px 10px',
+      cursor: 'pointer',
+      flex: 1,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 2
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 700,
+      fontSize: 13,
+      lineHeight: 1.2
+    }
+  }, p.name), p.sku && /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      fontFamily: 'monospace',
+      fontSize: 10
+    }
+  }, p.sku), p.description && /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      fontSize: 11,
+      lineHeight: 1.3,
+      maxHeight: 29,
+      overflow: 'hidden'
+    }
+  }, p.description), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 800,
+      marginTop: 'auto',
+      paddingTop: 4
+    }
+  }, p.price != null ? `RM${Number(p.price).toFixed(2)}` : '—'))))), pageCount > 1 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: 10,
+      marginTop: 14
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    disabled: curPage === 0,
+    onClick: () => setPage(curPage - 1)
+  }, "‹ Prev"), /*#__PURE__*/React.createElement("span", {
+    className: "small subtle"
+  }, "Page ", curPage + 1, " of ", pageCount, " · ", catFiltered.length, " products"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    disabled: curPage >= pageCount - 1,
+    onClick: () => setPage(curPage + 1)
+  }, "Next ›"))), /*#__PURE__*/React.createElement("div", {
+    className: "shop-cart-col"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card",
     style: {
       display: 'flex',
       flexDirection: 'column',
-      gap: 14
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontWeight: 800,
-      marginBottom: 8
-    }
-  }, "1 · Bill to"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 8,
-      marginBottom: 10
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    className: `btn small ${mode === 'cash' ? 'btn-primary' : 'btn-ghost'}`,
-    onClick: () => setMode('cash')
-  }, "💵 Cash sale"), /*#__PURE__*/React.createElement("button", {
-    className: `btn small ${mode === 'account' ? 'btn-primary' : 'btn-ghost'}`,
-    onClick: () => setMode('account')
-  }, "👤 Existing account")), mode === 'cash' ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
       gap: 10
     }
   }, /*#__PURE__*/React.createElement("div", {
-    className: "field",
     style: {
-      margin: 0
+      fontWeight: 800,
+      fontSize: 15
     }
-  }, /*#__PURE__*/React.createElement("label", null, "Name on receipt"), /*#__PURE__*/React.createElement("input", {
+  }, "🧾 Current Bill"), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      marginBottom: 6
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: `btn small ${mode === 'cash' ? 'btn-primary' : 'btn-ghost'}`,
+    onClick: () => setMode('cash'),
+    style: {
+      flex: 1
+    }
+  }, "💵 Cash"), /*#__PURE__*/React.createElement("button", {
+    className: `btn small ${mode === 'account' ? 'btn-primary' : 'btn-ghost'}`,
+    onClick: () => setMode('account'),
+    style: {
+      flex: 1
+    }
+  }, "👤 Account")), mode === 'cash' ? /*#__PURE__*/React.createElement("input", {
     className: "input",
     value: cashName,
     onChange: e => setCashName(e.target.value),
-    placeholder: "Cash Sale (or walk-in name)"
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "field",
-    style: {
-      margin: 0
-    }
-  }, /*#__PURE__*/React.createElement("label", null, "Phone (optional)"), /*#__PURE__*/React.createElement("input", {
-    className: "input",
-    value: cashPhone,
-    onChange: e => setCashPhone(e.target.value)
-  }))) : /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "field",
-    style: {
-      margin: 0
-    }
-  }, /*#__PURE__*/React.createElement("label", null, "Search account"), /*#__PURE__*/React.createElement("input", {
+    placeholder: "Name (default: Cash Sale)"
+  }) : /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("input", {
     className: "input",
     value: acctQuery,
     onChange: e => setAcctQuery(e.target.value),
-    placeholder: "Type a parent's name…"
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "field",
+    placeholder: "Search account…",
     style: {
-      margin: '8px 0 0'
+      marginBottom: 6
     }
-  }, /*#__PURE__*/React.createElement("label", null, "Account (", filteredAccounts.length, ")"), /*#__PURE__*/React.createElement("select", {
+  }), /*#__PURE__*/React.createElement("select", {
     className: "select",
     value: accountKey,
     onChange: e => setAccountKey(e.target.value)
   }, /*#__PURE__*/React.createElement("option", {
     value: ""
-  }, "— Select an account —"), filteredAccounts.map(a => /*#__PURE__*/React.createElement("option", {
+  }, "— Select account (", filteredAccounts.length, ") —"), filteredAccounts.slice(0, 80).map(a => /*#__PURE__*/React.createElement("option", {
     key: a.key,
     value: a.key
-  }, a.name, a.phone ? ` · ${a.phone}` : '')))), acct && /*#__PURE__*/React.createElement("div", {
+  }, a.name, a.phone ? ` · ${a.phone}` : ''))))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      borderTop: '1px solid var(--border)',
+      paddingTop: 8
+    }
+  }, cart.length === 0 ? /*#__PURE__*/React.createElement("div", {
     className: "small subtle",
     style: {
-      marginTop: 6
+      textAlign: 'center',
+      padding: '10px 0'
     }
-  }, "Invoice to: ", /*#__PURE__*/React.createElement("strong", null, acct.name), acct.email ? ` · ${acct.email}` : '', acct.phone ? ` · ${acct.phone}` : '')), /*#__PURE__*/React.createElement("div", {
-    className: "field",
-    style: {
-      margin: '10px 0 0',
-      maxWidth: 280
-    }
-  }, /*#__PURE__*/React.createElement("label", null, "Attribute to branch (optional)"), /*#__PURE__*/React.createElement("select", {
-    className: "select",
-    value: branchId,
-    onChange: e => setBranchId(e.target.value)
-  }, /*#__PURE__*/React.createElement("option", {
-    value: ""
-  }, "No specific branch"), activeBranches.map(b => /*#__PURE__*/React.createElement("option", {
-    key: b.id,
-    value: b.id
-  }, b.name, b.code ? ` (${b.code})` : ''))))), /*#__PURE__*/React.createElement("div", {
-    className: "card"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontWeight: 800,
-      marginBottom: 8
-    }
-  }, "2 · Items"), cart.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "Cart is empty — tap a product to add.") : /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       flexDirection: 'column',
-      gap: 6,
-      marginBottom: 10
+      gap: 8,
+      maxHeight: 300,
+      overflowY: 'auto'
     }
   }, cart.map(c => {
     const q = Math.max(1, Number(c.quantity) || 1);
@@ -19147,184 +19366,133 @@ function ShopSale({
       key: c.id,
       style: {
         display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        padding: '6px 10px',
-        background: 'var(--surface-2)',
-        border: '1px solid var(--border)',
-        borderRadius: 8
+        gap: 6,
+        alignItems: 'center'
       }
     }, c.image ? /*#__PURE__*/React.createElement("img", {
       src: c.image,
       alt: "",
       style: {
-        width: 36,
-        height: 36,
-        borderRadius: 6,
+        width: 30,
+        height: 30,
+        borderRadius: 5,
         objectFit: 'cover',
-        border: '1px solid var(--border)',
-        flexShrink: 0
+        flexShrink: 0,
+        border: '1px solid var(--border)'
       }
-    }) : null, /*#__PURE__*/React.createElement("span", {
+    }) : null, /*#__PURE__*/React.createElement("div", {
       style: {
         flex: 1,
-        fontWeight: 600
+        minWidth: 0
       }
-    }, c.description, c.sku ? /*#__PURE__*/React.createElement("span", {
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        fontWeight: 600,
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis'
+      }
+    }, c.description), /*#__PURE__*/React.createElement("div", {
       className: "small subtle",
       style: {
-        fontFamily: 'monospace',
-        marginLeft: 6
+        fontSize: 10
       }
-    }, "[", c.sku, "]") : null), /*#__PURE__*/React.createElement("span", {
-      className: "small subtle"
-    }, q, " × RM", u.toFixed(2)), /*#__PURE__*/React.createElement("span", {
+    }, "RM", u.toFixed(2), " each")), /*#__PURE__*/React.createElement("div", {
       style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 2,
+        flexShrink: 0
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      style: {
+        padding: '0 6px'
+      },
+      onClick: () => setQty(c.id, q - 1)
+    }, "−"), /*#__PURE__*/React.createElement("span", {
+      style: {
+        minWidth: 16,
+        textAlign: 'center',
+        fontSize: 12,
+        fontWeight: 700
+      }
+    }, q), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      style: {
+        padding: '0 6px'
+      },
+      onClick: () => setQty(c.id, q + 1)
+    }, "+")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: 58,
+        textAlign: 'right',
         fontWeight: 700,
-        minWidth: 80,
-        textAlign: 'right'
+        fontSize: 12,
+        flexShrink: 0
       }
     }, "RM", (q * u).toFixed(2)), /*#__PURE__*/React.createElement("button", {
       className: "btn btn-ghost small",
       style: {
         color: '#DC2626',
-        padding: '0 6px'
+        padding: '0 4px',
+        flexShrink: 0
       },
       onClick: () => removeFromCart(c.id),
       title: "Remove"
     }, "×"));
-  })), activeProducts.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }))), /*#__PURE__*/React.createElement("div", {
     style: {
-      marginBottom: 8,
       display: 'flex',
+      justifyContent: 'space-between',
       alignItems: 'center',
-      gap: 10,
-      flexWrap: 'wrap'
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-ghost",
-    onClick: () => setShowPicker(true)
-  }, "🔍 Browse catalogue (", activeProducts.length, ")"), pImg ? /*#__PURE__*/React.createElement("img", {
-    src: pImg,
-    alt: "",
-    style: {
-      width: 40,
-      height: 40,
-      borderRadius: 8,
-      objectFit: 'cover',
-      border: '1px solid var(--border)'
-    },
-    title: "Selected product photo"
-  }) : null, pDesc ? /*#__PURE__*/React.createElement("span", {
-    className: "small subtle"
-  }, "Selected: ", /*#__PURE__*/React.createElement("strong", null, pDesc), pPrice ? ` · RM${Number(pPrice).toFixed(2)}` : '', " — set qty and press Add") : null), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'grid',
-      gridTemplateColumns: '1fr 110px 56px 92px auto',
-      gap: 8,
-      alignItems: 'end'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "field",
-    style: {
-      margin: 0
-    }
-  }, /*#__PURE__*/React.createElement("label", null, "Item"), /*#__PURE__*/React.createElement("input", {
-    className: "input",
-    value: pDesc,
-    onChange: e => setPDesc(e.target.value),
-    placeholder: "e.g. Swim goggles",
-    onKeyDown: e => {
-      if (e.key === 'Enter') addToCart();
-    }
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "field",
-    style: {
-      margin: 0
-    }
-  }, /*#__PURE__*/React.createElement("label", null, "SKU"), /*#__PURE__*/React.createElement("input", {
-    className: "input",
-    value: pSku,
-    onChange: e => setPSku(e.target.value),
-    placeholder: "optional"
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "field",
-    style: {
-      margin: 0
-    }
-  }, /*#__PURE__*/React.createElement("label", null, "Qty"), /*#__PURE__*/React.createElement("input", {
-    className: "input",
-    type: "number",
-    min: "1",
-    step: "1",
-    value: pQty,
-    onChange: e => setPQty(Math.max(1, parseInt(e.target.value, 10) || 1))
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "field",
-    style: {
-      margin: 0
-    }
-  }, /*#__PURE__*/React.createElement("label", null, "Unit RM"), /*#__PURE__*/React.createElement("input", {
-    className: "input",
-    type: "number",
-    min: "0",
-    step: "0.01",
-    value: pPrice,
-    onChange: e => setPPrice(e.target.value),
-    placeholder: "0.00",
-    onKeyDown: e => {
-      if (e.key === 'Enter') addToCart();
-    }
-  })), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-ghost",
-    style: {
-      height: 38
-    },
-    onClick: addToCart,
-    disabled: !pDesc.trim() || !(Number(pPrice) > 0)
-  }, "+ Add")), /*#__PURE__*/React.createElement("div", {
-    className: "billing-total-row",
-    style: {
-      marginTop: 12
+      borderTop: '1px solid var(--border)',
+      paddingTop: 8
     }
   }, /*#__PURE__*/React.createElement("span", {
-    className: "billing-total-label"
-  }, cart.length, " item", cart.length === 1 ? '' : 's'), /*#__PURE__*/React.createElement("span", {
-    className: "billing-total-value"
-  }, "RM", total.toFixed(2)))), /*#__PURE__*/React.createElement("div", {
-    className: "card"
-  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 700
+    }
+  }, "Total"), /*#__PURE__*/React.createElement("span", {
     style: {
       fontWeight: 800,
-      marginBottom: 8
+      fontSize: 18
     }
-  }, "3 · Payment"), /*#__PURE__*/React.createElement("label", {
+  }, "RM", total.toFixed(2))), activeBranches.length > 1 && /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    value: branchId,
+    onChange: e => setBranchId(e.target.value),
+    title: "Attribute to branch (optional)"
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "No specific branch"), activeBranches.map(b => /*#__PURE__*/React.createElement("option", {
+    key: b.id,
+    value: b.id
+  }, b.name, b.code ? ` (${b.code})` : ''))), /*#__PURE__*/React.createElement("label", {
     style: {
       display: 'flex',
       alignItems: 'center',
       gap: 8,
-      marginBottom: 10,
-      cursor: 'pointer'
+      cursor: 'pointer',
+      fontSize: 13
     }
   }, /*#__PURE__*/React.createElement("input", {
     type: "checkbox",
     checked: paidNow,
     onChange: e => setPaidNow(e.target.checked)
-  }), /*#__PURE__*/React.createElement("span", null, "Payment received now — issue a receipt")), paidNow ? /*#__PURE__*/React.createElement("div", {
+  }), " Payment received now (receipt)"), paidNow && /*#__PURE__*/React.createElement("div", {
     style: {
-      display: 'grid',
-      gridTemplateColumns: '1fr 1fr 1fr',
-      gap: 10
+      display: 'flex',
+      gap: 6
     }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "field",
-    style: {
-      margin: 0
-    }
-  }, /*#__PURE__*/React.createElement("label", null, "Method"), /*#__PURE__*/React.createElement("select", {
+  }, /*#__PURE__*/React.createElement("select", {
     className: "select",
     value: method,
-    onChange: e => setMethod(e.target.value)
+    onChange: e => setMethod(e.target.value),
+    style: {
+      flex: 1
+    }
   }, /*#__PURE__*/React.createElement("option", {
     value: "cash"
   }, "Cash"), /*#__PURE__*/React.createElement("option", {
@@ -19337,48 +19505,25 @@ function ShopSale({
     value: "cheque"
   }, "Cheque"), /*#__PURE__*/React.createElement("option", {
     value: "other"
-  }, "Other"))), /*#__PURE__*/React.createElement("div", {
-    className: "field",
-    style: {
-      margin: 0
-    }
-  }, /*#__PURE__*/React.createElement("label", null, "Date"), /*#__PURE__*/React.createElement("input", {
+  }, "Other")), /*#__PURE__*/React.createElement("input", {
     className: "input",
     type: "date",
     value: date,
-    onChange: e => setDate(e.target.value)
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "field",
+    onChange: e => setDate(e.target.value),
     style: {
-      margin: 0
+      flex: 1
     }
-  }, /*#__PURE__*/React.createElement("label", null, "Note (optional)"), /*#__PURE__*/React.createElement("input", {
-    className: "input",
-    value: notes,
-    onChange: e => setNotes(e.target.value)
-  }))) : /*#__PURE__*/React.createElement("div", {
-    className: "small subtle"
-  }, "An unpaid invoice will be created — record payment later from Accounts → Invoices."), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'flex-end',
-      marginTop: 14
-    }
-  }, /*#__PURE__*/React.createElement("button", {
+  })), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-primary",
-    onClick: () => setShowPreview(true),
     disabled: !canGenerate,
+    onClick: () => setShowPreview(true),
     style: {
       fontSize: 15,
-      padding: '10px 18px'
+      padding: '10px'
     }
-  }, "👁 Preview Bill — RM", total.toFixed(2)))), showPicker && /*#__PURE__*/React.createElement(ProductPickerModal, {
-    products: products,
-    onPick: p => {
-      pickProduct(p.id);
-      setShowPicker(false);
-    },
-    onClose: () => setShowPicker(false)
+  }, "👁 Preview Bill — RM", total.toFixed(2))))), lightboxSrc && /*#__PURE__*/React.createElement(ImageLightbox, {
+    src: lightboxSrc,
+    onClose: () => setLightboxSrc(null)
   }));
 }
 function ShopReturns({
@@ -19753,6 +19898,7 @@ function ProductsAdminView({
   const [editForm, setEditForm] = useState(blank);
   const [dragId, setDragId] = useState(null);
   const [overId, setOverId] = useState(null);
+  const [lightboxSrc, setLightboxSrc] = useState(null);
   function startEdit(p) {
     setEditingId(p.id);
     setEditForm({
@@ -19912,13 +20058,16 @@ function ProductsAdminView({
       background: '#64748B'
     }
   }))), /*#__PURE__*/React.createElement("div", {
+    onClick: () => p.image_url && setLightboxSrc(p.image_url),
+    title: p.image_url ? 'Click to enlarge' : undefined,
     style: {
       height: 130,
       background: 'var(--surface-2)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      overflow: 'hidden'
+      overflow: 'hidden',
+      cursor: p.image_url ? 'zoom-in' : 'default'
     }
   }, p.image_url ? /*#__PURE__*/React.createElement("img", {
     src: p.image_url,
@@ -19983,7 +20132,10 @@ function ProductsAdminView({
       color: '#DC2626'
     },
     onClick: () => deleteProduct(p.id)
-  }, "Delete")))))));
+  }, "Delete")))))), lightboxSrc && /*#__PURE__*/React.createElement(ImageLightbox, {
+    src: lightboxSrc,
+    onClose: () => setLightboxSrc(null)
+  }));
 }
 function BillingTermsAdminView({
   terms,
