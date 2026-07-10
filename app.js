@@ -2451,6 +2451,12 @@ function App(){
     try{ await deleteRows('products', {id}); await loadProducts(); }
     catch(err){ handleErr(err); alert(err.message || 'Failed to delete product'); }
   }
+  async function reorderProducts(orderedIds){
+    try{
+      await Promise.all((orderedIds||[]).map((id,idx)=>patchRows('products',{id},{sort_order:idx+1})));
+      await loadProducts();
+    } catch(err){ handleErr(err); alert(err.message || 'Failed to reorder products'); }
+  }
 
   // Reorder a settings list by reindexing sort_order across the whole list, so
   // the result is clean and gap-free regardless of the existing values.
@@ -3489,6 +3495,7 @@ function App(){
         addProduct={addCatalogProduct}
         updateProduct={updateCatalogProduct}
         deleteProduct={deleteCatalogProduct}
+        reorderProducts={reorderProducts}
       />}
       {!loading && view==='settings' && adminSection==='invoiceSettings' && <div className="card">
         <div style={{fontWeight:800,fontSize:18,marginBottom:4}}>Invoice Numbering &amp; Permissions</div>
@@ -10156,32 +10163,51 @@ function ProductEditCard({ vals, setVals, onSave, onCancel, saveLabel }){
   </div>;
 }
 
-function ProductsAdminView({ products, addProduct, updateProduct, deleteProduct }){
+function ProductsAdminView({ products, addProduct, updateProduct, deleteProduct, reorderProducts }){
   const blank={name:'',sku:'',price:'',image:'',description:''};
   const [form,setForm]=useState(blank);
   const [editingId,setEditingId]=useState(null);
   const [editForm,setEditForm]=useState(blank);
+  const [dragId,setDragId]=useState(null);
+  const [overId,setOverId]=useState(null);
   function startEdit(p){ setEditingId(p.id); setEditForm({name:p.name||'',sku:p.sku||'',price:p.price!=null?String(p.price):'',image:p.image_url||'',description:p.description||''}); }
   async function saveEdit(){ if(!editForm.name.trim()) return; await updateProduct(editingId,{ name:editForm.name.trim(), sku:editForm.sku.trim()||null, price:(editForm.price===''?null:Number(editForm.price)), image_url:editForm.image||null, description:editForm.description.trim()||null }); setEditingId(null); }
   async function addNew(){ if(!form.name.trim()) return; await addProduct({ name:form.name.trim(), sku:form.sku.trim()||null, price:form.price, imageUrl:form.image||null, description:form.description.trim()||null }); setForm(blank); }
+  function onDrop(targetId){
+    if(dragId && dragId!==targetId && reorderProducts){
+      const ids=(products||[]).map(p=>p.id);
+      const from=ids.indexOf(dragId), to=ids.indexOf(targetId);
+      if(from>-1 && to>-1){ ids.splice(to,0,ids.splice(from,1)[0]); reorderProducts(ids); }
+    }
+    setDragId(null); setOverId(null);
+  }
 
   return <>
     <div className="card" style={{marginBottom:14}}>
       <div style={{fontSize:18,fontWeight:800,marginBottom:4}}>🛍 Product Catalogue</div>
-      <div className="small subtle">Items you sell (goggles, caps, swim diapers…). Add a photo, SKU, description and price — the photo and details show in the Shop so staff pick the right item. Shared across all branches; price stays editable per sale.</div>
+      <div className="small subtle">Items you sell (goggles, caps, swim diapers…). Add a photo, SKU, description and price — the photo and details show in the Shop so staff pick the right item. Drag the ⠿ handle on a card to re-order the catalogue. Shared across all branches; price stays editable per sale.</div>
     </div>
 
-    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(230px,1fr))',gap:14,alignItems:'start'}}>
-      {/* Add-new card */}
-      <div>
-        <div className="small subtle" style={{fontWeight:700,marginBottom:6}}>＋ New product</div>
-        <ProductEditCard vals={form} setVals={setForm} onSave={addNew} onCancel={null} saveLabel="Add Product" />
-      </div>
+    {/* Top row: new product entry */}
+    <div style={{marginBottom:18,maxWidth:300}}>
+      <div className="small subtle" style={{fontWeight:700,marginBottom:6}}>＋ New product</div>
+      <ProductEditCard vals={form} setVals={setForm} onSave={addNew} onCancel={null} saveLabel="Add Product" />
+    </div>
 
-      {/* Existing products */}
+    {/* Catalogue grid (starts on the next row) */}
+    {(products||[]).length>0 && <div className="small subtle" style={{fontWeight:700,marginBottom:8}}>Catalogue ({(products||[]).length})</div>}
+    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(230px,1fr))',gap:14,alignItems:'start'}}>
       {(products||[]).map(p => editingId===p.id
         ? <div key={p.id}><div className="small subtle" style={{fontWeight:700,marginBottom:6}}>Editing</div><ProductEditCard vals={editForm} setVals={setEditForm} onSave={saveEdit} onCancel={()=>setEditingId(null)} saveLabel="Save" /></div>
-        : <div key={p.id} className="card" style={{padding:0,overflow:'hidden',display:'flex',flexDirection:'column'}}>
+        : <div key={p.id} className="card"
+            onDragOver={e=>{ e.preventDefault(); if(overId!==p.id) setOverId(p.id); }}
+            onDrop={e=>{ e.preventDefault(); onDrop(p.id); }}
+            style={{padding:0,overflow:'hidden',display:'flex',flexDirection:'column',position:'relative',opacity:dragId===p.id?0.4:1,outline:(overId===p.id&&dragId&&dragId!==p.id)?'2px solid var(--primary)':'none',outlineOffset:'-1px',transition:'opacity .12s'}}>
+            <div draggable onDragStart={e=>{ setDragId(p.id); e.dataTransfer.effectAllowed='move'; }} onDragEnd={()=>{ setDragId(null); setOverId(null); }}
+              title="Drag to re-order" aria-label="Drag to re-order"
+              style={{position:'absolute',top:6,left:6,zIndex:2,display:'inline-grid',gridTemplateColumns:'5px 5px',gap:3,padding:6,borderRadius:6,background:'rgba(255,255,255,.85)',boxShadow:'0 1px 3px rgba(0,0,0,.18)',cursor:'grab'}}>
+              {[0,1,2,3].map(i=><span key={i} style={{width:5,height:5,borderRadius:'50%',background:'#64748B'}} />)}
+            </div>
             <div style={{height:130,background:'var(--surface-2)',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}}>
               {p.image_url ? <img src={p.image_url} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : <span className="small subtle">No photo</span>}
             </div>
