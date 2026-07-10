@@ -227,6 +227,14 @@
     .shop-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
     @media (max-width:920px){.shop-layout{grid-template-columns:1fr}.shop-cart-col{position:static}.shop-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
     @media (max-width:560px){.shop-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    /* ── Settings left-column nav ── */
+    .settings-shell{display:grid;grid-template-columns:212px 1fr;gap:18px;align-items:start}
+    .settings-nav{display:flex;flex-direction:column;gap:2px;position:sticky;top:78px}
+    .settings-nav-btn{text-align:left;padding:9px 12px;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--text-2);font-size:13.5px;font-weight:600;cursor:pointer;transition:.12s ease}
+    .settings-nav-btn:hover{background:var(--surface-2)}
+    .settings-nav-btn.active{background:var(--primary);color:#fff}
+    .settings-content{min-width:0}
+    @media (max-width:760px){.settings-shell{grid-template-columns:1fr}.settings-nav{position:static;flex-direction:row;flex-wrap:wrap;gap:6px;margin-bottom:10px}.settings-nav-btn{border:1px solid var(--border)}}
     table{width:100%;border-collapse:collapse}.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:14px}
     th,td{padding:8px 12px;border-bottom:1px solid var(--border);font-size:12px;text-align:left;vertical-align:middle} thead th{background:var(--surface-2);color:var(--text-2);font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;font-weight:600;border-bottom:1.5px solid var(--border-2)}
     tr:last-child td{border-bottom:none}
