@@ -516,7 +516,10 @@ function PeriodNav({
     className: "period-nav-actions"
   }, children) : null);
 }
-function App() {
+function App({
+  currentUser,
+  onLogout
+}) {
   const [view, setView] = useState('schedule'); // 'schedule'|'programme'|'accounts'|'enroll'|'settings'|'students'
   const [scheduleSection, setScheduleSection] = useState('week'); // 'week'|'day'|'month'
   // ── Programme planner (event & workout planning calendar) ──────────────
@@ -4590,7 +4593,26 @@ function App() {
   }, /*#__PURE__*/React.createElement("span", {
     className: `status-dot ${loading ? 'is-loading' : error ? 'is-error' : 'is-ok'}`,
     "aria-hidden": "true"
-  }), loading ? 'Connecting…' : error ? 'Error' : status || 'Ready')), /*#__PURE__*/React.createElement("nav", {
+  }), loading ? 'Connecting…' : error ? 'Error' : status || 'Ready'), currentUser && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "small",
+    style: {
+      fontWeight: 700,
+      color: 'var(--text-2)'
+    },
+    title: `Role: ${currentUser.role}`
+  }, "👤 ", currentUser.displayName || currentUser.username), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => {
+      if (confirm('Sign out of the scheduler?')) onLogout();
+    },
+    title: "Sign out"
+  }, "Logout"))), /*#__PURE__*/React.createElement("nav", {
     className: "main-nav"
   }, /*#__PURE__*/React.createElement("button", {
     className: `nav-btn ${view === 'schedule' ? 'active' : ''}`,
@@ -20518,4 +20540,175 @@ function ProgrammeCategoriesView({
 }
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────
-ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(ErrorBoundary, null, React.createElement(App)));
+// ── Application login gate ──────────────────────────────────────────────────
+const AUTH_KEY = 'ssb.auth';
+const AUTH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7-day session
+async function sha256Hex(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+function readAuth() {
+  try {
+    const raw = localStorage.getItem(AUTH_KEY);
+    if (!raw) return null;
+    const a = JSON.parse(raw);
+    if (!a || !a.id || !a.ts || Date.now() - a.ts > AUTH_TTL_MS) {
+      localStorage.removeItem(AUTH_KEY);
+      return null;
+    }
+    return a;
+  } catch (_) {
+    return null;
+  }
+}
+function clearAuth() {
+  try {
+    localStorage.removeItem(AUTH_KEY);
+  } catch (_) {}
+}
+function LoginView({
+  onLogin
+}) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function submit(e) {
+    if (e) e.preventDefault();
+    const u = username.trim();
+    if (!u || !password) {
+      setErr('Enter your username and password.');
+      return;
+    }
+    setBusy(true);
+    setErr('');
+    try {
+      const rows = await selectRows('app_users', '*', `&username=eq.${encodeURIComponent(u)}&is_active=eq.true`).catch(() => []);
+      const user = rows?.[0];
+      if (user) {
+        const hash = await sha256Hex((user.password_salt || '') + password);
+        if (hash === user.password_hash) {
+          const auth = {
+            id: user.id,
+            username: user.username,
+            displayName: user.display_name || user.username,
+            role: user.role || 'staff',
+            ts: Date.now()
+          };
+          try {
+            localStorage.setItem(AUTH_KEY, JSON.stringify(auth));
+          } catch (_) {}
+          patchRows('app_users', {
+            id: user.id
+          }, {
+            last_login_at: new Date().toISOString()
+          }).catch(() => {});
+          onLogin(auth);
+          return;
+        }
+      }
+      setErr('Invalid username or password.');
+    } catch (ex) {
+      setErr('Could not reach the server. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      minHeight: '100vh',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: 'var(--bg)',
+      padding: 20
+    }
+  }, /*#__PURE__*/React.createElement("form", {
+    onSubmit: submit,
+    style: {
+      width: 'min(380px,94vw)',
+      background: 'var(--surface)',
+      border: '1px solid var(--border)',
+      borderRadius: 16,
+      padding: '30px 28px',
+      boxShadow: '0 8px 30px rgba(15,23,42,.08)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 18
+    }
+  }, /*#__PURE__*/React.createElement("img", {
+    src: "./logo.png",
+    alt: "",
+    style: {
+      height: 38
+    }
+  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 800,
+      fontSize: 17,
+      lineHeight: 1.1
+    }
+  }, "SSB Scheduler"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle"
+  }, "Star Swim Sdn Bhd"))), /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", null, "Username"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    autoFocus: true,
+    autoCapitalize: "none",
+    value: username,
+    onChange: e => setUsername(e.target.value)
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", null, "Password"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "password",
+    value: password,
+    onChange: e => setPassword(e.target.value)
+  })), err && /*#__PURE__*/React.createElement("div", {
+    className: "small",
+    style: {
+      color: '#DC2626',
+      fontWeight: 600,
+      marginTop: 6
+    }
+  }, err), /*#__PURE__*/React.createElement("button", {
+    type: "submit",
+    className: "btn btn-primary",
+    disabled: busy,
+    style: {
+      width: '100%',
+      marginTop: 14,
+      padding: '10px'
+    }
+  }, busy ? 'Signing in…' : 'Sign in'), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginTop: 14,
+      textAlign: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("a", {
+    href: "./index.html",
+    style: {
+      color: 'var(--text-3)'
+    }
+  }, "← Back to mystarswim.com"))));
+}
+function Root() {
+  const [authUser, setAuthUser] = useState(readAuth());
+  if (!authUser) return /*#__PURE__*/React.createElement(LoginView, {
+    onLogin: setAuthUser
+  });
+  return /*#__PURE__*/React.createElement(ErrorBoundary, null, /*#__PURE__*/React.createElement(App, {
+    currentUser: authUser,
+    onLogout: () => {
+      clearAuth();
+      setAuthUser(null);
+    }
+  }));
+}
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(Root));
