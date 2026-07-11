@@ -3,69 +3,104 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Star Swim — Swim Lessons in Malaysia</title>
-  <meta name="description" content="Star Swim Sdn Bhd — professional swim lessons for all ages across our branches in Malaysia. Learn-to-swim, technique, and squad programmes with certified coaches." />
+  <title>Star Swim — Swimming Lessons in Malaysia | Kids & Adults</title>
+  <meta name="description" content="Star Swim Sdn Bhd — professional swimming lessons for all ages across our branches in Malaysia. Small classes, patient certified coaches, structured levels from first splashes to squad training." />
   <link rel="icon" href="./logo.png" />
   <style>
     :root{
       --bg:#EEF7FD; --surface:#FFFFFF; --primary:#0EA5E9; --primary-dk:#0284C7;
-      --navy:#0C4A6E; --text:#0F172A; --text-2:#475569; --border:#DBEAFE;
+      --navy:#0C4A6E; --text:#0F172A; --text-2:#475569; --border:#DBEAFE; --gold:#F59E0B;
     }
     *{box-sizing:border-box;margin:0;padding:0}
     html{scroll-behavior:smooth}
     body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:var(--text);background:var(--surface);line-height:1.6}
     a{color:inherit;text-decoration:none}
     .wrap{max-width:1080px;margin:0 auto;padding:0 22px}
+    em{font-style:normal;color:var(--primary)}
 
-    /* Header */
-    header{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--border)}
+    header{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.93);backdrop-filter:blur(8px);border-bottom:1px solid var(--border)}
     .hd{display:flex;align-items:center;justify-content:space-between;height:64px}
     .hd-brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:17px;letter-spacing:-.3px}
     .hd-brand img{height:36px}
-    .hd-nav{display:flex;align-items:center;gap:22px;font-size:14px;font-weight:600;color:var(--text-2)}
+    .hd-nav{display:flex;align-items:center;gap:20px;font-size:14px;font-weight:600;color:var(--text-2)}
     .hd-nav a:hover{color:var(--primary)}
-    .btn{display:inline-block;padding:9px 18px;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;border:1px solid transparent;transition:.15s}
-    .btn-login{background:var(--primary);color:#fff}
-    .btn-login:hover{background:var(--primary-dk)}
+    .btn{display:inline-block;padding:9px 18px;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;border:1px solid transparent;transition:.15s;text-align:center}
+    .btn-solid{background:var(--primary);color:#fff}
+    .btn-solid:hover{background:var(--primary-dk)}
     .btn-ghost{border-color:var(--primary);color:var(--primary)}
     .btn-ghost:hover{background:var(--primary);color:#fff}
+    .btn-wa{background:#22C55E;color:#fff}
+    .btn-wa:hover{background:#16A34A}
     .btn-lg{padding:13px 26px;font-size:15px;border-radius:12px}
-    @media (max-width:720px){ .hd-nav .hd-link{display:none} }
+    @media (max-width:760px){ .hd-nav .hd-link{display:none} }
 
-    /* Hero */
-    .hero{background:linear-gradient(180deg,var(--bg) 0%,#fff 100%);padding:72px 0 64px;text-align:center}
-    .hero h1{font-size:clamp(30px,5.4vw,52px);font-weight:900;letter-spacing:-1px;line-height:1.12;color:var(--navy)}
-    .hero h1 span{color:var(--primary)}
-    .hero p{max-width:620px;margin:18px auto 30px;font-size:17px;color:var(--text-2)}
+    .hero{background:linear-gradient(180deg,var(--bg) 0%,#fff 100%);padding:66px 0 56px;text-align:center}
+    .hero .badge{display:inline-block;background:#fff;border:1px solid var(--border);color:var(--primary-dk);font-size:12.5px;font-weight:700;border-radius:999px;padding:5px 14px;margin-bottom:18px}
+    .hero h1{font-size:clamp(30px,5.4vw,52px);font-weight:900;letter-spacing:-1px;line-height:1.1;color:var(--navy)}
+    .hero p{max-width:640px;margin:18px auto 28px;font-size:17px;color:var(--text-2)}
     .hero-ctas{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
-    .hero-strip{display:flex;gap:26px;justify-content:center;flex-wrap:wrap;margin-top:44px;font-size:13.5px;color:var(--text-2);font-weight:600}
-    .hero-strip b{color:var(--primary);font-size:20px;display:block;font-weight:900}
+    .hero-strip{display:flex;gap:28px;justify-content:center;flex-wrap:wrap;margin-top:42px;font-size:13.5px;color:var(--text-2);font-weight:600}
+    .hero-strip b{color:var(--primary);font-size:19px;display:block;font-weight:900}
 
-    /* Sections */
-    section{padding:64px 0}
+    section{padding:62px 0}
+    .kicker{text-align:center;font-size:12.5px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;color:var(--primary);margin-bottom:8px}
     .sec-title{font-size:clamp(22px,3.4vw,32px);font-weight:900;letter-spacing:-.6px;color:var(--navy);text-align:center}
-    .sec-sub{max-width:560px;margin:10px auto 40px;color:var(--text-2);text-align:center;font-size:15px}
-
-    .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
-    @media (max-width:820px){.grid3{grid-template-columns:1fr}}
-    .card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:26px;box-shadow:0 2px 10px rgba(14,165,233,.06)}
-    .card .ico{font-size:30px;margin-bottom:12px}
-    .card h3{font-size:17px;font-weight:800;color:var(--navy);margin-bottom:6px}
-    .card p{font-size:14px;color:var(--text-2)}
-
+    .sec-sub{max-width:600px;margin:10px auto 38px;color:var(--text-2);text-align:center;font-size:15px}
     .alt{background:var(--bg)}
 
-    /* Steps */
+    .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+    .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+    @media (max-width:920px){.grid4{grid-template-columns:repeat(2,1fr)}}
+    @media (max-width:820px){.grid3{grid-template-columns:1fr}}
+    @media (max-width:560px){.grid4{grid-template-columns:1fr}}
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;box-shadow:0 2px 10px rgba(14,165,233,.06)}
+    .card .ico{font-size:28px;margin-bottom:10px}
+    .card h3{font-size:16.5px;font-weight:800;color:var(--navy);margin-bottom:6px}
+    .card p{font-size:13.5px;color:var(--text-2)}
+
+    .prog{padding:0;overflow:hidden;display:flex;flex-direction:column}
+    .prog .ph{height:96px;background:linear-gradient(135deg,var(--primary) 0%,var(--navy) 100%);display:flex;align-items:center;justify-content:center;font-size:40px}
+    .prog .bd{padding:18px 20px;display:flex;flex-direction:column;gap:6px;flex:1}
+    .prog .age{display:inline-block;align-self:flex-start;background:var(--bg);color:var(--primary-dk);font-size:11px;font-weight:800;border-radius:999px;padding:3px 10px}
+    .prog .meta{display:flex;justify-content:space-between;font-size:12px;color:var(--text-2);border-top:1px dashed var(--border);padding-top:10px;margin-top:auto}
+    .prog .meta b{color:var(--navy)}
+
+    .choice{display:grid;grid-template-columns:1fr 1fr;gap:18px;max-width:760px;margin:0 auto}
+    @media (max-width:680px){.choice{grid-template-columns:1fr}}
+    .choice .card{text-align:center;padding:30px 24px}
+
     .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;counter-reset:step}
     @media (max-width:820px){.steps{grid-template-columns:1fr}}
-    .step{position:relative;background:#fff;border:1px solid var(--border);border-radius:16px;padding:26px 26px 26px 26px}
+    .step{position:relative;background:#fff;border:1px solid var(--border);border-radius:16px;padding:28px 24px 24px}
     .step::before{counter-increment:step;content:counter(step);position:absolute;top:-14px;left:22px;background:var(--primary);color:#fff;font-weight:900;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px}
-    .step h3{font-size:16px;font-weight:800;color:var(--navy);margin-bottom:6px;margin-top:4px}
-    .step p{font-size:14px;color:var(--text-2)}
+    .step h3{font-size:15.5px;font-weight:800;color:var(--navy);margin-bottom:6px}
+    .step p{font-size:13.5px;color:var(--text-2)}
 
-    /* Contact / footer */
+    .quote .stars{color:var(--gold);letter-spacing:2px;font-size:14px;margin-bottom:8px}
+    .quote p{font-size:14px;color:var(--text);font-style:italic}
+    .quote .who{margin-top:12px;font-size:12.5px;font-weight:700;color:var(--text-2)}
+
+    .faq{max-width:760px;margin:0 auto}
+    .faq details{background:#fff;border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:10px}
+    .faq summary{font-weight:700;font-size:14.5px;color:var(--navy);cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center}
+    .faq summary::after{content:'+';font-size:20px;color:var(--primary);font-weight:800}
+    .faq details[open] summary::after{content:'–'}
+    .faq details p{margin-top:10px;font-size:13.5px;color:var(--text-2)}
+
     .contact-box{max-width:640px;margin:0 auto;text-align:center}
-    .contact-box .row{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-top:18px;font-size:15px;font-weight:600;color:var(--text-2)}
+    .contact-ctas{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:22px}
+    .contact-note{margin-top:16px;font-size:13px;color:var(--text-2)}
+    .contact-grid{display:grid;grid-template-columns:1fr 1.4fr;gap:20px;max-width:900px;margin:0 auto;align-items:start}
+    @media (max-width:780px){.contact-grid{grid-template-columns:1fr}}
+    .contact-side{text-align:center;padding:30px 26px}
+    .f-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    @media (max-width:560px){.f-row{grid-template-columns:1fr}}
+    .f-field{margin-bottom:12px}
+    .f-field label{display:block;font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:5px}
+    .f-field input,.f-field select,.f-field textarea{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:10px;font:inherit;font-size:14px;color:var(--text);background:#fff}
+    .f-field input:focus,.f-field select:focus,.f-field textarea:focus{outline:2px solid var(--primary);outline-offset:-1px;border-color:var(--primary)}
+    .f-field textarea{resize:vertical}
+
     footer{border-top:1px solid var(--border);padding:26px 0;font-size:13px;color:var(--text-2)}
     .ft{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
   </style>
@@ -76,66 +111,227 @@
   <div class="wrap hd">
     <a class="hd-brand" href="#top"><img src="./logo.png" alt="Star Swim logo" /> Star Swim</a>
     <nav class="hd-nav">
+      <a class="hd-link" href="#why">Why Us</a>
       <a class="hd-link" href="#programmes">Programmes</a>
       <a class="hd-link" href="#how">Getting Started</a>
-      <a class="hd-link" href="#contact">Contact</a>
-      <a class="btn btn-login" href="./app.html" title="Staff login — SSB Scheduler">Login</a>
+      <a class="hd-link" href="#faq">FAQ</a>
+      <a class="btn btn-solid" href="./app.html" title="Staff login — SSB Scheduler">Login</a>
     </nav>
   </div>
 </header>
 
 <main id="top">
+
   <div class="hero">
     <div class="wrap">
-      <h1>Learn to swim with <span>confidence</span>.</h1>
-      <p>Star Swim Sdn Bhd runs professional swim programmes for all ages — from first splashes to strong, confident strokes — with certified coaches across our branches in Malaysia.</p>
+      <div class="badge">🌊 Now accepting swimmers for the new term</div>
+      <h1>Your child will swim with <em>confidence</em>.</h1>
+      <p>Professional, patient coaching for all ages across our branches in Malaysia — small classes, structured levels, and coaches who never rush a nervous swimmer. From first splashes to strong, confident strokes.</p>
       <div class="hero-ctas">
-        <a class="btn btn-login btn-lg" href="./intake.html">Register Interest</a>
-        <a class="btn btn-ghost btn-lg" href="#programmes">Explore Programmes</a>
+        <a class="btn btn-solid btn-lg" href="./intake.html">Register Interest</a>
+        <a class="btn btn-wa btn-lg" href="https://wa.me/60122539655?text=I%20want%20to%20know%20more%20about%20swimming%20lesson.">💬 WhatsApp Us</a>
       </div>
       <div class="hero-strip">
         <div><b>All ages</b> toddlers to adults</div>
-        <div><b>Small groups</b> personal attention</div>
-        <div><b>Certified</b> professional coaches</div>
+        <div><b>Small classes</b> every swimmer gets seen</div>
+        <div><b>Certified</b> trained, professional coaches</div>
         <div><b>Multi-branch</b> a pool near you</div>
       </div>
     </div>
   </div>
 
-  <section id="programmes">
+  <section id="why">
     <div class="wrap">
-      <h2 class="sec-title">Our Programmes</h2>
-      <p class="sec-sub">Structured levels so every swimmer progresses at the right pace — assessed and grouped by ability, not just age.</p>
+      <div class="kicker">Why parents choose us</div>
+      <h2 class="sec-title">Four reasons we're <em>different</em></h2>
+      <p class="sec-sub">Plenty of places teach swimming. Here's what makes ours the one families stay with.</p>
+      <div class="grid4">
+        <div class="card"><div class="ico">🏅</div><h3>Certified Coaches</h3><p>Our instructors are trained, certified professionals — with water safety and rescue skills to match. Your swimmer is in careful hands.</p></div>
+        <div class="card"><div class="ico">🤝</div><h3>Patient Teaching</h3><p>No shouting, no rushing. We specialise in building confidence first — including swimmers who've had a bad experience elsewhere.</p></div>
+        <div class="card"><div class="ico">👥</div><h3>Small Class Sizes</h3><p>Small groups mean real attention on every swimmer, faster progress, and coaching that's genuinely personal.</p></div>
+        <div class="card"><div class="ico">📍</div><h3>Branches Near You</h3><p>Multiple locations across Malaysia, so lessons fit your family's week — not the other way around.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="alt" id="programmes">
+    <div class="wrap">
+      <div class="kicker">Our programmes</div>
+      <h2 class="sec-title">A level for <em>every stage</em></h2>
+      <p class="sec-sub">Swimmers are assessed and grouped by ability — not just age — so everyone progresses at the right pace, with no pressure and no skipped foundations.</p>
+      <div class="grid4">
+        <div class="card prog">
+          <div class="ph">🐣</div>
+          <div class="bd">
+            <span class="age">Beginners · 4+</span>
+            <h3>Learn-to-Swim</h3>
+            <p>Water confidence, breath control, floating and gliding — then first strokes. Designed to be gentle on nervous beginners.</p>
+            <div class="meta"><span>Focus <b>Confidence</b></span><span>Pace <b>No rushing</b></span></div>
+          </div>
+        </div>
+        <div class="card prog">
+          <div class="ph">🛟</div>
+          <div class="bd">
+            <span class="age">All swimmers</span>
+            <h3>Water Safety & Survival</h3>
+            <p>Treading water, survival strokes and self-rescue skills — the real-world abilities every swimmer should have for life.</p>
+            <div class="meta"><span>Focus <b>Safety</b></span><span>Skills <b>For life</b></span></div>
+          </div>
+        </div>
+        <div class="card prog">
+          <div class="ph">🏊</div>
+          <div class="bd">
+            <span class="age">Developing swimmers</span>
+            <h3>Stroke Development</h3>
+            <p>Technique across all four strokes — freestyle rhythm, breaststroke timing, backstroke and butterfly — building efficiency and endurance.</p>
+            <div class="meta"><span>Focus <b>Technique</b></span><span>Strokes <b>All four</b></span></div>
+          </div>
+        </div>
+        <div class="card prog">
+          <div class="ph">🏆</div>
+          <div class="bd">
+            <span class="age">Advanced</span>
+            <h3>Squad & Advanced</h3>
+            <p>Structured training for committed swimmers — fitness, race skills and discipline for those ready to take it further.</p>
+            <div class="meta"><span>Focus <b>Performance</b></span><span>Format <b>Squad</b></span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="choice" style="margin-top:36px">
+        <div class="card">
+          <div class="ico">🤔</div>
+          <h3>Not sure which level fits?</h3>
+          <p style="margin-bottom:16px">Message us — we'll assess your swimmer and recommend the right group.</p>
+            <a class="btn btn-wa" href="https://wa.me/60122539655?text=I%20want%20to%20know%20more%20about%20swimming%20lesson.">💬 Ask us on WhatsApp</a>
+        </div>
+        <div class="card">
+          <div class="ico">✅</div>
+          <h3>Ready to join?</h3>
+          <p style="margin-bottom:16px">Register your swimmer's details online — it takes about three minutes.</p>
+          <a class="btn btn-solid" href="./intake.html">Register Interest</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="testimonials">
+    <div class="wrap">
+      <div class="kicker">Real families, real progress</div>
+      <h2 class="sec-title">What parents <em>tell us</em></h2>
+      <p class="sec-sub">The moments that matter — from the first face-in-the-water to the first full lap.</p>
+      <!-- TODO: replace these sample quotes with real parent testimonials -->
       <div class="grid3">
-        <div class="card"><div class="ico">🐣</div><h3>Learn-to-Swim</h3><p>Water confidence, safety skills and first strokes for young beginners, taught with patience in a fun, secure environment.</p></div>
-        <div class="card"><div class="ico">🏊</div><h3>Stroke Development</h3><p>Technique refinement across all four strokes — building efficiency, breathing control and endurance for developing swimmers.</p></div>
-        <div class="card"><div class="ico">🏆</div><h3>Squad & Advanced</h3><p>Structured training for committed swimmers — fitness, race skills and discipline for those ready to take it further.</p></div>
+        <div class="card quote">
+          <div class="stars">★★★★★</div>
+          <p>"My daughter used to cry at the pool gate. A few months in, she asks to arrive early. The coaches never once rushed her."</p>
+          <div class="who">— Parent of a 6-year-old · Learn-to-Swim</div>
+        </div>
+        <div class="card quote">
+          <div class="stars">★★★★★</div>
+          <p>"We moved from another swim school and the difference is the attention. Small group, and the coach knows exactly what my son is working on each week."</p>
+          <div class="who">— Parent of an 8-year-old · Stroke Development</div>
+        </div>
+        <div class="card quote">
+          <div class="stars">★★★★★</div>
+          <p>"Clear levels, clear progress. Every term we can see exactly how far she's come — and she's proud of it too."</p>
+          <div class="who">— Parent of a 10-year-old · Squad</div>
+        </div>
       </div>
     </div>
   </section>
 
   <section class="alt" id="how">
     <div class="wrap">
-      <h2 class="sec-title">Getting Started</h2>
-      <p class="sec-sub">Joining is simple — three steps and you're in the water.</p>
+      <div class="kicker">Getting started</div>
+      <h2 class="sec-title">In the water in <em>three steps</em></h2>
+      <p class="sec-sub">Joining is simple — and there's no pressure at any point.</p>
       <div class="steps">
-        <div class="step"><h3>Register your interest</h3><p>Fill in our online registration form with your swimmer's details and preferred branch.</p></div>
-        <div class="step"><h3>Assessment & placement</h3><p>Our coaches assess your swimmer and place them in the right group and level.</p></div>
-        <div class="step"><h3>Start swimming</h3><p>Join your weekly class — we'll keep you updated on progress every step of the way.</p></div>
+        <div class="step"><h3>Register your interest</h3><p>Fill in our online registration with your swimmer's details and preferred branch — it takes about three minutes.</p></div>
+        <div class="step"><h3>Assessment & placement</h3><p>Our coaches assess your swimmer and place them in the group and level that fits their ability.</p></div>
+        <div class="step"><h3>Start swimming</h3><p>Join your weekly class. We track every swimmer's progress so you always know how they're coming along.</p></div>
       </div>
-      <div style="text-align:center;margin-top:36px">
-        <a class="btn btn-login btn-lg" href="./intake.html">Register Now</a>
+      <div style="text-align:center;margin-top:34px">
+        <a class="btn btn-solid btn-lg" href="./intake.html">Register Now</a>
       </div>
     </div>
   </section>
 
-  <section id="contact">
-    <div class="wrap contact-box">
-      <h2 class="sec-title">Contact Us</h2>
-      <p class="sec-sub">Questions about programmes, schedules or branches? We're happy to help.</p>
-      <div class="row">
-        <span>📍 Star Swim Sdn Bhd, Malaysia</span>
-        <span>✉️ hello@mystarswim.com</span>
+  <section id="faq">
+    <div class="wrap">
+      <div class="kicker">Questions parents ask</div>
+      <h2 class="sec-title">Honest <em>answers</em></h2>
+      <p class="sec-sub">The things families most often want to know before starting.</p>
+      <div class="faq">
+        <details>
+          <summary>How long before my child can swim?</summary>
+          <p>It genuinely depends on age and starting point. Most school-age beginners are swimming a confident basic stroke within a few months of weekly lessons; younger children take a little longer while coordination develops — and that's normal, not a problem. We never rush this stage, because a rushed child becomes a nervous swimmer.</p>
+        </details>
+        <details>
+          <summary>My child is scared of water. Can you still teach them?</summary>
+          <p>Yes — this is something we're especially proud of. Anxious swimmers start slow, with a coach focused on trust and small wins before technique. Many of our happiest families arrived after a bad experience somewhere else.</p>
+        </details>
+        <details>
+          <summary>What does my swimmer need to bring?</summary>
+          <p>Just swimwear and a towel. We will provide a pair of goggles and a swim cap at registration. If you're missing anything, ask us — we stock essentials like goggles, caps and swim diapers.</p>
+        </details>
+        <details>
+          <summary>What happens if it rains?</summary>
+          <p>Light rain doesn't stop a swimming lesson — the pool is already wet! Lessons pause only when safety requires it (thunder or lightning), and we'll arrange the appropriate follow-up for affected classes.</p>
+        </details>
+        <details>
+          <summary>How do fees work?</summary>
+          <p>Fees are structured for monthly lessons, credits for personal classes, and per-term for some of our advanced programmes — with clear, upfront pricing. Contact us or ask at registration and we'll walk you through the packages for your swimmer's level.</p>
+        </details>
+        <details>
+          <summary>Which branch should I choose?</summary>
+          <p>Whichever is most convenient for your weekly routine — programmes and standards are the same across all our branches. Tell us your area when you register and we'll confirm the nearest pool and available class times.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <section class="alt" id="contact">
+    <div class="wrap">
+      <h2 class="sec-title">Ready to <em>get started?</em></h2>
+      <p class="sec-sub">WhatsApp us for a quick answer, or drop us a message and our team will get back to you.</p>
+      <div class="contact-grid">
+        <div class="card contact-side">
+          <div class="ico" style="font-size:30px">💬</div>
+          <h3 style="font-size:17px;font-weight:800;color:var(--navy);margin-bottom:6px">Chat with us</h3>
+          <p style="font-size:13.5px;color:var(--text-2);margin-bottom:18px">Fastest way to reach us — honest answers about levels, branches and class times. No sales pressure.</p>
+          <a class="btn btn-wa btn-lg" href="https://wa.me/60122539655?text=I%20want%20to%20know%20more%20about%20swimming%20lesson." target="_blank" rel="noopener">💬 WhatsApp +60 12-253 9655</a>
+          <div class="contact-note" style="margin-top:18px">📍 Star Swim Sdn Bhd, Malaysia<br/>✉️ hello@mystarswim.com</div>
+        </div>
+        <div class="card">
+          <h3 style="font-size:17px;font-weight:800;color:var(--navy);margin-bottom:14px">Send us a message</h3>
+          <form id="enquiryForm">
+            <div class="f-row">
+              <div class="f-field"><label>Your name *</label><input type="text" id="cf-name" required placeholder="e.g. Sarah Tan" /></div>
+              <div class="f-field"><label>Phone *</label><input type="tel" id="cf-phone" required placeholder="e.g. 012-345 6789" /></div>
+            </div>
+            <div class="f-row">
+              <div class="f-field"><label>Email</label><input type="email" id="cf-email" placeholder="you@example.com" /></div>
+              <div class="f-field"><label>Topic of enquiry *</label>
+                <select id="cf-topic" required>
+                  <option value="">— Select a topic —</option>
+                  <option>Group Swimming Lessons</option>
+                  <option>Personal Lessons</option>
+                  <option>Toddler Swim Lessons</option>
+                  <option>Baby &amp; Me Classes</option>
+                  <option>Adult Swim Lessons</option>
+                  <option>Competitive Stroke Corrections</option>
+                  <option>Mermaid Discovery</option>
+                  <option>Life Saving Certification</option>
+                  <option>Others</option>
+                </select>
+              </div>
+            </div>
+            <div class="f-field"><label>Your message *</label><textarea id="cf-message" required rows="4" placeholder="Tell us about your swimmer — age, experience, preferred days…"></textarea></div>
+            <div id="cf-status" style="display:none;font-size:13.5px;font-weight:700;margin-bottom:10px"></div>
+            <button type="submit" class="btn btn-solid btn-lg" id="cf-submit" style="width:100%">Send Message</button>
+          </form>
+        </div>
       </div>
     </div>
   </section>
@@ -148,6 +344,51 @@
   </div>
 </footer>
 
-<script>document.getElementById('yr').textContent=new Date().getFullYear();</script>
+<script src="./config.js"></script>
+<script>
+document.getElementById('yr').textContent=new Date().getFullYear();
+
+// FAQ accordion — opening one closes the others
+document.querySelectorAll('.faq details').forEach(function(d){
+  d.addEventListener('toggle', function(){
+    if(d.open){ document.querySelectorAll('.faq details').forEach(function(o){ if(o!==d) o.open=false; }); }
+  });
+});
+
+// Contact form → contact_messages (routed into the scheduler's Messages module)
+(function(){
+  var form=document.getElementById('enquiryForm');
+  if(!form) return;
+  var statusEl=document.getElementById('cf-status');
+  var btn=document.getElementById('cf-submit');
+  form.addEventListener('submit', async function(e){
+    e.preventDefault();
+    var name=document.getElementById('cf-name').value.trim();
+    var phone=document.getElementById('cf-phone').value.trim();
+    var email=document.getElementById('cf-email').value.trim();
+    var topic=document.getElementById('cf-topic').value;
+    var message=document.getElementById('cf-message').value.trim();
+    if(!name||!phone||!topic||!message){ show('Please fill in all required fields.', false); return; }
+    btn.disabled=true; btn.textContent='Sending…';
+    try{
+      var cfg=window.APP_CONFIG||{};
+      var res=await fetch(cfg.supabaseUrl+'/rest/v1/contact_messages',{
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', 'apikey':cfg.supabaseAnonKey, 'Authorization':'Bearer '+cfg.supabaseAnonKey, 'Prefer':'return=minimal' },
+        body:JSON.stringify([{ name:name, phone:phone, email:email||null, topic:topic, message:message, status:'new' }])
+      });
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      form.reset();
+      show('✅ Thank you! Your message has been sent — we\'ll get back to you shortly.', true);
+      btn.textContent='Message Sent';
+      setTimeout(function(){ btn.disabled=false; btn.textContent='Send Message'; }, 4000);
+    }catch(err){
+      show('Sorry, something went wrong sending your message. Please try WhatsApp instead.', false);
+      btn.disabled=false; btn.textContent='Send Message';
+    }
+  });
+  function show(msg, ok){ statusEl.style.display='block'; statusEl.style.color=ok?'#16A34A':'#DC2626'; statusEl.textContent=msg; }
+})();
+</script>
 </body>
 </html>
