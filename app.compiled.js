@@ -528,6 +528,10 @@ function App({
   const [programmeCategories, setProgrammeCategories] = useState([]);
   const [billingTerms, setBillingTerms] = useState([]);
   const [products, setProducts] = useState([]);
+  const isSysadmin = currentUser?.role === 'sysadmin';
+  const [contactMessages, setContactMessages] = useState([]);
+  const newMsgCount = useMemo(() => (contactMessages || []).filter(m => m.status === 'new').length, [contactMessages]);
+  const [appUsers, setAppUsers] = useState([]);
   const [programmeModal, setProgrammeModal] = useState(null);
   const [programmeDate, setProgrammeDate] = useState(todayStr()); // own week cursor (independent of Schedule)
   const [programmeMonthCursor, setProgrammeMonthCursor] = useState(new Date());
@@ -651,7 +655,7 @@ function App({
       setLoading(false);
       setStatus('Connected');
       // Phase 2 — background: load everything else after first paint.
-      Promise.all([loadStudents(), loadGroups(), loadGroupMemberships(), loadCreditBalances(), loadCreditPurchases(), loadSubscriptions(), loadCodes(), loadReplacementPending(), loadTcAcceptances(), loadRemarks(monthCursor), loadInvoiceData(), loadProgrammeSessions(), loadProgrammeCategories(), loadBillingTerms(), loadProducts()]).catch(e => console.warn('Background load warning:', e));
+      Promise.all([loadStudents(), loadGroups(), loadGroupMemberships(), loadCreditBalances(), loadCreditPurchases(), loadSubscriptions(), loadCodes(), loadReplacementPending(), loadTcAcceptances(), loadRemarks(monthCursor), loadInvoiceData(), loadProgrammeSessions(), loadProgrammeCategories(), loadBillingTerms(), loadProducts(), loadContactMessages(), loadAppUsers()]).catch(e => console.warn('Background load warning:', e));
     } catch (err) {
       handleErr(err);
       setLoading(false);
@@ -1324,6 +1328,22 @@ function App({
       setProducts(rows || []);
     } catch (_) {
       setProducts([]);
+    }
+  }
+  async function loadContactMessages() {
+    try {
+      const rows = await selectRows('contact_messages', '*', '&order=created_at.desc').catch(() => []);
+      setContactMessages(rows || []);
+    } catch (_) {
+      setContactMessages([]);
+    }
+  }
+  async function loadAppUsers() {
+    try {
+      const rows = await selectRows('app_users', 'id,username,display_name,role,is_active,created_at,last_login_at', '&order=created_at.asc').catch(() => []);
+      setAppUsers(rows || []);
+    } catch (_) {
+      setAppUsers([]);
     }
   }
   async function loadStudents() {
@@ -3668,6 +3688,135 @@ function App({
     }
   }
 
+  // ── Contact messages (website enquiries) ─────────────────────────────────
+  async function markMessageRead(id) {
+    try {
+      await patchRows('contact_messages', {
+        id
+      }, {
+        status: 'read',
+        read_at: new Date().toISOString()
+      });
+      await loadContactMessages();
+    } catch (err) {
+      handleErr(err);
+    }
+  }
+  async function markAllMessagesRead() {
+    try {
+      const ids = (contactMessages || []).filter(m => m.status === 'new').map(m => m.id);
+      await Promise.all(ids.map(id => patchRows('contact_messages', {
+        id
+      }, {
+        status: 'read',
+        read_at: new Date().toISOString()
+      })));
+      await loadContactMessages();
+    } catch (err) {
+      handleErr(err);
+    }
+  }
+  async function deleteContactMessage(id) {
+    if (!confirm('Delete this message? This cannot be undone.')) return;
+    try {
+      await deleteRows('contact_messages', {
+        id
+      });
+      await loadContactMessages();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to delete message');
+    }
+  }
+
+  // ── User management (Settings › Users — sysadmin only) ───────────────────
+  function randomSalt() {
+    const a = new Uint8Array(8);
+    crypto.getRandomValues(a);
+    return 'ss-' + Array.from(a).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  async function createAppUser({
+    username,
+    displayName,
+    password,
+    role
+  }) {
+    const u = (username || '').trim().toLowerCase();
+    if (!u || !password) {
+      alert('Username and password are required.');
+      return;
+    }
+    if ((appUsers || []).some(x => x.username === u)) {
+      alert('That username already exists.');
+      return;
+    }
+    try {
+      const salt = randomSalt();
+      const hash = await sha256Hex(salt + password);
+      await insertRows('app_users', {
+        username: u,
+        password_salt: salt,
+        password_hash: hash,
+        display_name: (displayName || '').trim() || u,
+        role: role || 'admin',
+        is_active: true
+      });
+      await loadAppUsers();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to create user');
+    }
+  }
+  async function setAppUserPassword(id, newPassword) {
+    if (!newPassword) {
+      alert('Enter a new password.');
+      return;
+    }
+    try {
+      const salt = randomSalt();
+      const hash = await sha256Hex(salt + newPassword);
+      await patchRows('app_users', {
+        id
+      }, {
+        password_salt: salt,
+        password_hash: hash
+      });
+      await loadAppUsers();
+      alert('Password updated.');
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to set password');
+    }
+  }
+  async function patchAppUser(id, patch) {
+    try {
+      await patchRows('app_users', {
+        id
+      }, patch);
+      await loadAppUsers();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to update user');
+    }
+  }
+  async function deleteAppUser(id) {
+    const u = (appUsers || []).find(x => x.id === id);
+    if (u && u.username === currentUser?.username) {
+      alert("You can't delete the account you're signed in with.");
+      return;
+    }
+    if (!confirm(`Delete user "${u?.username || ''}"? They will no longer be able to sign in.`)) return;
+    try {
+      await deleteRows('app_users', {
+        id
+      });
+      await loadAppUsers();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to delete user');
+    }
+  }
+
   // Reorder a settings list by reindexing sort_order across the whole list, so
   // the result is clean and gap-free regardless of the existing values.
   async function reorderOption(table, list, index, dir) {
@@ -4531,8 +4680,14 @@ function App({
     className: "header"
   }, /*#__PURE__*/React.createElement("div", {
     className: "header-inner"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "brand"
+  }, /*#__PURE__*/React.createElement("a", {
+    className: "brand",
+    href: "./index.html",
+    title: "Go to mystarswim.com",
+    style: {
+      textDecoration: 'none',
+      color: 'inherit'
+    }
   }, /*#__PURE__*/React.createElement("img", {
     src: "./logo.png",
     alt: "SSB",
@@ -4593,11 +4748,19 @@ function App({
   }, /*#__PURE__*/React.createElement("span", {
     className: `status-dot ${loading ? 'is-loading' : error ? 'is-error' : 'is-ok'}`,
     "aria-hidden": "true"
-  }), loading ? 'Connecting…' : error ? 'Error' : status || 'Ready'), currentUser && /*#__PURE__*/React.createElement("div", {
+  }), loading ? 'Connecting…' : error ? 'Error' : status || 'Ready')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'flex-end',
+      gap: 4
+    }
+  }, currentUser && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
-      gap: 6
+      gap: 8,
+      paddingTop: 6
     }
   }, /*#__PURE__*/React.createElement("span", {
     className: "small",
@@ -4608,11 +4771,14 @@ function App({
     title: `Role: ${currentUser.role}`
   }, "👤 ", currentUser.displayName || currentUser.username), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
+    style: {
+      padding: '2px 10px'
+    },
     onClick: () => {
       if (confirm('Sign out of the scheduler?')) onLogout();
     },
     title: "Sign out"
-  }, "Logout"))), /*#__PURE__*/React.createElement("nav", {
+  }, "Logout")), /*#__PURE__*/React.createElement("nav", {
     className: "main-nav"
   }, /*#__PURE__*/React.createElement("button", {
     className: `nav-btn ${view === 'schedule' ? 'active' : ''}`,
@@ -4633,19 +4799,41 @@ function App({
     className: `nav-btn ${view === 'shop' ? 'active' : ''}`,
     onClick: () => setView('shop')
   }, "🛒 Shop"), /*#__PURE__*/React.createElement("button", {
+    className: `nav-btn ${view === 'messages' ? 'active' : ''}`,
+    onClick: () => setView('messages'),
+    style: {
+      position: 'relative'
+    }
+  }, "✉️ Messages", newMsgCount > 0 && /*#__PURE__*/React.createElement("span", {
+    style: {
+      position: 'absolute',
+      top: 2,
+      right: 2,
+      background: '#EF4444',
+      color: '#fff',
+      fontSize: 10,
+      fontWeight: 800,
+      borderRadius: 999,
+      minWidth: 16,
+      height: 16,
+      lineHeight: '16px',
+      padding: '0 4px',
+      textAlign: 'center'
+    }
+  }, newMsgCount > 99 ? '99+' : newMsgCount)), /*#__PURE__*/React.createElement("button", {
     className: `nav-btn ${view === 'enroll' ? 'active' : ''}`,
     onClick: () => setView('enroll')
   }, "🔍 Explore"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "nav-btn nav-btn-link",
     onClick: () => window.open('./intake.html', '_blank', 'noopener,noreferrer')
-  }, "📝 Intake ↗"), /*#__PURE__*/React.createElement("button", {
+  }, "📝 Intake ↗"), isSysadmin && /*#__PURE__*/React.createElement("button", {
     className: `nav-btn ${view === 'settings' ? 'active' : ''}`,
     onClick: () => {
       setView('settings');
       setAdminSection('pools');
     }
-  }, "⚙️ Settings")))), !loading && view === 'schedule' && /*#__PURE__*/React.createElement("div", {
+  }, "⚙️ Settings"))))), !loading && view === 'schedule' && /*#__PURE__*/React.createElement("div", {
     className: "sub-bar"
   }, /*#__PURE__*/React.createElement("div", {
     className: "sub-bar-inner"
@@ -4904,11 +5092,17 @@ function App({
       setView('accounts');
       setAccountSection('invoices');
     }
+  }), !loading && view === 'messages' && /*#__PURE__*/React.createElement(MessagesView, {
+    messages: contactMessages,
+    onMarkRead: markMessageRead,
+    onMarkAllRead: markAllMessagesRead,
+    onDelete: deleteContactMessage,
+    onRefresh: loadContactMessages
   }), !loading && view === 'accounts' && /*#__PURE__*/React.createElement("div", {
     className: "side-shell"
   }, /*#__PURE__*/React.createElement("nav", {
     className: "side-nav"
-  }, [['accounts', 'Accounts'], ['familyGroups', 'Groups'], ['swimmers', 'Swimmers'], ['invoices', 'Invoices'], ['receipts', 'Receipts'], ['pendingCredits', 'Pending Credits'], ['aging', 'Aging'], ['codes', 'Discounts'], ['reports', 'Reports']].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
+  }, [['accounts', 'Accounts'], ['familyGroups', 'Groups'], ['swimmers', 'Swimmers'], ['invoices', 'Invoices'], ['receipts', 'Receipts'], ['pendingCredits', 'Pending Credits'], ['aging', 'Aging'], ['codes', 'Discounts'], ...(isSysadmin ? [['reports', 'Reports']] : [])].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
     key: k,
     className: `side-nav-btn${accountSection === k ? ' active' : ''}`,
     onClick: () => setAccountSection(k)
@@ -5063,7 +5257,7 @@ function App({
     invoices: invoices,
     pmts: pmts,
     branches: options.branches || []
-  }), !loading && view === 'accounts' && accountSection === 'reports' && /*#__PURE__*/React.createElement(ReportsView, {
+  }), !loading && view === 'accounts' && accountSection === 'reports' && isSysadmin && /*#__PURE__*/React.createElement(ReportsView, {
     invoices: invoices,
     pmts: pmts,
     pendingCredits: pendingCredits,
@@ -5141,11 +5335,11 @@ function App({
     updateStudent: updateStudent,
     deleteStudent: deleteStudent,
     deleteAccount: deleteAccount
-  }), !loading && view === 'settings' && /*#__PURE__*/React.createElement("div", {
+  }), !loading && view === 'settings' && isSysadmin && /*#__PURE__*/React.createElement("div", {
     className: "side-shell"
   }, /*#__PURE__*/React.createElement("nav", {
     className: "side-nav"
-  }, [['summary', 'Summary'], ['branches', 'Branches'], ['pools', 'Pools & Hours'], ['instructors', 'Instructors'], ['lessonTypes', 'Lesson Types'], ['programme', 'Programme'], ['terms', 'Terms'], ['billingTerms', 'Billing Terms'], ['products', 'Products'], ['invoiceSettings', 'Invoice Numbering']].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
+  }, [['summary', 'Summary'], ['branches', 'Branches'], ['pools', 'Pools & Hours'], ['instructors', 'Instructors'], ['lessonTypes', 'Lesson Types'], ['programme', 'Programme'], ['terms', 'Terms'], ['billingTerms', 'Billing Terms'], ['products', 'Products'], ['invoiceSettings', 'Invoice Numbering'], ['users', 'Users']].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
     key: k,
     className: `side-nav-btn${adminSection === k ? ' active' : ''}`,
     onClick: () => setAdminSection(k)
@@ -5182,6 +5376,13 @@ function App({
     updateProduct: updateCatalogProduct,
     deleteProduct: deleteCatalogProduct,
     reorderProducts: reorderProducts
+  }), adminSection === 'users' && /*#__PURE__*/React.createElement(UsersAdminView, {
+    users: appUsers,
+    currentUser: currentUser,
+    createUser: createAppUser,
+    setPassword: setAppUserPassword,
+    patchUser: patchAppUser,
+    deleteUser: deleteAppUser
   }), adminSection === 'invoiceSettings' && /*#__PURE__*/React.createElement("div", {
     className: "card"
   }, /*#__PURE__*/React.createElement("div", {
@@ -18405,6 +18606,448 @@ function ProgrammeSessionModal({
 // description and price.
 // Full-screen image viewer. Click the backdrop (anywhere outside the image),
 // press Esc, or the ✕ to close.
+// ── Messages: website contact-form enquiries ────────────────────────────────
+function MessagesView({
+  messages,
+  onMarkRead,
+  onMarkAllRead,
+  onDelete,
+  onRefresh
+}) {
+  const [filter, setFilter] = useState('all'); // all | new
+  const [openId, setOpenId] = useState(null);
+  const list = (messages || []).filter(m => filter === 'new' ? m.status === 'new' : true);
+  const newCount = (messages || []).filter(m => m.status === 'new').length;
+  function fmt(ts) {
+    if (!ts) return '—';
+    try {
+      return new Date(ts).toLocaleString(undefined, {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (_) {
+      return ts;
+    }
+  }
+  function openMsg(m) {
+    setOpenId(openId === m.id ? null : m.id);
+    if (m.status === 'new') onMarkRead(m.id);
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxWidth: 860,
+      margin: '18px auto 0'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 10,
+      flexWrap: 'wrap',
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 20,
+      fontWeight: 800
+    }
+  }, "✉️ Messages"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle"
+  }, "Enquiries from the website contact form. Opening a message marks it read.")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: `btn small ${filter === 'all' ? 'btn-primary' : 'btn-ghost'}`,
+    onClick: () => setFilter('all')
+  }, "All (", (messages || []).length, ")"), /*#__PURE__*/React.createElement("button", {
+    className: `btn small ${filter === 'new' ? 'btn-primary' : 'btn-ghost'}`,
+    onClick: () => setFilter('new')
+  }, "New (", newCount, ")"), newCount > 0 && /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: onMarkAllRead
+  }, "Mark all read"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: onRefresh,
+    title: "Refresh"
+  }, "⟳"))), list.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "empty",
+    style: {
+      padding: 30
+    }
+  }, filter === 'new' ? 'No new messages.' : 'No messages yet — enquiries from the website contact form will appear here.') : /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 8
+    }
+  }, list.map(m => /*#__PURE__*/React.createElement("div", {
+    key: m.id,
+    className: "card",
+    style: {
+      padding: 0,
+      overflow: 'hidden',
+      borderLeft: m.status === 'new' ? '4px solid var(--primary)' : '4px solid transparent'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: () => openMsg(m),
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      padding: '10px 14px',
+      cursor: 'pointer',
+      flexWrap: 'wrap'
+    }
+  }, m.status === 'new' && /*#__PURE__*/React.createElement("span", {
+    style: {
+      background: 'var(--primary)',
+      color: '#fff',
+      fontSize: 10,
+      fontWeight: 800,
+      borderRadius: 999,
+      padding: '2px 8px'
+    }
+  }, "NEW"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontWeight: 700
+    }
+  }, m.name || '—'), m.topic && /*#__PURE__*/React.createElement("span", {
+    className: "lt-branch-tag",
+    style: {
+      fontSize: 10.5
+    }
+  }, m.topic), /*#__PURE__*/React.createElement("span", {
+    className: "small subtle",
+    style: {
+      flex: 1,
+      minWidth: 120,
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    }
+  }, m.message), /*#__PURE__*/React.createElement("span", {
+    className: "small subtle",
+    style: {
+      whiteSpace: 'nowrap'
+    }
+  }, fmt(m.created_at))), openId === m.id && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '0 14px 14px',
+      borderTop: '1px solid var(--border)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 16,
+      flexWrap: 'wrap',
+      margin: '10px 0',
+      fontSize: 13
+    }
+  }, m.phone && /*#__PURE__*/React.createElement("span", null, "📞 ", /*#__PURE__*/React.createElement("a", {
+    href: `tel:${m.phone}`,
+    style: {
+      color: 'var(--primary)',
+      fontWeight: 600
+    }
+  }, m.phone)), m.email && /*#__PURE__*/React.createElement("span", null, "✉️ ", /*#__PURE__*/React.createElement("a", {
+    href: `mailto:${m.email}`,
+    style: {
+      color: 'var(--primary)',
+      fontWeight: 600
+    }
+  }, m.email)), m.phone && /*#__PURE__*/React.createElement("a", {
+    href: `https://wa.me/${String(m.phone).replace(/[^0-9]/g, '')}`,
+    target: "_blank",
+    rel: "noopener noreferrer",
+    style: {
+      color: '#16A34A',
+      fontWeight: 700
+    }
+  }, "💬 WhatsApp them")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'var(--surface-2)',
+      border: '1px solid var(--border)',
+      borderRadius: 8,
+      padding: '10px 12px',
+      fontSize: 14,
+      whiteSpace: 'pre-wrap'
+    }
+  }, m.message), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'flex-end',
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    style: {
+      color: '#DC2626'
+    },
+    onClick: () => onDelete(m.id)
+  }, "Delete")))))));
+}
+
+// ── Settings › Users (sysadmin only): create logins, set passwords, roles ───
+function UsersAdminView({
+  users,
+  currentUser,
+  createUser,
+  setPassword,
+  patchUser,
+  deleteUser
+}) {
+  const [username, setUsername] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [password, setPasswordVal] = useState('');
+  const [role, setRole] = useState('admin');
+  const [busy, setBusy] = useState(false);
+  const [pwFor, setPwFor] = useState(null);
+  const [pwVal, setPwVal] = useState('');
+  function fmt(ts) {
+    if (!ts) return '—';
+    try {
+      return new Date(ts).toLocaleString(undefined, {
+        day: 'numeric',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (_) {
+      return ts;
+    }
+  }
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 18,
+      fontWeight: 800,
+      marginBottom: 4
+    }
+  }, "👥 Users & Logins"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginBottom: 14
+    }
+  }, "Create scheduler logins and manage passwords. ", /*#__PURE__*/React.createElement("strong", null, "Sysadmin"), " sees everything; ", /*#__PURE__*/React.createElement("strong", null, "Admin"), " cannot access Settings or Accounts › Reports."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: '1fr 1fr 1fr 130px auto',
+      gap: 10,
+      alignItems: 'end'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Username"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    autoCapitalize: "none",
+    value: username,
+    onChange: e => setUsername(e.target.value),
+    placeholder: "e.g. jsmith"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Display name"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: displayName,
+    onChange: e => setDisplayName(e.target.value),
+    placeholder: "e.g. John Smith"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Password"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "text",
+    value: password,
+    onChange: e => setPasswordVal(e.target.value),
+    placeholder: "min 8 chars"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Role"), /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    value: role,
+    onChange: e => setRole(e.target.value)
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "admin"
+  }, "Admin"), /*#__PURE__*/React.createElement("option", {
+    value: "sysadmin"
+  }, "Sysadmin"))), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary",
+    style: {
+      height: 38
+    },
+    disabled: busy || !username.trim() || password.length < 8,
+    onClick: async () => {
+      setBusy(true);
+      try {
+        await createUser({
+          username,
+          displayName,
+          password,
+          role
+        });
+        setUsername('');
+        setDisplayName('');
+        setPasswordVal('');
+      } finally {
+        setBusy(false);
+      }
+    }
+  }, "+ Create User")), password && password.length < 8 && /*#__PURE__*/React.createElement("div", {
+    className: "small",
+    style: {
+      color: '#DC2626',
+      marginTop: 6
+    }
+  }, "Password must be at least 8 characters.")), /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      padding: 0,
+      overflow: 'hidden'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "table-wrap",
+    style: {
+      border: 'none',
+      borderRadius: 0
+    }
+  }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Username"), /*#__PURE__*/React.createElement("th", null, "Name"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 110
+    }
+  }, "Role"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 90
+    }
+  }, "Status"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 150
+    }
+  }, "Last login"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 250,
+      textAlign: 'right'
+    }
+  }, "Actions"))), /*#__PURE__*/React.createElement("tbody", null, (users || []).map(u => {
+    const me = u.username === currentUser?.username;
+    return /*#__PURE__*/React.createElement(React.Fragment, {
+      key: u.id
+    }, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
+      style: {
+        fontWeight: 700
+      }
+    }, u.username, me && /*#__PURE__*/React.createElement("span", {
+      className: "small subtle"
+    }, " (you)")), /*#__PURE__*/React.createElement("td", null, u.display_name || '—'), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("select", {
+      className: "select",
+      style: {
+        padding: '3px 6px',
+        fontSize: 12
+      },
+      value: u.role || 'admin',
+      disabled: me,
+      onChange: e => patchUser(u.id, {
+        role: e.target.value
+      })
+    }, /*#__PURE__*/React.createElement("option", {
+      value: "admin"
+    }, "Admin"), /*#__PURE__*/React.createElement("option", {
+      value: "sysadmin"
+    }, "Sysadmin"))), /*#__PURE__*/React.createElement("td", null, u.is_active !== false ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: 'var(--green-tx)',
+        fontWeight: 700,
+        fontSize: 12
+      }
+    }, "Active") : /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: '#DC2626',
+        fontWeight: 700,
+        fontSize: 12
+      }
+    }, "Disabled")), /*#__PURE__*/React.createElement("td", {
+      className: "small subtle"
+    }, fmt(u.last_login_at)), /*#__PURE__*/React.createElement("td", {
+      style: {
+        textAlign: 'right'
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      onClick: () => {
+        setPwFor(pwFor === u.id ? null : u.id);
+        setPwVal('');
+      }
+    }, "🔑 Password"), !me && /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      onClick: () => patchUser(u.id, {
+        is_active: !(u.is_active !== false)
+      })
+    }, u.is_active !== false ? 'Disable' : 'Enable'), !me && /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      style: {
+        color: '#DC2626'
+      },
+      onClick: () => deleteUser(u.id)
+    }, "Delete"))), pwFor === u.id && /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
+      colSpan: 6,
+      style: {
+        background: 'var(--surface-2)'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 8,
+        alignItems: 'center',
+        padding: '4px 0'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "small",
+      style: {
+        fontWeight: 700
+      }
+    }, "New password for ", u.username, ":"), /*#__PURE__*/React.createElement("input", {
+      className: "input",
+      type: "text",
+      style: {
+        maxWidth: 220
+      },
+      value: pwVal,
+      onChange: e => setPwVal(e.target.value),
+      placeholder: "min 8 chars"
+    }), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-primary small",
+      disabled: pwVal.length < 8,
+      onClick: async () => {
+        await setPassword(u.id, pwVal);
+        setPwFor(null);
+        setPwVal('');
+      }
+    }, "Save"), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      onClick: () => setPwFor(null)
+    }, "Cancel")))));
+  }))))));
+}
 function ImageLightbox({
   src,
   onClose
