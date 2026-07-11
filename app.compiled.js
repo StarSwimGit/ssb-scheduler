@@ -2461,7 +2461,12 @@ function App({
   function sessionsForDate(dateStr) {
     const day = dateToWeekdayIndex(dateStr);
     const ws = weekStartStr(dateStr);
-    return sessions.filter(s => s.weekStartDate === ws && s.day === day).sort((a, b) => a.startMinute - b.startMinute);
+    // Branch scope (same semantics as the weekly grid's weekBlocks): a session
+    // belongs to the selected branch when its pool is one of that branch's
+    // pools; sessions without a pool fold into the current branch's first
+    // pool. Keeps Daily and Monthly consistent with Weekly.
+    const branchPoolIds = new Set(activePools().map(p => p.id));
+    return sessions.filter(s => s.weekStartDate === ws && s.day === day).filter(s => branchPoolIds.size === 0 || !s.poolId || branchPoolIds.has(s.poolId)).sort((a, b) => a.startMinute - b.startMinute);
   }
   const weekSessions = useMemo(() => sessions.filter(s => s.weekStartDate === selectedWeekStart), [sessions, selectedWeekStart]);
 
