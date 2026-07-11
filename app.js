@@ -261,6 +261,10 @@ function App({ currentUser, onLogout }){
   const [programmeCategories,setProgrammeCategories] = useState([]);
   const [billingTerms,setBillingTerms] = useState([]);
   const [products,setProducts] = useState([]);
+  const isSysadmin = (currentUser?.role === 'sysadmin');
+  const [contactMessages,setContactMessages] = useState([]);
+  const newMsgCount = useMemo(()=> (contactMessages||[]).filter(m=>m.status==='new').length, [contactMessages]);
+  const [appUsers,setAppUsers] = useState([]);
   const [programmeModal,setProgrammeModal] = useState(null);
   const [programmeDate,setProgrammeDate] = useState(todayStr());     // own week cursor (independent of Schedule)
   const [programmeMonthCursor,setProgrammeMonthCursor] = useState(new Date());
@@ -353,7 +357,7 @@ function App({ currentUser, onLogout }){
         loadCreditBalances(), loadCreditPurchases(),
         loadSubscriptions(), loadCodes(), loadReplacementPending(),
         loadTcAcceptances(), loadRemarks(monthCursor), loadInvoiceData(),
-        loadProgrammeSessions(), loadProgrammeCategories(), loadBillingTerms(), loadProducts()
+        loadProgrammeSessions(), loadProgrammeCategories(), loadBillingTerms(), loadProducts(), loadContactMessages(), loadAppUsers()
       ]).catch(e => console.warn('Background load warning:', e));
     } catch(err){ handleErr(err); setLoading(false); }
   }
@@ -801,6 +805,18 @@ function App({ currentUser, onLogout }){
       const rows = await selectRows('products','*','&order=sort_order.asc,name.asc').catch(()=>[]);
       setProducts(rows || []);
     } catch(_){ setProducts([]); }
+  }
+  async function loadContactMessages(){
+    try{
+      const rows = await selectRows('contact_messages','*','&order=created_at.desc').catch(()=>[]);
+      setContactMessages(rows || []);
+    } catch(_){ setContactMessages([]); }
+  }
+  async function loadAppUsers(){
+    try{
+      const rows = await selectRows('app_users','id,username,display_name,role,is_active,created_at,last_login_at','&order=created_at.asc').catch(()=>[]);
+      setAppUsers(rows || []);
+    } catch(_){ setAppUsers([]); }
   }
 
   async function loadStudents(){
@@ -2458,6 +2474,59 @@ function App({ currentUser, onLogout }){
     } catch(err){ handleErr(err); alert(err.message || 'Failed to reorder products'); }
   }
 
+  // ── Contact messages (website enquiries) ─────────────────────────────────
+  async function markMessageRead(id){
+    try{ await patchRows('contact_messages',{id},{status:'read',read_at:new Date().toISOString()}); await loadContactMessages(); }
+    catch(err){ handleErr(err); }
+  }
+  async function markAllMessagesRead(){
+    try{
+      const ids=(contactMessages||[]).filter(m=>m.status==='new').map(m=>m.id);
+      await Promise.all(ids.map(id=>patchRows('contact_messages',{id},{status:'read',read_at:new Date().toISOString()})));
+      await loadContactMessages();
+    } catch(err){ handleErr(err); }
+  }
+  async function deleteContactMessage(id){
+    if(!confirm('Delete this message? This cannot be undone.')) return;
+    try{ await deleteRows('contact_messages',{id}); await loadContactMessages(); }
+    catch(err){ handleErr(err); alert(err.message||'Failed to delete message'); }
+  }
+
+  // ── User management (Settings › Users — sysadmin only) ───────────────────
+  function randomSalt(){ const a=new Uint8Array(8); crypto.getRandomValues(a); return 'ss-'+Array.from(a).map(b=>b.toString(16).padStart(2,'0')).join(''); }
+  async function createAppUser({ username, displayName, password, role }){
+    const u=(username||'').trim().toLowerCase();
+    if(!u || !password){ alert('Username and password are required.'); return; }
+    if((appUsers||[]).some(x=>x.username===u)){ alert('That username already exists.'); return; }
+    try{
+      const salt=randomSalt();
+      const hash=await sha256Hex(salt+password);
+      await insertRows('app_users',{ username:u, password_salt:salt, password_hash:hash, display_name:(displayName||'').trim()||u, role:role||'admin', is_active:true });
+      await loadAppUsers();
+    } catch(err){ handleErr(err); alert(err.message||'Failed to create user'); }
+  }
+  async function setAppUserPassword(id, newPassword){
+    if(!newPassword){ alert('Enter a new password.'); return; }
+    try{
+      const salt=randomSalt();
+      const hash=await sha256Hex(salt+newPassword);
+      await patchRows('app_users',{id},{ password_salt:salt, password_hash:hash });
+      await loadAppUsers();
+      alert('Password updated.');
+    } catch(err){ handleErr(err); alert(err.message||'Failed to set password'); }
+  }
+  async function patchAppUser(id, patch){
+    try{ await patchRows('app_users',{id},patch); await loadAppUsers(); }
+    catch(err){ handleErr(err); alert(err.message||'Failed to update user'); }
+  }
+  async function deleteAppUser(id){
+    const u=(appUsers||[]).find(x=>x.id===id);
+    if(u && u.username===currentUser?.username){ alert("You can't delete the account you're signed in with."); return; }
+    if(!confirm(`Delete user "${u?.username||''}"? They will no longer be able to sign in.`)) return;
+    try{ await deleteRows('app_users',{id}); await loadAppUsers(); }
+    catch(err){ handleErr(err); alert(err.message||'Failed to delete user'); }
+  }
+
   // Reorder a settings list by reindexing sort_order across the whole list, so
   // the result is clean and gap-free regardless of the existing values.
   async function reorderOption(table, list, index, dir){
@@ -3060,7 +3129,7 @@ function App({ currentUser, onLogout }){
 
   return <div>
     <div className="header"><div className="header-inner">
-      <div className="brand"><img src="./logo.png" alt="SSB" className="logo" /><div><div style={{fontSize:14,fontWeight:800,letterSpacing:'-.3px',lineHeight:1}}>SSB Scheduler</div><div style={{fontSize:9,color:'#64748B',marginTop:2}}>Pool-aware lesson calendar</div></div></div>
+      <a className="brand" href="./index.html" title="Go to mystarswim.com" style={{textDecoration:'none',color:'inherit'}}><img src="./logo.png" alt="SSB" className="logo" /><div><div style={{fontSize:14,fontWeight:800,letterSpacing:'-.3px',lineHeight:1}}>SSB Scheduler</div><div style={{fontSize:9,color:'#64748B',marginTop:2}}>Pool-aware lesson calendar</div></div></a>
       <div className="header-meta">
         <div className="branch-selector">
           <label className="branch-label">Branch</label>
@@ -3075,20 +3144,23 @@ function App({ currentUser, onLogout }){
         </div>
         <div className="header-summary"><span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalStudents}</span> students · <span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalSessions}</span> sessions</div>
         <div className="header-status"><span className={`status-dot ${loading?'is-loading':(error?'is-error':'is-ok')}`} aria-hidden="true" />{loading ? 'Connecting…' : (error ? 'Error' : (status || 'Ready'))}</div>
-        {currentUser && <div style={{display:'flex',alignItems:'center',gap:6}}>
-          <span className="small" style={{fontWeight:700,color:'var(--text-2)'}} title={`Role: ${currentUser.role}`}>👤 {currentUser.displayName||currentUser.username}</span>
-          <button className="btn btn-ghost small" onClick={()=>{ if(confirm('Sign out of the scheduler?')) onLogout(); }} title="Sign out">Logout</button>
-        </div>}
       </div>
+      <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:4}}>
+        {currentUser && <div style={{display:'flex',alignItems:'center',gap:8,paddingTop:6}}>
+          <span className="small" style={{fontWeight:700,color:'var(--text-2)'}} title={`Role: ${currentUser.role}`}>👤 {currentUser.displayName||currentUser.username}</span>
+          <button className="btn btn-ghost small" style={{padding:'2px 10px'}} onClick={()=>{ if(confirm('Sign out of the scheduler?')) onLogout(); }} title="Sign out">Logout</button>
+        </div>}
       <nav className="main-nav">
         <button className={`nav-btn ${view==='schedule'?'active':''}`} onClick={()=>setView('schedule')}>📅 Schedule</button>
         <button className={`nav-btn ${view==='programme'?'active':''}`} onClick={()=>{ setView('programme'); setProgrammeSection('week'); }}>📋 Programme</button>
         <button className={`nav-btn ${view==='accounts'?'active':''}`} onClick={()=>{ setView('accounts'); setAccountSection('accounts'); }}>👤 Accounts</button>
         <button className={`nav-btn ${view==='shop'?'active':''}`} onClick={()=>setView('shop')}>🛒 Shop</button>
+        <button className={`nav-btn ${view==='messages'?'active':''}`} onClick={()=>setView('messages')} style={{position:'relative'}}>✉️ Messages{newMsgCount>0&&<span style={{position:'absolute',top:2,right:2,background:'#EF4444',color:'#fff',fontSize:10,fontWeight:800,borderRadius:999,minWidth:16,height:16,lineHeight:'16px',padding:'0 4px',textAlign:'center'}}>{newMsgCount>99?'99+':newMsgCount}</span>}</button>
         <button className={`nav-btn ${view==='enroll'?'active':''}`} onClick={()=>setView('enroll')}>🔍 Explore</button>
         <button type="button" className="nav-btn nav-btn-link" onClick={()=>window.open('./intake.html','_blank','noopener,noreferrer')}>📝 Intake ↗</button>
-        <button className={`nav-btn ${view==='settings'?'active':''}`} onClick={()=>{ setView('settings'); setAdminSection('pools'); }}>⚙️ Settings</button>
+        {isSysadmin && <button className={`nav-btn ${view==='settings'?'active':''}`} onClick={()=>{ setView('settings'); setAdminSection('pools'); }}>⚙️ Settings</button>}
       </nav>
+      </div>
     </div></div>
 
     {/* ── Sub-bar: schedule tabs ── */}
@@ -3275,11 +3347,20 @@ function App({ currentUser, onLogout }){
         onViewInvoices={()=>{ setView('accounts'); setAccountSection('invoices'); }}
       />}
 
+      {/* ── Messages (website enquiries) ── */}
+      {!loading && view==='messages' && <MessagesView
+        messages={contactMessages}
+        onMarkRead={markMessageRead}
+        onMarkAllRead={markAllMessagesRead}
+        onDelete={deleteContactMessage}
+        onRefresh={loadContactMessages}
+      />}
+
       {/* ── Accounts views (no side-column for billing sub-sections) ── */}
       {/* ── Accounts: left-column nav + content ── */}
       {!loading && view==='accounts' && <div className="side-shell">
         <nav className="side-nav">
-          {[['accounts','Accounts'],['familyGroups','Groups'],['swimmers','Swimmers'],['invoices','Invoices'],['receipts','Receipts'],['pendingCredits','Pending Credits'],['aging','Aging'],['codes','Discounts'],['reports','Reports']].map(([k,l])=>
+          {[['accounts','Accounts'],['familyGroups','Groups'],['swimmers','Swimmers'],['invoices','Invoices'],['receipts','Receipts'],['pendingCredits','Pending Credits'],['aging','Aging'],['codes','Discounts'],...(isSysadmin?[['reports','Reports']]:[])].map(([k,l])=>
             <button key={k} className={`side-nav-btn${accountSection===k?' active':''}`} onClick={()=>setAccountSection(k)}>{l}</button>
           )}
         </nav>
@@ -3399,7 +3480,7 @@ function App({ currentUser, onLogout }){
         packageById={packageById} onConfirm={confirmCredit} onReverse={reverseCredit}
       />}
       {!loading && view==='accounts' && accountSection==='aging' && <AgingReportView invoices={invoices} pmts={pmts} branches={options.branches||[]} />}
-      {!loading && view==='accounts' && accountSection==='reports' && <ReportsView
+      {!loading && view==='accounts' && accountSection==='reports' && isSysadmin && <ReportsView
         invoices={invoices} pmts={pmts} pendingCredits={pendingCredits}
         students={students} sessions={sessions}
         creditBalances={creditBalances}
@@ -3450,9 +3531,9 @@ function App({ currentUser, onLogout }){
       />}
 
       {/* ── Settings: left-column nav + content ── */}
-      {!loading && view==='settings' && <div className="side-shell">
+      {!loading && view==='settings' && isSysadmin && <div className="side-shell">
         <nav className="side-nav">
-          {[['summary','Summary'],['branches','Branches'],['pools','Pools & Hours'],['instructors','Instructors'],['lessonTypes','Lesson Types'],['programme','Programme'],['terms','Terms'],['billingTerms','Billing Terms'],['products','Products'],['invoiceSettings','Invoice Numbering']].map(([k,l])=>
+          {[['summary','Summary'],['branches','Branches'],['pools','Pools & Hours'],['instructors','Instructors'],['lessonTypes','Lesson Types'],['programme','Programme'],['terms','Terms'],['billingTerms','Billing Terms'],['products','Products'],['invoiceSettings','Invoice Numbering'],['users','Users']].map(([k,l])=>
             <button key={k} className={`side-nav-btn${adminSection===k?' active':''}`} onClick={()=>setAdminSection(k)}>{l}</button>
           )}
         </nav>
@@ -3490,6 +3571,14 @@ function App({ currentUser, onLogout }){
             updateProduct={updateCatalogProduct}
             deleteProduct={deleteCatalogProduct}
             reorderProducts={reorderProducts}
+          />}
+          {adminSection==='users' && <UsersAdminView
+            users={appUsers}
+            currentUser={currentUser}
+            createUser={createAppUser}
+            setPassword={setAppUserPassword}
+            patchUser={patchAppUser}
+            deleteUser={deleteAppUser}
           />}
           {adminSection==='invoiceSettings' && <div className="card">
             <div style={{fontWeight:800,fontSize:18,marginBottom:4}}>Invoice Numbering &amp; Permissions</div>
@@ -9827,6 +9916,118 @@ function ProgrammeSessionModal({ modal, setModal, busy, onSave, onDelete, onDupl
 // description and price.
 // Full-screen image viewer. Click the backdrop (anywhere outside the image),
 // press Esc, or the ✕ to close.
+// ── Messages: website contact-form enquiries ────────────────────────────────
+function MessagesView({ messages, onMarkRead, onMarkAllRead, onDelete, onRefresh }){
+  const [filter,setFilter]=useState('all'); // all | new
+  const [openId,setOpenId]=useState(null);
+  const list=(messages||[]).filter(m=>filter==='new'?m.status==='new':true);
+  const newCount=(messages||[]).filter(m=>m.status==='new').length;
+  function fmt(ts){ if(!ts) return '—'; try{ return new Date(ts).toLocaleString(undefined,{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}); }catch(_){ return ts; } }
+  function openMsg(m){
+    setOpenId(openId===m.id?null:m.id);
+    if(m.status==='new') onMarkRead(m.id);
+  }
+  return <div style={{maxWidth:860,margin:'18px auto 0'}}>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap',marginBottom:14}}>
+      <div>
+        <div style={{fontSize:20,fontWeight:800}}>✉️ Messages</div>
+        <div className="small subtle">Enquiries from the website contact form. Opening a message marks it read.</div>
+      </div>
+      <div style={{display:'flex',gap:8,alignItems:'center'}}>
+        <button className={`btn small ${filter==='all'?'btn-primary':'btn-ghost'}`} onClick={()=>setFilter('all')}>All ({(messages||[]).length})</button>
+        <button className={`btn small ${filter==='new'?'btn-primary':'btn-ghost'}`} onClick={()=>setFilter('new')}>New ({newCount})</button>
+        {newCount>0 && <button className="btn btn-ghost small" onClick={onMarkAllRead}>Mark all read</button>}
+        <button className="btn btn-ghost small" onClick={onRefresh} title="Refresh">⟳</button>
+      </div>
+    </div>
+    {list.length===0
+      ? <div className="empty" style={{padding:30}}>{filter==='new'?'No new messages.':'No messages yet — enquiries from the website contact form will appear here.'}</div>
+      : <div style={{display:'flex',flexDirection:'column',gap:8}}>
+          {list.map(m=><div key={m.id} className="card" style={{padding:0,overflow:'hidden',borderLeft:m.status==='new'?'4px solid var(--primary)':'4px solid transparent'}}>
+            <div onClick={()=>openMsg(m)} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',cursor:'pointer',flexWrap:'wrap'}}>
+              {m.status==='new'&&<span style={{background:'var(--primary)',color:'#fff',fontSize:10,fontWeight:800,borderRadius:999,padding:'2px 8px'}}>NEW</span>}
+              <span style={{fontWeight:700}}>{m.name||'—'}</span>
+              {m.topic&&<span className="lt-branch-tag" style={{fontSize:10.5}}>{m.topic}</span>}
+              <span className="small subtle" style={{flex:1,minWidth:120,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.message}</span>
+              <span className="small subtle" style={{whiteSpace:'nowrap'}}>{fmt(m.created_at)}</span>
+            </div>
+            {openId===m.id && <div style={{padding:'0 14px 14px',borderTop:'1px solid var(--border)'}}>
+              <div style={{display:'flex',gap:16,flexWrap:'wrap',margin:'10px 0',fontSize:13}}>
+                {m.phone&&<span>📞 <a href={`tel:${m.phone}`} style={{color:'var(--primary)',fontWeight:600}}>{m.phone}</a></span>}
+                {m.email&&<span>✉️ <a href={`mailto:${m.email}`} style={{color:'var(--primary)',fontWeight:600}}>{m.email}</a></span>}
+                {m.phone&&<a href={`https://wa.me/${String(m.phone).replace(/[^0-9]/g,'')}`} target="_blank" rel="noopener noreferrer" style={{color:'#16A34A',fontWeight:700}}>💬 WhatsApp them</a>}
+              </div>
+              <div style={{background:'var(--surface-2)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 12px',fontSize:14,whiteSpace:'pre-wrap'}}>{m.message}</div>
+              <div style={{display:'flex',justifyContent:'flex-end',marginTop:8}}>
+                <button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>onDelete(m.id)}>Delete</button>
+              </div>
+            </div>}
+          </div>)}
+        </div>}
+  </div>;
+}
+
+// ── Settings › Users (sysadmin only): create logins, set passwords, roles ───
+function UsersAdminView({ users, currentUser, createUser, setPassword, patchUser, deleteUser }){
+  const [username,setUsername]=useState('');
+  const [displayName,setDisplayName]=useState('');
+  const [password,setPasswordVal]=useState('');
+  const [role,setRole]=useState('admin');
+  const [busy,setBusy]=useState(false);
+  const [pwFor,setPwFor]=useState(null);
+  const [pwVal,setPwVal]=useState('');
+  function fmt(ts){ if(!ts) return '—'; try{ return new Date(ts).toLocaleString(undefined,{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(_){ return ts; } }
+  return <>
+    <div className="card" style={{marginBottom:12}}>
+      <div style={{fontSize:18,fontWeight:800,marginBottom:4}}>👥 Users & Logins</div>
+      <div className="small subtle" style={{marginBottom:14}}>Create scheduler logins and manage passwords. <strong>Sysadmin</strong> sees everything; <strong>Admin</strong> cannot access Settings or Accounts › Reports.</div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 130px auto',gap:10,alignItems:'end'}}>
+        <div className="field" style={{margin:0}}><label>Username</label><input className="input" autoCapitalize="none" value={username} onChange={e=>setUsername(e.target.value)} placeholder="e.g. jsmith" /></div>
+        <div className="field" style={{margin:0}}><label>Display name</label><input className="input" value={displayName} onChange={e=>setDisplayName(e.target.value)} placeholder="e.g. John Smith" /></div>
+        <div className="field" style={{margin:0}}><label>Password</label><input className="input" type="text" value={password} onChange={e=>setPasswordVal(e.target.value)} placeholder="min 8 chars" /></div>
+        <div className="field" style={{margin:0}}><label>Role</label><select className="select" value={role} onChange={e=>setRole(e.target.value)}><option value="admin">Admin</option><option value="sysadmin">Sysadmin</option></select></div>
+        <button className="btn btn-primary" style={{height:38}} disabled={busy||!username.trim()||password.length<8} onClick={async()=>{ setBusy(true); try{ await createUser({username,displayName,password,role}); setUsername('');setDisplayName('');setPasswordVal(''); } finally{ setBusy(false);} }}>+ Create User</button>
+      </div>
+      {password&&password.length<8&&<div className="small" style={{color:'#DC2626',marginTop:6}}>Password must be at least 8 characters.</div>}
+    </div>
+    <div className="card" style={{padding:0,overflow:'hidden'}}>
+      <div className="table-wrap" style={{border:'none',borderRadius:0}}>
+        <table>
+          <thead><tr><th>Username</th><th>Name</th><th style={{width:110}}>Role</th><th style={{width:90}}>Status</th><th style={{width:150}}>Last login</th><th style={{width:250,textAlign:'right'}}>Actions</th></tr></thead>
+          <tbody>
+            {(users||[]).map(u=>{ const me=u.username===currentUser?.username; return <React.Fragment key={u.id}>
+              <tr>
+                <td style={{fontWeight:700}}>{u.username}{me&&<span className="small subtle"> (you)</span>}</td>
+                <td>{u.display_name||'—'}</td>
+                <td>
+                  <select className="select" style={{padding:'3px 6px',fontSize:12}} value={u.role||'admin'} disabled={me} onChange={e=>patchUser(u.id,{role:e.target.value})}>
+                    <option value="admin">Admin</option><option value="sysadmin">Sysadmin</option>
+                  </select>
+                </td>
+                <td>{u.is_active!==false?<span style={{color:'var(--green-tx)',fontWeight:700,fontSize:12}}>Active</span>:<span style={{color:'#DC2626',fontWeight:700,fontSize:12}}>Disabled</span>}</td>
+                <td className="small subtle">{fmt(u.last_login_at)}</td>
+                <td style={{textAlign:'right'}}>
+                  <button className="btn btn-ghost small" onClick={()=>{ setPwFor(pwFor===u.id?null:u.id); setPwVal(''); }}>🔑 Password</button>
+                  {!me&&<button className="btn btn-ghost small" onClick={()=>patchUser(u.id,{is_active:!(u.is_active!==false)})}>{u.is_active!==false?'Disable':'Enable'}</button>}
+                  {!me&&<button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>deleteUser(u.id)}>Delete</button>}
+                </td>
+              </tr>
+              {pwFor===u.id&&<tr><td colSpan={6} style={{background:'var(--surface-2)'}}>
+                <div style={{display:'flex',gap:8,alignItems:'center',padding:'4px 0'}}>
+                  <span className="small" style={{fontWeight:700}}>New password for {u.username}:</span>
+                  <input className="input" type="text" style={{maxWidth:220}} value={pwVal} onChange={e=>setPwVal(e.target.value)} placeholder="min 8 chars" />
+                  <button className="btn btn-primary small" disabled={pwVal.length<8} onClick={async()=>{ await setPassword(u.id,pwVal); setPwFor(null); setPwVal(''); }}>Save</button>
+                  <button className="btn btn-ghost small" onClick={()=>setPwFor(null)}>Cancel</button>
+                </div>
+              </td></tr>}
+            </React.Fragment>; })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </>;
+}
+
 function ImageLightbox({ src, onClose }){
   React.useEffect(()=>{ function onKey(e){ if(e.key==='Escape') onClose(); } window.addEventListener('keydown',onKey); return ()=>window.removeEventListener('keydown',onKey); },[onClose]);
   return <div onClick={onClose} style={{position:'fixed',inset:0,zIndex:1000,background:'rgba(0,0,0,.82)',display:'flex',alignItems:'center',justifyContent:'center',padding:24,cursor:'zoom-out'}}>
