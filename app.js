@@ -252,7 +252,7 @@ function PeriodNav({ rangeLabel, onPrev, onNext, onToday, isCurrent, children })
   </div>;
 }
 
-function App(){
+function App({ currentUser, onLogout }){
   const [view,setView] = useState('schedule');          // 'schedule'|'programme'|'accounts'|'enroll'|'settings'|'students'
   const [scheduleSection,setScheduleSection] = useState('week'); // 'week'|'day'|'month'
   // ── Programme planner (event & workout planning calendar) ──────────────
@@ -3075,6 +3075,10 @@ function App(){
         </div>
         <div className="header-summary"><span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalStudents}</span> students · <span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalSessions}</span> sessions</div>
         <div className="header-status"><span className={`status-dot ${loading?'is-loading':(error?'is-error':'is-ok')}`} aria-hidden="true" />{loading ? 'Connecting…' : (error ? 'Error' : (status || 'Ready'))}</div>
+        {currentUser && <div style={{display:'flex',alignItems:'center',gap:6}}>
+          <span className="small" style={{fontWeight:700,color:'var(--text-2)'}} title={`Role: ${currentUser.role}`}>👤 {currentUser.displayName||currentUser.username}</span>
+          <button className="btn btn-ghost small" onClick={()=>{ if(confirm('Sign out of the scheduler?')) onLogout(); }} title="Sign out">Logout</button>
+        </div>}
       </div>
       <nav className="main-nav">
         <button className={`nav-btn ${view==='schedule'?'active':''}`} onClick={()=>setView('schedule')}>📅 Schedule</button>
@@ -10381,6 +10385,74 @@ function ProgrammeCategoriesView({ categories, addCategory, updateCategory, dele
 }
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────
+// ── Application login gate ──────────────────────────────────────────────────
+const AUTH_KEY='ssb.auth';
+const AUTH_TTL_MS=7*24*60*60*1000; // 7-day session
+async function sha256Hex(str){
+  const buf=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+function readAuth(){
+  try{
+    const raw=localStorage.getItem(AUTH_KEY);
+    if(!raw) return null;
+    const a=JSON.parse(raw);
+    if(!a || !a.id || !a.ts || (Date.now()-a.ts)>AUTH_TTL_MS){ localStorage.removeItem(AUTH_KEY); return null; }
+    return a;
+  }catch(_){ return null; }
+}
+function clearAuth(){ try{ localStorage.removeItem(AUTH_KEY); }catch(_){} }
+
+function LoginView({ onLogin }){
+  const [username,setUsername]=useState('');
+  const [password,setPassword]=useState('');
+  const [err,setErr]=useState('');
+  const [busy,setBusy]=useState(false);
+  async function submit(e){
+    if(e) e.preventDefault();
+    const u=username.trim(); if(!u||!password){ setErr('Enter your username and password.'); return; }
+    setBusy(true); setErr('');
+    try{
+      const rows=await selectRows('app_users','*',`&username=eq.${encodeURIComponent(u)}&is_active=eq.true`).catch(()=>[]);
+      const user=rows?.[0];
+      if(user){
+        const hash=await sha256Hex((user.password_salt||'')+password);
+        if(hash===user.password_hash){
+          const auth={ id:user.id, username:user.username, displayName:user.display_name||user.username, role:user.role||'staff', ts:Date.now() };
+          try{ localStorage.setItem(AUTH_KEY, JSON.stringify(auth)); }catch(_){}
+          patchRows('app_users',{id:user.id},{last_login_at:new Date().toISOString()}).catch(()=>{});
+          onLogin(auth);
+          return;
+        }
+      }
+      setErr('Invalid username or password.');
+    }catch(ex){ setErr('Could not reach the server. Please try again.'); }
+    finally{ setBusy(false); }
+  }
+  return <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'var(--bg)',padding:20}}>
+    <form onSubmit={submit} style={{width:'min(380px,94vw)',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:16,padding:'30px 28px',boxShadow:'0 8px 30px rgba(15,23,42,.08)'}}>
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:18}}>
+        <img src="./logo.png" alt="" style={{height:38}} />
+        <div>
+          <div style={{fontWeight:800,fontSize:17,lineHeight:1.1}}>SSB Scheduler</div>
+          <div className="small subtle">Star Swim Sdn Bhd</div>
+        </div>
+      </div>
+      <div className="field"><label>Username</label><input className="input" autoFocus autoCapitalize="none" value={username} onChange={e=>setUsername(e.target.value)} /></div>
+      <div className="field"><label>Password</label><input className="input" type="password" value={password} onChange={e=>setPassword(e.target.value)} /></div>
+      {err && <div className="small" style={{color:'#DC2626',fontWeight:600,marginTop:6}}>{err}</div>}
+      <button type="submit" className="btn btn-primary" disabled={busy} style={{width:'100%',marginTop:14,padding:'10px'}}>{busy?'Signing in…':'Sign in'}</button>
+      <div className="small subtle" style={{marginTop:14,textAlign:'center'}}><a href="./index.html" style={{color:'var(--text-3)'}}>← Back to mystarswim.com</a></div>
+    </form>
+  </div>;
+}
+
+function Root(){
+  const [authUser,setAuthUser]=useState(readAuth());
+  if(!authUser) return <LoginView onLogin={setAuthUser} />;
+  return <ErrorBoundary><App currentUser={authUser} onLogout={()=>{ clearAuth(); setAuthUser(null); }} /></ErrorBoundary>;
+}
+
 ReactDOM.createRoot(document.getElementById('root')).render(
-  React.createElement(ErrorBoundary, null, React.createElement(App))
+  React.createElement(Root)
 );
