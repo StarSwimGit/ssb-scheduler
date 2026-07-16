@@ -253,7 +253,11 @@ function PeriodNav({ rangeLabel, onPrev, onNext, onToday, isCurrent, children })
 }
 
 function App({ currentUser, onLogout }){
-  const [view,setView] = useState('schedule');          // 'schedule'|'programme'|'accounts'|'enroll'|'settings'|'students'
+  const [view,setView] = useState(()=>{
+    // Admin (procurement) lands directly in Directory. Others start on Schedule.
+    if(currentUser && currentUser.role==='admin') return 'adminDirectory';
+    return 'schedule';
+  });
   const [scheduleSection,setScheduleSection] = useState('week'); // 'week'|'day'|'month'
   // ── Programme planner (event & workout planning calendar) ──────────────
   const [programmeSection,setProgrammeSection] = useState('week'); // 'week'|'month'
@@ -262,9 +266,30 @@ function App({ currentUser, onLogout }){
   const [billingTerms,setBillingTerms] = useState([]);
   const [products,setProducts] = useState([]);
   const isSysadmin = (currentUser?.role === 'sysadmin');
+  const canSchedule = canUseScheduler(currentUser?.role);
+  const canSystem = canUseAdminSystem(currentUser?.role);
+  // Two-side app: 'schedule' or 'system'. Sysadmin defaults to schedule side
+  // and can toggle. Admin (procurement) is pinned to system side. Anyone with
+  // scheduler-only access is pinned to schedule side.
+  const [side,setSide] = useState(()=>{
+    if(!canSchedule && canSystem) return 'system';
+    return 'schedule';
+  });
+  function switchSide(next){
+    setSide(next);
+    if(next==='system') setView('adminDirectory');
+    else setView('schedule');
+  }
   const [contactMessages,setContactMessages] = useState([]);
   const newMsgCount = useMemo(()=> (contactMessages||[]).filter(m=>m.status==='new').length, [contactMessages]);
   const [appUsers,setAppUsers] = useState([]);
+  // ── Admin & Procurement (System side) data ──
+  const [adminCategories,setAdminCategories] = useState([]);
+  const [adminCompanies,setAdminCompanies] = useState([]);
+  const [adminContacts,setAdminContacts] = useState([]);
+  const [adminPayees,setAdminPayees] = useState([]);
+  const [adminVouchers,setAdminVouchers] = useState([]);
+  const [adminEmployees,setAdminEmployees] = useState([]);
   const [programmeModal,setProgrammeModal] = useState(null);
   const [programmeDate,setProgrammeDate] = useState(todayStr());     // own week cursor (independent of Schedule)
   const [programmeMonthCursor,setProgrammeMonthCursor] = useState(new Date());
@@ -357,7 +382,7 @@ function App({ currentUser, onLogout }){
         loadCreditBalances(), loadCreditPurchases(),
         loadSubscriptions(), loadCodes(), loadReplacementPending(),
         loadTcAcceptances(), loadRemarks(monthCursor), loadInvoiceData(),
-        loadProgrammeSessions(), loadProgrammeCategories(), loadBillingTerms(), loadProducts(), loadContactMessages(), loadAppUsers()
+        loadProgrammeSessions(), loadProgrammeCategories(), loadBillingTerms(), loadProducts(), loadContactMessages(), loadAppUsers(), loadAdminAll()
       ]).catch(e => console.warn('Background load warning:', e));
     } catch(err){ handleErr(err); setLoading(false); }
   }
@@ -817,6 +842,21 @@ function App({ currentUser, onLogout }){
       const rows = await selectRows('app_users','id,username,display_name,role,is_active,created_at,last_login_at','&order=created_at.asc').catch(()=>[]);
       setAppUsers(rows || []);
     } catch(_){ setAppUsers([]); }
+  }
+  // ── Admin & Procurement loaders ──
+  async function loadAdminAll(){
+    try{
+      const [cats,cos,cts,pys,vs,eps] = await Promise.all([
+        selectRows('admin_categories','*','&order=name.asc').catch(()=>[]),
+        selectRows('admin_companies','*','&order=name.asc').catch(()=>[]),
+        selectRows('admin_contacts','*','&order=name.asc').catch(()=>[]),
+        selectRows('admin_payees','*','&order=name.asc').catch(()=>[]),
+        selectRows('admin_payment_vouchers','*','&order=serial_no.desc').catch(()=>[]),
+        selectRows('admin_employees','*','&order=full_name.asc').catch(()=>[]),
+      ]);
+      setAdminCategories(cats||[]); setAdminCompanies(cos||[]); setAdminContacts(cts||[]);
+      setAdminPayees(pys||[]); setAdminVouchers(vs||[]); setAdminEmployees(eps||[]);
+    } catch(_){}
   }
 
   async function loadStudents(){
@@ -2535,6 +2575,86 @@ function App({ currentUser, onLogout }){
     catch(err){ handleErr(err); alert(err.message||'Failed to delete user'); }
   }
 
+  // ── Admin & Procurement CRUD helpers ─────────────────────────────────────
+  async function adminAddCategory(name){
+    const n=(name||'').trim(); if(!n) return;
+    try{ await insertRows('admin_categories',{name:n}); await loadAdminAll(); }
+    catch(err){ handleErr(err); alert(err.message||'Failed to add category'); }
+  }
+  async function adminUpdateCategory(id, patch){
+    try{ await patchRows('admin_categories',{id},patch); await loadAdminAll(); }
+    catch(err){ handleErr(err); alert(err.message||'Failed to update category'); }
+  }
+  async function adminDeleteCategory(id){
+    if(!confirm('Delete this category?')) return;
+    try{ await deleteRows('admin_categories',{id}); await loadAdminAll(); }
+    catch(err){ handleErr(err); alert(err.message||'Failed to delete category'); }
+  }
+  async function adminSaveCompany(data, id){
+    try{
+      if(id) await patchRows('admin_companies',{id},data);
+      else await insertRows('admin_companies',data);
+      await loadAdminAll();
+    } catch(err){ handleErr(err); alert(err.message||'Failed to save company'); }
+  }
+  async function adminDeleteCompany(id){
+    if(!confirm('Delete this company? Its contacts will become independent.')) return;
+    try{ await deleteRows('admin_companies',{id}); await loadAdminAll(); }
+    catch(err){ handleErr(err); alert(err.message||'Failed to delete company'); }
+  }
+  async function adminSaveContact(data, id){
+    try{
+      if(id) await patchRows('admin_contacts',{id},data);
+      else await insertRows('admin_contacts',data);
+      await loadAdminAll();
+    } catch(err){ handleErr(err); alert(err.message||'Failed to save contact'); }
+  }
+  async function adminDeleteContact(id){
+    if(!confirm('Delete this contact?')) return;
+    try{ await deleteRows('admin_contacts',{id}); await loadAdminAll(); }
+    catch(err){ handleErr(err); alert(err.message||'Failed to delete contact'); }
+  }
+  async function adminSavePayee(data, id){
+    try{
+      let payeeId=id;
+      if(id) await patchRows('admin_payees',{id},data);
+      else {
+        const rows=await insertRows('admin_payees',data);
+        payeeId = rows?.[0]?.id;
+      }
+      await loadAdminAll();
+      return payeeId;
+    } catch(err){ handleErr(err); alert(err.message||'Failed to save payee'); return null; }
+  }
+  async function adminDeletePayee(id){
+    if(!confirm('Delete this payee? Existing vouchers keep their recorded details.')) return;
+    try{ await deleteRows('admin_payees',{id}); await loadAdminAll(); }
+    catch(err){ handleErr(err); alert(err.message||'Failed to delete payee'); }
+  }
+  async function adminSaveVoucher(data, id){
+    try{
+      if(id){ await patchRows('admin_payment_vouchers',{id},data); }
+      else { await insertRows('admin_payment_vouchers',{...data,status:data.status||'Draft'}); }
+      await loadAdminAll();
+    } catch(err){ handleErr(err); alert(err.message||'Failed to save voucher'); }
+  }
+  async function adminSetVoucherStatus(id, status){
+    try{ await patchRows('admin_payment_vouchers',{id},{status}); await loadAdminAll(); }
+    catch(err){ handleErr(err); alert(err.message||'Failed to update voucher'); }
+  }
+  async function adminSaveEmployee(data, id){
+    try{
+      if(id) await patchRows('admin_employees',{id},data);
+      else await insertRows('admin_employees',data);
+      await loadAdminAll();
+    } catch(err){ handleErr(err); alert(err.message||'Failed to save employee'); }
+  }
+  async function adminDeleteEmployee(id){
+    if(!confirm('Delete this employee?')) return;
+    try{ await deleteRows('admin_employees',{id}); await loadAdminAll(); }
+    catch(err){ handleErr(err); alert(err.message||'Failed to delete employee'); }
+  }
+
   // Reorder a settings list by reindexing sort_order across the whole list, so
   // the result is clean and gap-free regardless of the existing values.
   async function reorderOption(table, list, index, dir){
@@ -3159,15 +3279,22 @@ function App({ currentUser, onLogout }){
           <button className="btn btn-ghost small" style={{padding:'2px 10px'}} onClick={()=>{ if(confirm('Sign out of the scheduler?')) onLogout(); }} title="Sign out">Logout</button>
         </div>}
       <nav className="main-nav">
-        <button className={`nav-btn ${view==='schedule'?'active':''}`} onClick={()=>setView('schedule')}>📅 Schedule</button>
-        <button className={`nav-btn ${view==='programme'?'active':''}`} onClick={()=>{ setView('programme'); setProgrammeSection('week'); }}>📋 Programme</button>
-        <button className={`nav-btn ${view==='accounts'?'active':''}`} onClick={()=>{ setView('accounts'); setAccountSection('accounts'); }}>👤 Accounts</button>
-        <button className={`nav-btn ${view==='shop'?'active':''}`} onClick={()=>setView('shop')}>🛒 Shop</button>
-        <button className={`nav-btn ${view==='messages'?'active':''}`} onClick={()=>setView('messages')} style={{position:'relative'}}>✉️ Messages{newMsgCount>0&&<span style={{position:'absolute',top:2,right:2,background:'#EF4444',color:'#fff',fontSize:10,fontWeight:800,borderRadius:999,minWidth:16,height:16,lineHeight:'16px',padding:'0 4px',textAlign:'center'}}>{newMsgCount>99?'99+':newMsgCount}</span>}</button>
-        <button className={`nav-btn ${view==='enroll'?'active':''}`} onClick={()=>setView('enroll')}>🔍 Explore</button>
-        <button type="button" className="nav-btn nav-btn-link" onClick={()=>window.open('./intake.html','_blank','noopener,noreferrer')}>📝 Intake ↗</button>
-        {isSysadmin && <button className={`nav-btn ${view==='settings'?'active':''}`} onClick={()=>{ setView('settings'); setAdminSection('pools'); }}>⚙️ Settings</button>}
-        {isSysadmin && <button type="button" className="nav-btn nav-btn-link" onClick={()=>window.open(ADMIN_SYSTEM_URL,'_blank','noopener,noreferrer')} title="Admin & Procurement system">🏢 Admin System ↗</button>}
+        {side==='schedule' && <>
+          <button className={`nav-btn ${view==='schedule'?'active':''}`} onClick={()=>setView('schedule')}>📅 Schedule</button>
+          <button className={`nav-btn ${view==='programme'?'active':''}`} onClick={()=>{ setView('programme'); setProgrammeSection('week'); }}>📋 Programme</button>
+          <button className={`nav-btn ${view==='accounts'?'active':''}`} onClick={()=>{ setView('accounts'); setAccountSection('accounts'); }}>👤 Accounts</button>
+          <button className={`nav-btn ${view==='shop'?'active':''}`} onClick={()=>setView('shop')}>🛒 Shop</button>
+          <button className={`nav-btn ${view==='messages'?'active':''}`} onClick={()=>setView('messages')} style={{position:'relative'}}>✉️ Messages{newMsgCount>0&&<span style={{position:'absolute',top:2,right:2,background:'#EF4444',color:'#fff',fontSize:10,fontWeight:800,borderRadius:999,minWidth:16,height:16,lineHeight:'16px',padding:'0 4px',textAlign:'center'}}>{newMsgCount>99?'99+':newMsgCount}</span>}</button>
+          <button className={`nav-btn ${view==='enroll'?'active':''}`} onClick={()=>setView('enroll')}>🔍 Explore</button>
+          <button type="button" className="nav-btn nav-btn-link" onClick={()=>window.open('./intake.html','_blank','noopener,noreferrer')}>📝 Intake ↗</button>
+          {isSysadmin && <button className={`nav-btn ${view==='settings'?'active':''}`} onClick={()=>{ setView('settings'); setAdminSection('pools'); }}>⚙️ Settings</button>}
+        </>}
+        {side==='system' && <>
+          <button className={`nav-btn ${view==='adminDirectory'?'active':''}`} onClick={()=>setView('adminDirectory')}>📇 Directory</button>
+          <button className={`nav-btn ${view==='adminVouchers'?'active':''}`} onClick={()=>setView('adminVouchers')}>🧾 Payment Vouchers</button>
+          <button className={`nav-btn ${view==='adminCrew'?'active':''}`} onClick={()=>setView('adminCrew')}>👥 Crew</button>
+        </>}
+        {canUseScheduler(currentUser?.role) && canUseAdminSystem(currentUser?.role) && <button type="button" className="nav-btn" style={{marginLeft:'auto',background:side==='system'?'#EEF7FD':'#F0FDF4',border:'1px solid var(--border)',fontWeight:800}} onClick={()=>switchSide(side==='schedule'?'system':'schedule')} title={`Switch to ${side==='schedule'?'System':'Scheduling'} side`}>{side==='schedule'?'🏢 System ↔':'📅 Scheduling ↔'}</button>}
       </nav>
       </div>
     </div></div>
@@ -3363,6 +3490,36 @@ function App({ currentUser, onLogout }){
         onMarkAllRead={markAllMessagesRead}
         onDelete={deleteContactMessage}
         onRefresh={loadContactMessages}
+      />}
+
+      {/* ── Admin & Procurement (System side) ── */}
+      {!loading && view==='adminDirectory' && canSystem && <AdminDirectoryView
+        companies={adminCompanies}
+        contacts={adminContacts}
+        categories={adminCategories}
+        addCategory={adminAddCategory}
+        updateCategory={adminUpdateCategory}
+        deleteCategory={adminDeleteCategory}
+        saveCompany={adminSaveCompany}
+        deleteCompany={adminDeleteCompany}
+        saveContact={adminSaveContact}
+        deleteContact={adminDeleteContact}
+        onRefresh={loadAdminAll}
+      />}
+      {!loading && view==='adminVouchers' && canSystem && <AdminVouchersView
+        vouchers={adminVouchers}
+        payees={adminPayees}
+        savePayee={adminSavePayee}
+        deletePayee={adminDeletePayee}
+        saveVoucher={adminSaveVoucher}
+        setVoucherStatus={adminSetVoucherStatus}
+        onRefresh={loadAdminAll}
+      />}
+      {!loading && view==='adminCrew' && canSystem && <AdminCrewView
+        employees={adminEmployees}
+        saveEmployee={adminSaveEmployee}
+        deleteEmployee={adminDeleteEmployee}
+        onRefresh={loadAdminAll}
       />}
 
       {/* ── Accounts views (no side-column for billing sub-sections) ── */}
@@ -9926,6 +10083,745 @@ function ProgrammeSessionModal({ modal, setModal, busy, onSave, onDelete, onDupl
 // Full-screen image viewer. Click the backdrop (anywhere outside the image),
 // press Esc, or the ✕ to close.
 // ── Messages: website contact-form enquiries ────────────────────────────────
+
+// ── Admin & Procurement (System side) ─────────────────────────────────────
+// These modules were merged in from the standalone ssb-admin app (Directory,
+// Payment Vouchers, Crew). All read/write to the admin_* tables.
+
+const ADMIN_COMPANY = {
+  name: 'STAR SWIM SDN BHD',
+  reg: '1602674-U',
+  address: 'No.137, Jalan Sultan Abdul Jalil, 30000 Ipoh, Perak'
+};
+function adminFmtRM(n){ return 'RM ' + Number(n||0).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function adminFmtDate(d){ return d ? new Date(d).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : ''; }
+function adminIni(name){ return (name||'').split(' ').filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join(''); }
+function adminPvNo(v){ return v && v.serial_no ? 'PV' + String(v.serial_no).padStart(4,'0') : '—'; }
+// Malaysian Ringgit amount in words for printable vouchers
+function adminAmountInWords(n){
+  const ones=['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
+  const tens=['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
+  function w(num){
+    if(num===0) return '';
+    if(num<20) return ones[num];
+    if(num<100) return tens[Math.floor(num/10)]+(num%10?' '+ones[num%10]:'');
+    if(num<1000) return ones[Math.floor(num/100)]+' Hundred'+(num%100?' '+w(num%100):'');
+    if(num<1000000) return w(Math.floor(num/1000))+' Thousand'+(num%1000?' '+w(num%1000):'');
+    return w(Math.floor(num/1000000))+' Million'+(num%1000000?' '+w(num%1000000):'');
+  }
+  const rm=Math.floor(n), sen=Math.round((n-rm)*100);
+  let s='Ringgit Malaysia '+(rm?w(rm):'Zero');
+  if(sen) s+=' And Sen '+w(sen);
+  return s+' Only';
+}
+// Escape HTML for print templates
+function adminEsc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── Directory ─────────────────────────────────────────────────────────────
+function AdminDirectoryView({ companies, contacts, categories, addCategory, updateCategory, deleteCategory, saveCompany, deleteCompany, saveContact, deleteContact, onRefresh }){
+  const [q,setQ]=useState('');
+  const [filterCat,setFilterCat]=useState('all');
+  const [openCos,setOpenCos]=useState(new Set());
+  const [modal,setModal]=useState(null); // {kind:'company'|'contact'|'category'|'scan', data?, coId?}
+  const [scanBusy,setScanBusy]=useState(false);
+
+  const catById = useMemo(()=>{ const m={}; (categories||[]).forEach(c=>m[c.id]=c); return m; }, [categories]);
+
+  const filteredCompanies = useMemo(()=>{
+    const term=q.trim().toLowerCase();
+    let rows=(companies||[]).slice();
+    if(filterCat!=='all') rows=rows.filter(c=> filterCat==='none' ? !c.category_id : c.category_id===filterCat);
+    if(term){
+      const matchesCompany=c=> (c.name||'').toLowerCase().includes(term) || (c.email||'').toLowerCase().includes(term) || (c.phone||'').toLowerCase().includes(term) || (c.address||'').toLowerCase().includes(term);
+      const contactMatches=(contacts||[]).filter(ct=> (ct.name||'').toLowerCase().includes(term) || (ct.title||'').toLowerCase().includes(term) || (ct.email||'').toLowerCase().includes(term) || (ct.phone||'').toLowerCase().includes(term));
+      const coIds=new Set(contactMatches.map(ct=>ct.company_id).filter(Boolean));
+      rows=rows.filter(c=> matchesCompany(c) || coIds.has(c.id));
+    }
+    return rows;
+  }, [companies, contacts, q, filterCat]);
+
+  // Independent contacts (no company) that also match the search
+  const independentContacts = useMemo(()=>{
+    const term=q.trim().toLowerCase();
+    let rows=(contacts||[]).filter(ct=>!ct.company_id);
+    if(term) rows=rows.filter(ct=> (ct.name||'').toLowerCase().includes(term) || (ct.title||'').toLowerCase().includes(term) || (ct.email||'').toLowerCase().includes(term) || (ct.phone||'').toLowerCase().includes(term));
+    return rows;
+  }, [contacts, q]);
+
+  const contactsByCo = useMemo(()=>{
+    const m={};
+    (contacts||[]).forEach(ct=>{ if(ct.company_id){ (m[ct.company_id]=m[ct.company_id]||[]).push(ct); } });
+    Object.values(m).forEach(arr=>arr.sort((a,b)=>(a.name||'').localeCompare(b.name||'')));
+    return m;
+  }, [contacts]);
+
+  function toggleCo(id){ const s=new Set(openCos); if(s.has(id)) s.delete(id); else s.add(id); setOpenCos(s); }
+
+  // ── Business card scanner (calls /.netlify/functions/scan) ──
+  async function onScanFile(file){
+    if(!file) return;
+    setScanBusy(true);
+    try{
+      const b64 = await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result.split(',')[1]); r.onerror=()=>rej(new Error('read fail')); r.readAsDataURL(file); });
+      const resp = await fetch('/.netlify/functions/scan',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ image:b64, mime:file.type||'image/jpeg' }) });
+      if(!resp.ok) throw new Error('Scan failed: HTTP '+resp.status);
+      const data = await resp.json();
+      // Response shape: { name, title, email, phone, company_name, company_email, company_phone, address }
+      setScanBusy(false);
+      setModal({kind:'scan', data});
+    } catch(err){ setScanBusy(false); alert('Scan failed: '+(err?.message||err)); }
+  }
+  async function acceptScan(data){
+    // Create company (if provided) then contact
+    let coId=null;
+    if(data.company_name?.trim()){
+      const existing=(companies||[]).find(c=> (c.name||'').toLowerCase()===data.company_name.trim().toLowerCase());
+      if(existing) coId=existing.id;
+      else{
+        try{
+          const rows=await insertRows('admin_companies',{ name:data.company_name.trim(), email:data.company_email||null, phone:data.company_phone||null, address:data.address||null });
+          coId=rows?.[0]?.id;
+        } catch(err){ alert('Company create failed: '+err.message); return; }
+      }
+    }
+    if(data.name?.trim()){
+      try{
+        await insertRows('admin_contacts',{ name:data.name.trim(), title:data.title||null, email:data.email||null, phone:data.phone||null, company_id:coId });
+      } catch(err){ alert('Contact create failed: '+err.message); return; }
+    }
+    setModal(null); onRefresh();
+  }
+
+  // ── Print directory (A4) ──
+  function printDirectory(){
+    const term=q.trim(), catName=filterCat==='all'?'':catById[filterCat]?.name;
+    let heading='Company Directory';
+    if(catName) heading+=' — '+catName;
+    if(term) heading+=' — Search: "'+term+'"';
+    const dateStr=new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+    const blocks=filteredCompanies.map(c=>{
+      const cts=contactsByCo[c.id]||[];
+      const contactLines=cts.map(ct=>`<div style="margin-left:14pt;font-size:10pt">• ${adminEsc(ct.name)}${ct.title?' — <em>'+adminEsc(ct.title)+'</em>':''}${ct.email?' · '+adminEsc(ct.email):''}${ct.phone?' · '+adminEsc(ct.phone):''}</div>`).join('');
+      return `<div style="margin-bottom:14pt;page-break-inside:avoid">
+        <div style="font-weight:bold;font-size:12pt">${adminEsc(c.name)}</div>
+        ${c.email?`<div style="font-size:10pt">✉ ${adminEsc(c.email)}</div>`:''}
+        ${c.phone?`<div style="font-size:10pt">☎ ${adminEsc(c.phone)}</div>`:''}
+        ${c.address?`<div style="font-size:10pt">${adminEsc(c.address)}</div>`:''}
+        ${contactLines}
+      </div>`;
+    });
+    if(independentContacts.length){
+      const items=independentContacts.map(ct=>`<div style="margin-left:14pt;font-size:10pt">• ${adminEsc(ct.name)}${ct.title?' — <em>'+adminEsc(ct.title)+'</em>':''}${ct.email?' · '+adminEsc(ct.email):''}${ct.phone?' · '+adminEsc(ct.phone):''}</div>`).join('');
+      blocks.push(`<div style="margin-bottom:14pt;page-break-inside:avoid"><div style="font-weight:bold;font-size:12pt">Independent Contacts</div>${items}</div>`);
+    }
+    const mid=Math.ceil(blocks.length/2);
+    const printHTML=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${adminEsc(heading)}</title><style>@page{size:A4 portrait;margin:18mm 14mm}*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;font-size:11pt;color:#000;background:#fff}h1{font-size:13pt;font-weight:bold;margin-bottom:2pt}.sub{font-size:9pt;color:#555;margin-bottom:10pt;border-bottom:1.5px solid #000;padding-bottom:5pt}.cols{display:grid;grid-template-columns:1fr 1fr;gap:0 18pt;align-items:start}</style></head><body><h1>${adminEsc(heading)}</h1><div class="sub">${adminEsc(ADMIN_COMPANY.name)} (${adminEsc(ADMIN_COMPANY.reg)}) — Printed ${dateStr}</div><div class="cols"><div>${blocks.slice(0,mid).join('')}</div><div>${blocks.slice(mid).join('')}</div></div><scr` + `ipt>window.onload=function(){window.print();};</scr` + `ipt></body></html>`;
+    const w=window.open('','_blank'); if(!w){ alert('Allow popups from this site to enable printing.'); return; } w.document.write(printHTML); w.document.close();
+  }
+
+  return <div style={{maxWidth:1120,margin:'18px auto 0'}}>
+    <div className="card" style={{marginBottom:14}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:800}}>📇 Directory</div>
+          <div className="small subtle">Companies and their contacts, grouped by category. Scan a business card to add contacts instantly, filter by category, and print A4 contact sheets.</div>
+        </div>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+          <input className="input" style={{minWidth:220}} value={q} onChange={e=>setQ(e.target.value)} placeholder="Search company, contact, email, phone…" />
+          <button className="btn btn-ghost small" onClick={()=>setModal({kind:'categoryManager'})}>🏷 Categories</button>
+          <label className="btn btn-ghost small" style={{cursor:'pointer'}}>📸 {scanBusy?'Scanning…':'Scan Card'}
+            <input type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={e=>{ onScanFile(e.target.files?.[0]); e.target.value=''; }} disabled={scanBusy} />
+          </label>
+          <button className="btn btn-ghost small" onClick={printDirectory}>🖨 Print</button>
+          <button className="btn btn-ghost small" onClick={()=>setModal({kind:'contact', data:{}})}>+ Contact</button>
+          <button className="btn btn-primary small" onClick={()=>setModal({kind:'company', data:{}})}>+ Company</button>
+        </div>
+      </div>
+      <div style={{marginTop:10,display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
+        <span className="small subtle" style={{fontWeight:700}}>Filter:</span>
+        <button className={`btn small ${filterCat==='all'?'btn-primary':'btn-ghost'}`} onClick={()=>setFilterCat('all')}>All ({(companies||[]).length})</button>
+        {(categories||[]).map(c=>{
+          const n=(companies||[]).filter(co=>co.category_id===c.id).length;
+          return <button key={c.id} className={`btn small ${filterCat===c.id?'btn-primary':'btn-ghost'}`} onClick={()=>setFilterCat(c.id)}>{c.name} ({n})</button>;
+        })}
+        <button className={`btn small ${filterCat==='none'?'btn-primary':'btn-ghost'}`} onClick={()=>setFilterCat('none')}>Uncategorised</button>
+      </div>
+    </div>
+
+    {filteredCompanies.length===0 && independentContacts.length===0
+      ? <div className="empty" style={{padding:30}}>No results. Try a different search or filter.</div>
+      : <div style={{display:'flex',flexDirection:'column',gap:8}}>
+          {filteredCompanies.map(co=>{
+            const cts=contactsByCo[co.id]||[]; const open=openCos.has(co.id);
+            return <div key={co.id} className="card" style={{padding:0,overflow:'hidden'}}>
+              <div onClick={()=>toggleCo(co.id)} style={{cursor:'pointer',padding:'12px 16px',display:'flex',alignItems:'center',gap:12}}>
+                <div style={{width:38,height:38,borderRadius:8,background:'#EEF7FD',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:800,color:'#0284C7',fontSize:13,flexShrink:0}}>{adminIni(co.name)||'—'}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:14}}>{co.name} <span className="small subtle" style={{fontWeight:600}}>· {cts.length} contact{cts.length===1?'':'s'}</span></div>
+                  <div className="small subtle" style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{[co.email,co.phone,co.address].filter(Boolean).join(' · ')}</div>
+                </div>
+                {co.category_id&&catById[co.category_id]&&<span className="lt-branch-tag">{catById[co.category_id].name}</span>}
+                <span style={{color:'#94A3B8',fontSize:16}}>{open?'▾':'▸'}</span>
+              </div>
+              {open && <div style={{padding:'0 16px 12px',borderTop:'1px solid var(--border)'}}>
+                <div style={{display:'flex',gap:6,margin:'10px 0'}}>
+                  <button className="btn btn-ghost small" onClick={()=>setModal({kind:'company',data:co})}>✎ Edit company</button>
+                  <button className="btn btn-ghost small" onClick={()=>setModal({kind:'contact',data:{},coId:co.id})}>+ Add contact</button>
+                  <button className="btn btn-ghost small" style={{color:'#DC2626',marginLeft:'auto'}} onClick={()=>deleteCompany(co.id)}>Delete company</button>
+                </div>
+                {cts.length===0 ? <div className="small subtle" style={{padding:'8px 0'}}>No contacts yet. Click "+ Add contact" above.</div>
+                  : <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                      {cts.map(ct=><div key={ct.id} style={{display:'flex',alignItems:'center',gap:10,padding:'6px 8px',background:'var(--surface-2)',borderRadius:6}}>
+                        <div style={{width:30,height:30,borderRadius:'50%',background:'#0EA5E9',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:11,flexShrink:0}}>{adminIni(ct.name)}</div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontWeight:600,fontSize:13}}>{ct.name}{ct.title&&<span className="small subtle" style={{fontWeight:400}}> — {ct.title}</span>}</div>
+                          <div className="small subtle">{[ct.email,ct.phone].filter(Boolean).join(' · ')||'—'}</div>
+                        </div>
+                        <button className="btn btn-ghost small" onClick={()=>setModal({kind:'contact',data:ct})}>✎</button>
+                        <button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>deleteContact(ct.id)}>×</button>
+                      </div>)}
+                    </div>}
+              </div>}
+            </div>;
+          })}
+          {independentContacts.length>0 && <div className="card">
+            <div style={{fontWeight:700,marginBottom:8}}>Independent contacts <span className="small subtle" style={{fontWeight:400}}>· {independentContacts.length}</span></div>
+            <div style={{display:'flex',flexDirection:'column',gap:6}}>
+              {independentContacts.map(ct=><div key={ct.id} style={{display:'flex',alignItems:'center',gap:10,padding:'6px 8px',background:'var(--surface-2)',borderRadius:6}}>
+                <div style={{width:30,height:30,borderRadius:'50%',background:'#0EA5E9',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:11,flexShrink:0}}>{adminIni(ct.name)}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:600,fontSize:13}}>{ct.name}{ct.title&&<span className="small subtle" style={{fontWeight:400}}> — {ct.title}</span>}</div>
+                  <div className="small subtle">{[ct.email,ct.phone].filter(Boolean).join(' · ')||'—'}</div>
+                </div>
+                <button className="btn btn-ghost small" onClick={()=>setModal({kind:'contact',data:ct})}>✎</button>
+                <button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>deleteContact(ct.id)}>×</button>
+              </div>)}
+            </div>
+          </div>}
+        </div>}
+
+    {/* ── Modals ── */}
+    {modal?.kind==='company' && <AdminCompanyModal existing={modal.data} categories={categories} onSave={async d=>{ await saveCompany(d, modal.data?.id); setModal(null); }} onClose={()=>setModal(null)} />}
+    {modal?.kind==='contact' && <AdminContactModal existing={modal.data} companies={companies} preselectCompanyId={modal.coId} onSave={async d=>{ await saveContact(d, modal.data?.id); setModal(null); }} onClose={()=>setModal(null)} />}
+    {modal?.kind==='categoryManager' && <AdminCategoryModal categories={categories} companies={companies} addCategory={addCategory} updateCategory={updateCategory} deleteCategory={deleteCategory} onClose={()=>setModal(null)} />}
+    {modal?.kind==='scan' && <AdminScanReviewModal scanned={modal.data} onAccept={acceptScan} onClose={()=>setModal(null)} />}
+  </div>;
+}
+
+function AdminCompanyModal({ existing, categories, onSave, onClose }){
+  const [name,setName]=useState(existing?.name||'');
+  const [email,setEmail]=useState(existing?.email||'');
+  const [phone,setPhone]=useState(existing?.phone||'');
+  const [address,setAddress]=useState(existing?.address||'');
+  const [categoryId,setCategoryId]=useState(existing?.category_id||'');
+  const [busy,setBusy]=useState(false);
+  async function save(){ if(!name.trim()) return; setBusy(true); await onSave({ name:name.trim(), email:email.trim()||null, phone:phone.trim()||null, address:address.trim()||null, category_id:categoryId||null }); setBusy(false); }
+  return <div className="modal-backdrop" onClick={onClose}><div className="modal-card" onClick={e=>e.stopPropagation()} style={{maxWidth:520}}>
+    <div className="modal-head"><div style={{fontWeight:800,fontSize:16}}>{existing?.id?'Edit company':'New company'}</div><button className="btn btn-ghost small" onClick={onClose}>×</button></div>
+    <div style={{padding:14,display:'flex',flexDirection:'column',gap:10}}>
+      <div className="field" style={{margin:0}}><label>Company name *</label><input className="input" autoFocus value={name} onChange={e=>setName(e.target.value)} /></div>
+      <div className="field" style={{margin:0}}><label>Category</label><select className="select" value={categoryId} onChange={e=>setCategoryId(e.target.value)}><option value="">— None —</option>{(categories||[]).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+      <div className="field" style={{margin:0}}><label>Email</label><input className="input" value={email} onChange={e=>setEmail(e.target.value)} /></div>
+      <div className="field" style={{margin:0}}><label>Phone</label><input className="input" value={phone} onChange={e=>setPhone(e.target.value)} /></div>
+      <div className="field" style={{margin:0}}><label>Address</label><textarea className="textarea" value={address} onChange={e=>setAddress(e.target.value)} /></div>
+      <div style={{display:'flex',justifyContent:'flex-end',gap:8}}>
+        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" disabled={busy||!name.trim()} onClick={save}>{busy?'Saving…':'Save'}</button>
+      </div>
+    </div>
+  </div></div>;
+}
+
+function AdminContactModal({ existing, companies, preselectCompanyId, onSave, onClose }){
+  const [name,setName]=useState(existing?.name||'');
+  const [title,setTitle]=useState(existing?.title||'');
+  const [email,setEmail]=useState(existing?.email||'');
+  const [phone,setPhone]=useState(existing?.phone||'');
+  const [companyId,setCompanyId]=useState(existing?.company_id||preselectCompanyId||'');
+  const [busy,setBusy]=useState(false);
+  async function save(){ if(!name.trim()) return; setBusy(true); await onSave({ name:name.trim(), title:title.trim()||null, email:email.trim()||null, phone:phone.trim()||null, company_id:companyId||null }); setBusy(false); }
+  return <div className="modal-backdrop" onClick={onClose}><div className="modal-card" onClick={e=>e.stopPropagation()} style={{maxWidth:520}}>
+    <div className="modal-head"><div style={{fontWeight:800,fontSize:16}}>{existing?.id?'Edit contact':'New contact'}</div><button className="btn btn-ghost small" onClick={onClose}>×</button></div>
+    <div style={{padding:14,display:'flex',flexDirection:'column',gap:10}}>
+      <div className="field" style={{margin:0}}><label>Contact name *</label><input className="input" autoFocus value={name} onChange={e=>setName(e.target.value)} /></div>
+      <div className="field" style={{margin:0}}><label>Title</label><input className="input" value={title} onChange={e=>setTitle(e.target.value)} /></div>
+      <div className="field" style={{margin:0}}><label>Company</label><select className="select" value={companyId} onChange={e=>setCompanyId(e.target.value)}><option value="">— Independent —</option>{(companies||[]).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+      <div className="field" style={{margin:0}}><label>Email</label><input className="input" value={email} onChange={e=>setEmail(e.target.value)} /></div>
+      <div className="field" style={{margin:0}}><label>Phone</label><input className="input" value={phone} onChange={e=>setPhone(e.target.value)} /></div>
+      <div style={{display:'flex',justifyContent:'flex-end',gap:8}}>
+        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" disabled={busy||!name.trim()} onClick={save}>{busy?'Saving…':'Save'}</button>
+      </div>
+    </div>
+  </div></div>;
+}
+
+function AdminCategoryModal({ categories, companies, addCategory, updateCategory, deleteCategory, onClose }){
+  const [newName,setNewName]=useState('');
+  const [editingId,setEditingId]=useState(null);
+  const [editName,setEditName]=useState('');
+  return <div className="modal-backdrop" onClick={onClose}><div className="modal-card" onClick={e=>e.stopPropagation()} style={{maxWidth:480}}>
+    <div className="modal-head"><div style={{fontWeight:800,fontSize:16}}>🏷 Categories</div><button className="btn btn-ghost small" onClick={onClose}>×</button></div>
+    <div style={{padding:14,display:'flex',flexDirection:'column',gap:12}}>
+      <div style={{display:'flex',gap:8}}>
+        <input className="input" value={newName} onChange={e=>setNewName(e.target.value)} placeholder="New category name" />
+        <button className="btn btn-primary small" disabled={!newName.trim()} onClick={async()=>{ await addCategory(newName); setNewName(''); }}>+ Add</button>
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:6,maxHeight:340,overflowY:'auto'}}>
+        {(categories||[]).map(c=>{
+          const n=(companies||[]).filter(co=>co.category_id===c.id).length;
+          const isEditing=editingId===c.id;
+          return <div key={c.id} style={{display:'flex',gap:6,alignItems:'center',padding:'6px 8px',background:'var(--surface-2)',borderRadius:6}}>
+            {isEditing ? <input className="input" value={editName} onChange={e=>setEditName(e.target.value)} style={{flex:1}} />
+                       : <div style={{flex:1,fontWeight:600}}>{c.name} <span className="small subtle" style={{fontWeight:400}}>· {n}</span></div>}
+            {isEditing
+              ? <>
+                  <button className="btn btn-primary small" onClick={async()=>{ await updateCategory(c.id,{name:editName.trim()}); setEditingId(null); }}>Save</button>
+                  <button className="btn btn-ghost small" onClick={()=>setEditingId(null)}>Cancel</button>
+                </>
+              : <>
+                  <button className="btn btn-ghost small" onClick={()=>{ setEditingId(c.id); setEditName(c.name); }}>✎</button>
+                  <button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>deleteCategory(c.id)}>×</button>
+                </>}
+          </div>;
+        })}
+        {(categories||[]).length===0 && <div className="small subtle" style={{padding:8}}>No categories yet.</div>}
+      </div>
+    </div>
+  </div></div>;
+}
+
+function AdminScanReviewModal({ scanned, onAccept, onClose }){
+  const [d,setD]=useState({
+    name: scanned?.name||'', title: scanned?.title||'', email: scanned?.email||'', phone: scanned?.phone||'',
+    company_name: scanned?.company_name||'', company_email: scanned?.company_email||'', company_phone: scanned?.company_phone||'', address: scanned?.address||''
+  });
+  const [busy,setBusy]=useState(false);
+  return <div className="modal-backdrop" onClick={onClose}><div className="modal-card" onClick={e=>e.stopPropagation()} style={{maxWidth:560}}>
+    <div className="modal-head"><div style={{fontWeight:800,fontSize:16}}>📸 Card scan — review</div><button className="btn btn-ghost small" onClick={onClose}>×</button></div>
+    <div style={{padding:14,display:'flex',flexDirection:'column',gap:14}}>
+      <div className="small subtle">Confirm the details before saving. A company will be created if it doesn't already exist, and the contact will be linked to it.</div>
+      <div>
+        <div style={{fontWeight:800,fontSize:13,marginBottom:6}}>Contact</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+          <div className="field" style={{margin:0}}><label>Name</label><input className="input" value={d.name} onChange={e=>setD({...d,name:e.target.value})} /></div>
+          <div className="field" style={{margin:0}}><label>Title</label><input className="input" value={d.title} onChange={e=>setD({...d,title:e.target.value})} /></div>
+          <div className="field" style={{margin:0}}><label>Email</label><input className="input" value={d.email} onChange={e=>setD({...d,email:e.target.value})} /></div>
+          <div className="field" style={{margin:0}}><label>Phone</label><input className="input" value={d.phone} onChange={e=>setD({...d,phone:e.target.value})} /></div>
+        </div>
+      </div>
+      <div>
+        <div style={{fontWeight:800,fontSize:13,marginBottom:6}}>Company</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+          <div className="field" style={{margin:0,gridColumn:'1 / -1'}}><label>Name</label><input className="input" value={d.company_name} onChange={e=>setD({...d,company_name:e.target.value})} /></div>
+          <div className="field" style={{margin:0}}><label>Email</label><input className="input" value={d.company_email} onChange={e=>setD({...d,company_email:e.target.value})} /></div>
+          <div className="field" style={{margin:0}}><label>Phone</label><input className="input" value={d.company_phone} onChange={e=>setD({...d,company_phone:e.target.value})} /></div>
+          <div className="field" style={{margin:0,gridColumn:'1 / -1'}}><label>Address</label><textarea className="textarea" value={d.address} onChange={e=>setD({...d,address:e.target.value})} /></div>
+        </div>
+      </div>
+      <div style={{display:'flex',justifyContent:'flex-end',gap:8}}>
+        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" disabled={busy||(!d.name.trim()&&!d.company_name.trim())} onClick={async()=>{ setBusy(true); await onAccept(d); setBusy(false); }}>{busy?'Saving…':'Save'}</button>
+      </div>
+    </div>
+  </div></div>;
+}
+
+// ── Payment Vouchers ─────────────────────────────────────────────────────
+function AdminVouchersView({ vouchers, payees, savePayee, deletePayee, saveVoucher, setVoucherStatus, onRefresh }){
+  const [q,setQ]=useState('');
+  const [statusFilter,setStatusFilter]=useState('all');
+  const [modal,setModal]=useState(null); // {kind:'edit'|'view'|'payees', data?}
+
+  const filtered = useMemo(()=>{
+    const term=q.trim().toLowerCase();
+    let rows=(vouchers||[]).slice();
+    if(statusFilter!=='all') rows=rows.filter(v=>v.status===statusFilter);
+    if(term) rows=rows.filter(v=> (v.payee||'').toLowerCase().includes(term) || adminPvNo(v).toLowerCase().includes(term) || (v.remarks||'').toLowerCase().includes(term));
+    return rows;
+  }, [vouchers, q, statusFilter]);
+
+  const totals = useMemo(()=>{
+    const now=new Date(); const monthStart=new Date(now.getFullYear(),now.getMonth(),1).toISOString().slice(0,10);
+    const thisMonth=(vouchers||[]).filter(v=>v.pv_date>=monthStart);
+    return {
+      count:(vouchers||[]).length,
+      thisMonth:thisMonth.length,
+      paidThisMonth:thisMonth.filter(v=>v.status==='Paid').reduce((s,v)=>s+Number(v.amount||0),0),
+    };
+  }, [vouchers]);
+
+  function printPV(id){
+    const v=(vouchers||[]).find(x=>x.id===id); if(!v) return;
+    const itemRows=(v.items||[]).map(i=>`<tr><td style="padding:6pt 4pt;border-bottom:1px solid #ddd">${adminEsc(i.description)}</td><td style="padding:6pt 4pt;border-bottom:1px solid #ddd;text-align:right">${adminFmtRM(i.amount)}</td></tr>`).join('');
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Payment Voucher ${adminPvNo(v)}</title><style>@page{size:A4 portrait;margin:20mm}*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;font-size:11pt;color:#000}.hdr{text-align:center;margin-bottom:14pt;border-bottom:2px solid #000;padding-bottom:8pt}.hdr h1{font-size:16pt;font-weight:bold}.hdr .sub{font-size:9pt;color:#555;margin-top:2pt}.title{text-align:center;font-size:14pt;font-weight:bold;margin:14pt 0}.meta{display:grid;grid-template-columns:1fr 1fr;gap:8pt;margin-bottom:10pt;font-size:11pt}.meta div{padding:2pt 0}.meta .label{font-weight:bold}table{width:100%;border-collapse:collapse;margin:10pt 0}th{background:#f4f4f4;padding:6pt 4pt;text-align:left;border-bottom:2px solid #000}.total{font-weight:bold;font-size:12pt;border-top:2px solid #000;padding-top:6pt}.words{margin-top:10pt;font-style:italic}.sig{margin-top:36pt;display:grid;grid-template-columns:1fr 1fr 1fr;gap:24pt;font-size:10pt}.sig div{border-top:1px solid #000;padding-top:4pt;text-align:center}.void{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);font-size:120pt;color:#f001;font-weight:bold;pointer-events:none}</style></head><body>
+      ${v.status==='Void'?'<div class="void">VOID</div>':''}
+      <div class="hdr"><h1>${adminEsc(ADMIN_COMPANY.name)}</h1><div class="sub">(${adminEsc(ADMIN_COMPANY.reg)}) — ${adminEsc(ADMIN_COMPANY.address)}</div></div>
+      <div class="title">PAYMENT VOUCHER</div>
+      <div class="meta">
+        <div><span class="label">No:</span> ${adminPvNo(v)}</div>
+        <div style="text-align:right"><span class="label">Date:</span> ${adminEsc(adminFmtDate(v.pv_date))}</div>
+        <div><span class="label">Pay to:</span> ${adminEsc(v.payee)}</div>
+        <div style="text-align:right"><span class="label">Status:</span> ${adminEsc(v.status)}</div>
+        ${v.payee_nric_roc?`<div><span class="label">NRIC/ROC:</span> ${adminEsc(v.payee_nric_roc)}</div>`:''}
+        ${v.payee_contact?`<div><span class="label">Contact:</span> ${adminEsc(v.payee_contact)}</div>`:''}
+        ${v.payee_detail?`<div style="grid-column:1/-1"><span class="label">Details:</span> ${adminEsc(v.payee_detail)}</div>`:''}
+      </div>
+      <table><thead><tr><th>Description</th><th style="text-align:right;width:120pt">Amount (RM)</th></tr></thead><tbody>${itemRows}<tr class="total"><td style="padding:6pt 4pt">TOTAL</td><td style="padding:6pt 4pt;text-align:right">${adminFmtRM(v.amount)}</td></tr></tbody></table>
+      <div class="words"><span style="font-weight:bold">Amount in words:</span> ${adminEsc(adminAmountInWords(Number(v.amount||0)))}</div>
+      ${v.payment_method?`<div style="margin-top:8pt"><span style="font-weight:bold">Payment:</span> ${adminEsc(v.payment_method)}${v.payment_ref?` — Ref: ${adminEsc(v.payment_ref)}`:''}</div>`:''}
+      ${v.remarks?`<div style="margin-top:6pt"><span style="font-weight:bold">Remarks:</span> ${adminEsc(v.remarks)}</div>`:''}
+      <div class="sig">
+        <div>${adminEsc(v.prepared_by||'')}<br/><span style="font-weight:bold">Prepared by</span></div>
+        <div>${adminEsc(v.approved_by||'')}<br/><span style="font-weight:bold">Approved by</span></div>
+        <div><br/><span style="font-weight:bold">Received by</span></div>
+      </div>
+      <scr` + `ipt>window.onload=function(){window.print();};</scr` + `ipt></body></html>`;
+    const w=window.open('','_blank'); if(!w){ alert('Allow popups from this site to enable printing.'); return; } w.document.write(html); w.document.close();
+  }
+
+  const statuses = ['Draft','Approved','Paid','Void'];
+  const statusColor = { Draft:'#F59E0B', Approved:'#0EA5E9', Paid:'#22C55E', Void:'#94A3B8' };
+
+  return <div style={{maxWidth:1120,margin:'18px auto 0'}}>
+    <div className="card" style={{marginBottom:14}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:800}}>🧾 Payment Vouchers</div>
+          <div className="small subtle">Serialized payment vouchers with running PV numbers, approval flow, amount-in-words, and printable A4 vouchers with signature blocks.</div>
+        </div>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+          <div className="small subtle"><strong>{totals.count}</strong> total · <strong>{totals.thisMonth}</strong> this month · <strong>{adminFmtRM(totals.paidThisMonth)}</strong> paid this month</div>
+          <button className="btn btn-ghost small" onClick={()=>setModal({kind:'payees'})}>👥 Payees</button>
+          <button className="btn btn-primary small" onClick={()=>setModal({kind:'edit',data:{}})}>+ New Voucher</button>
+        </div>
+      </div>
+      <div style={{marginTop:10,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+        <input className="input" style={{flex:1,minWidth:200}} value={q} onChange={e=>setQ(e.target.value)} placeholder="Search PV number, payee, remarks…" />
+        <button className={`btn small ${statusFilter==='all'?'btn-primary':'btn-ghost'}`} onClick={()=>setStatusFilter('all')}>All</button>
+        {statuses.map(s=>{
+          const n=(vouchers||[]).filter(v=>v.status===s).length;
+          return <button key={s} className={`btn small ${statusFilter===s?'btn-primary':'btn-ghost'}`} onClick={()=>setStatusFilter(s)}>{s} ({n})</button>;
+        })}
+      </div>
+    </div>
+
+    {filtered.length===0 ? <div className="empty" style={{padding:30}}>No vouchers match. Try a different filter.</div>
+      : <div className="card" style={{padding:0,overflow:'hidden'}}>
+          <div className="table-wrap" style={{border:'none',borderRadius:0}}>
+            <table>
+              <thead><tr><th style={{width:90}}>PV #</th><th style={{width:110}}>Date</th><th>Payee</th><th style={{textAlign:'right',width:130}}>Amount</th><th style={{width:90}}>Status</th><th style={{textAlign:'right',width:250}}>Actions</th></tr></thead>
+              <tbody>
+                {filtered.map(v=><tr key={v.id}>
+                  <td style={{fontFamily:'monospace',fontWeight:700}}>{adminPvNo(v)}</td>
+                  <td>{adminFmtDate(v.pv_date)}</td>
+                  <td style={{fontWeight:600}}>{v.payee}<div className="small subtle">{[v.payment_method,v.payment_ref].filter(Boolean).join(' · ')||'—'}</div></td>
+                  <td style={{textAlign:'right',fontWeight:700}}>{adminFmtRM(v.amount)}</td>
+                  <td><span style={{background:statusColor[v.status]+'22',color:statusColor[v.status],fontWeight:800,fontSize:11,padding:'3px 10px',borderRadius:999}}>{v.status}</span></td>
+                  <td style={{textAlign:'right'}}>
+                    <button className="btn btn-ghost small" onClick={()=>printPV(v.id)}>🖨</button>
+                    {v.status==='Draft' && <button className="btn btn-ghost small" onClick={()=>setVoucherStatus(v.id,'Approved')}>Approve</button>}
+                    {v.status==='Approved' && <button className="btn btn-ghost small" onClick={()=>setVoucherStatus(v.id,'Paid')}>Mark Paid</button>}
+                    {v.status!=='Void' && v.status!=='Paid' && <button className="btn btn-ghost small" onClick={()=>setModal({kind:'edit',data:v})}>✎</button>}
+                    {v.status!=='Void' && <button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>{ if(confirm(`Void voucher ${adminPvNo(v)}? The number stays in the sequence but the voucher becomes invalid.`)) setVoucherStatus(v.id,'Void'); }}>Void</button>}
+                  </td>
+                </tr>)}
+              </tbody>
+            </table>
+          </div>
+        </div>}
+
+    {modal?.kind==='edit' && <AdminVoucherModal existing={modal.data} payees={payees} savePayee={savePayee} onSave={async d=>{ await saveVoucher(d, modal.data?.id); setModal(null); }} onClose={()=>setModal(null)} />}
+    {modal?.kind==='payees' && <AdminPayeesModal payees={payees} savePayee={savePayee} deletePayee={deletePayee} onClose={()=>setModal(null)} />}
+  </div>;
+}
+
+function AdminVoucherModal({ existing, payees, savePayee, onSave, onClose }){
+  const [date,setDate]=useState(existing?.pv_date || new Date().toISOString().slice(0,10));
+  const [payeeId,setPayeeId]=useState(existing?.payee_id||'');
+  const [payeeName,setPayeeName]=useState(existing?.payee||'');
+  const [nric,setNric]=useState(existing?.payee_nric_roc||'');
+  const [contact,setContact]=useState(existing?.payee_contact||'');
+  const [pdetail,setPdetail]=useState(existing?.payee_detail||'');
+  const [items,setItems]=useState(existing?.items?.length ? existing.items : [{description:'',amount:0}]);
+  const [method,setMethod]=useState(existing?.payment_method||'Cash');
+  const [ref,setRef]=useState(existing?.payment_ref||'');
+  const [prepared,setPrepared]=useState(existing?.prepared_by||'');
+  const [approved,setApproved]=useState(existing?.approved_by||'');
+  const [remarks,setRemarks]=useState(existing?.remarks||'');
+  const [busy,setBusy]=useState(false);
+
+  const total = items.reduce((s,i)=>s+Number(i.amount||0),0);
+
+  function pickPayee(id){
+    setPayeeId(id);
+    if(!id){ return; }
+    const p=(payees||[]).find(x=>x.id===id); if(!p) return;
+    setPayeeName(p.name||''); setNric(p.nric_roc||''); setContact(p.contact||''); setPdetail(p.detail1||'');
+  }
+  function updateItem(i, patch){ setItems(items.map((x,idx)=>idx===i?{...x,...patch}:x)); }
+  function addItem(){ setItems([...items,{description:'',amount:0}]); }
+  function removeItem(i){ setItems(items.filter((_,idx)=>idx!==i)); }
+  async function save(){
+    if(!payeeName.trim()){ alert('Payee name is required'); return; }
+    const validItems=items.filter(i=>i.description?.trim() && Number(i.amount)>0);
+    if(validItems.length===0){ alert('At least one line item with description and amount is required'); return; }
+    setBusy(true);
+    let finalPayeeId=payeeId;
+    if(!finalPayeeId && payeeName.trim()){
+      // Offer to save as reusable payee
+      if(confirm(`Save "${payeeName.trim()}" as a reusable payee for future vouchers?`)){
+        const id=await savePayee({ name:payeeName.trim(), nric_roc:nric.trim()||null, contact:contact.trim()||null, detail1:pdetail.trim()||null });
+        if(id) finalPayeeId=id;
+      }
+    }
+    await onSave({
+      pv_date: date,
+      payee: payeeName.trim(),
+      payee_id: finalPayeeId||null,
+      payee_nric_roc: nric.trim()||null,
+      payee_contact: contact.trim()||null,
+      payee_detail: pdetail.trim()||null,
+      items: validItems.map(i=>({description:i.description.trim(), amount:Number(i.amount)})),
+      amount: validItems.reduce((s,i)=>s+Number(i.amount),0),
+      payment_method: method,
+      payment_ref: ref.trim()||null,
+      prepared_by: prepared.trim()||null,
+      approved_by: approved.trim()||null,
+      remarks: remarks.trim()||null,
+    });
+    setBusy(false);
+  }
+  return <div className="modal-backdrop" onClick={onClose}><div className="modal-card" onClick={e=>e.stopPropagation()} style={{maxWidth:640}}>
+    <div className="modal-head"><div style={{fontWeight:800,fontSize:16}}>{existing?.id?`Edit ${adminPvNo(existing)}`:'New Payment Voucher'}</div><button className="btn btn-ghost small" onClick={onClose}>×</button></div>
+    <div style={{padding:14,display:'flex',flexDirection:'column',gap:12,maxHeight:'70vh',overflowY:'auto'}}>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+        <div className="field" style={{margin:0}}><label>Date *</label><input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Existing payee</label><select className="select" value={payeeId} onChange={e=>pickPayee(e.target.value)}><option value="">— New payee or type below —</option>{(payees||[]).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+      </div>
+      <div className="field" style={{margin:0}}><label>Pay to *</label><input className="input" value={payeeName} onChange={e=>{ setPayeeName(e.target.value); setPayeeId(''); }} placeholder="Payee name" /></div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+        <div className="field" style={{margin:0}}><label>NRIC / ROC</label><input className="input" value={nric} onChange={e=>setNric(e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Contact</label><input className="input" value={contact} onChange={e=>setContact(e.target.value)} /></div>
+      </div>
+      <div className="field" style={{margin:0}}><label>Bank details / address</label><input className="input" value={pdetail} onChange={e=>setPdetail(e.target.value)} /></div>
+      <div>
+        <div style={{fontWeight:700,fontSize:13,marginBottom:6}}>Items</div>
+        <div style={{display:'flex',flexDirection:'column',gap:6}}>
+          {items.map((it,i)=><div key={i} style={{display:'flex',gap:6,alignItems:'center'}}>
+            <input className="input" style={{flex:1}} value={it.description} onChange={e=>updateItem(i,{description:e.target.value})} placeholder="Description" />
+            <input className="input" style={{width:110}} type="number" step="0.01" min="0" value={it.amount} onChange={e=>updateItem(i,{amount:e.target.value})} placeholder="Amount" />
+            <button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>removeItem(i)} disabled={items.length===1}>×</button>
+          </div>)}
+          <button className="btn btn-ghost small" style={{alignSelf:'flex-start'}} onClick={addItem}>+ Add line</button>
+        </div>
+        <div style={{textAlign:'right',fontWeight:800,marginTop:8,fontSize:16}}>Total: {adminFmtRM(total)}</div>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+        <div className="field" style={{margin:0}}><label>Payment method</label><select className="select" value={method} onChange={e=>setMethod(e.target.value)}><option>Cash</option><option>Bank Transfer</option><option>Cheque</option><option>DuitNow</option><option>Card</option><option>Other</option></select></div>
+        <div className="field" style={{margin:0}}><label>Reference</label><input className="input" value={ref} onChange={e=>setRef(e.target.value)} placeholder="Cheque #, ref, etc." /></div>
+        <div className="field" style={{margin:0}}><label>Prepared by</label><input className="input" value={prepared} onChange={e=>setPrepared(e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Approved by</label><input className="input" value={approved} onChange={e=>setApproved(e.target.value)} /></div>
+      </div>
+      <div className="field" style={{margin:0}}><label>Remarks</label><textarea className="textarea" value={remarks} onChange={e=>setRemarks(e.target.value)} /></div>
+      <div style={{display:'flex',justifyContent:'flex-end',gap:8}}>
+        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" disabled={busy} onClick={save}>{busy?'Saving…':(existing?.id?'Save changes':'Issue Voucher')}</button>
+      </div>
+    </div>
+  </div></div>;
+}
+
+function AdminPayeesModal({ payees, savePayee, deletePayee, onClose }){
+  const [newP,setNewP]=useState({name:'',nric_roc:'',contact:'',detail1:''});
+  const [editingId,setEditingId]=useState(null);
+  const [editP,setEditP]=useState({});
+  async function add(){
+    if(!newP.name.trim()) return;
+    await savePayee({ name:newP.name.trim(), nric_roc:newP.nric_roc.trim()||null, contact:newP.contact.trim()||null, detail1:newP.detail1.trim()||null });
+    setNewP({name:'',nric_roc:'',contact:'',detail1:''});
+  }
+  async function saveEdit(id){
+    if(!editP.name?.trim()) return;
+    await savePayee({ name:editP.name.trim(), nric_roc:editP.nric_roc?.trim()||null, contact:editP.contact?.trim()||null, detail1:editP.detail1?.trim()||null }, id);
+    setEditingId(null);
+  }
+  return <div className="modal-backdrop" onClick={onClose}><div className="modal-card" onClick={e=>e.stopPropagation()} style={{maxWidth:640}}>
+    <div className="modal-head"><div style={{fontWeight:800,fontSize:16}}>👥 Payees</div><button className="btn btn-ghost small" onClick={onClose}>×</button></div>
+    <div style={{padding:14,display:'flex',flexDirection:'column',gap:12,maxHeight:'70vh',overflowY:'auto'}}>
+      <div className="card" style={{padding:10}}>
+        <div style={{fontWeight:700,fontSize:13,marginBottom:6}}>+ New payee</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+          <input className="input" value={newP.name} onChange={e=>setNewP({...newP,name:e.target.value})} placeholder="Name *" />
+          <input className="input" value={newP.nric_roc} onChange={e=>setNewP({...newP,nric_roc:e.target.value})} placeholder="NRIC / ROC" />
+          <input className="input" value={newP.contact} onChange={e=>setNewP({...newP,contact:e.target.value})} placeholder="Contact" />
+          <input className="input" value={newP.detail1} onChange={e=>setNewP({...newP,detail1:e.target.value})} placeholder="Bank / address" />
+        </div>
+        <button className="btn btn-primary small" style={{marginTop:8}} disabled={!newP.name.trim()} onClick={add}>+ Add payee</button>
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:6}}>
+        {(payees||[]).length===0 && <div className="small subtle" style={{padding:8}}>No payees yet.</div>}
+        {(payees||[]).map(p=>{
+          const isE=editingId===p.id;
+          return <div key={p.id} className="card" style={{padding:10}}>
+            {isE ? <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+                      <input className="input" value={editP.name||''} onChange={e=>setEditP({...editP,name:e.target.value})} placeholder="Name" />
+                      <input className="input" value={editP.nric_roc||''} onChange={e=>setEditP({...editP,nric_roc:e.target.value})} placeholder="NRIC / ROC" />
+                      <input className="input" value={editP.contact||''} onChange={e=>setEditP({...editP,contact:e.target.value})} placeholder="Contact" />
+                      <input className="input" value={editP.detail1||''} onChange={e=>setEditP({...editP,detail1:e.target.value})} placeholder="Bank / address" />
+                    </div>
+                    <div style={{display:'flex',gap:6,justifyContent:'flex-end'}}>
+                      <button className="btn btn-ghost small" onClick={()=>setEditingId(null)}>Cancel</button>
+                      <button className="btn btn-primary small" onClick={()=>saveEdit(p.id)}>Save</button>
+                    </div>
+                  </div>
+                : <div style={{display:'flex',alignItems:'center',gap:10}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:700}}>{p.name}</div>
+                      <div className="small subtle">{[p.nric_roc,p.contact,p.detail1].filter(Boolean).join(' · ')||'—'}</div>
+                    </div>
+                    <button className="btn btn-ghost small" onClick={()=>{ setEditingId(p.id); setEditP({name:p.name,nric_roc:p.nric_roc,contact:p.contact,detail1:p.detail1}); }}>✎</button>
+                    <button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>deletePayee(p.id)}>×</button>
+                  </div>}
+          </div>;
+        })}
+      </div>
+    </div>
+  </div></div>;
+}
+
+// ── Crew (Employees) ─────────────────────────────────────────────────────
+function AdminCrewView({ employees, saveEmployee, deleteEmployee, onRefresh }){
+  const [q,setQ]=useState('');
+  const [statusFilter,setStatusFilter]=useState('all');
+  const [modal,setModal]=useState(null); // {kind:'edit', data?}
+
+  const filtered = useMemo(()=>{
+    const term=q.trim().toLowerCase();
+    let rows=(employees||[]).slice();
+    if(statusFilter!=='all') rows=rows.filter(e=>e.status===statusFilter);
+    if(term) rows=rows.filter(e=> (e.full_name||'').toLowerCase().includes(term) || (e.emp_no||'').toLowerCase().includes(term) || (e.position||'').toLowerCase().includes(term) || (e.department||'').toLowerCase().includes(term) || (e.phone||'').toLowerCase().includes(term) || (e.email||'').toLowerCase().includes(term));
+    return rows;
+  }, [employees, q, statusFilter]);
+
+  const counts = {
+    active: (employees||[]).filter(e=>e.status==='Active').length,
+    inactive: (employees||[]).filter(e=>e.status==='Inactive').length,
+  };
+
+  return <div style={{maxWidth:1120,margin:'18px auto 0'}}>
+    <div className="card" style={{marginBottom:14}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:800}}>👥 Crew</div>
+          <div className="small subtle">Employee records for the Star Swim team — positions, contact details, employment status, and payroll banking info in one place.</div>
+        </div>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+          <div className="small subtle"><strong>{counts.active}</strong> active · <strong>{counts.inactive}</strong> inactive</div>
+          <button className="btn btn-primary small" onClick={()=>setModal({kind:'edit',data:{}})}>+ Add employee</button>
+        </div>
+      </div>
+      <div style={{marginTop:10,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+        <input className="input" style={{flex:1,minWidth:200}} value={q} onChange={e=>setQ(e.target.value)} placeholder="Search name, emp #, position…" />
+        <button className={`btn small ${statusFilter==='all'?'btn-primary':'btn-ghost'}`} onClick={()=>setStatusFilter('all')}>All ({(employees||[]).length})</button>
+        <button className={`btn small ${statusFilter==='Active'?'btn-primary':'btn-ghost'}`} onClick={()=>setStatusFilter('Active')}>Active ({counts.active})</button>
+        <button className={`btn small ${statusFilter==='Inactive'?'btn-primary':'btn-ghost'}`} onClick={()=>setStatusFilter('Inactive')}>Inactive ({counts.inactive})</button>
+      </div>
+    </div>
+
+    {filtered.length===0 ? <div className="empty" style={{padding:30}}>{(employees||[]).length===0 ? 'No employees yet. Click "+ Add employee" to add your first record.' : 'No employees match. Try a different search.'}</div>
+      : <div className="card" style={{padding:0,overflow:'hidden'}}>
+          <div className="table-wrap" style={{border:'none',borderRadius:0}}>
+            <table>
+              <thead><tr><th style={{width:36}}></th><th>Name</th><th style={{width:90}}>Emp #</th><th>Position</th><th>Department</th><th style={{width:110}}>Status</th><th style={{textAlign:'right',width:100}}>Actions</th></tr></thead>
+              <tbody>
+                {filtered.map(e=><tr key={e.id}>
+                  <td><div style={{width:30,height:30,borderRadius:'50%',background:'#0EA5E9',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:11}}>{adminIni(e.full_name)}</div></td>
+                  <td style={{fontWeight:700}}>{e.full_name}<div className="small subtle" style={{fontWeight:400}}>{[e.phone,e.email].filter(Boolean).join(' · ')||'—'}</div></td>
+                  <td className="small">{e.emp_no||'—'}</td>
+                  <td>{e.position||'—'}<div className="small subtle">{e.employment_type||''}</div></td>
+                  <td>{e.department||'—'}</td>
+                  <td>
+                    <select className="select" style={{padding:'3px 6px',fontSize:12}} value={e.status||'Active'} onChange={ev=>saveEmployee({status:ev.target.value}, e.id)}>
+                      <option>Active</option><option>Inactive</option>
+                    </select>
+                  </td>
+                  <td style={{textAlign:'right'}}>
+                    <button className="btn btn-ghost small" onClick={()=>setModal({kind:'edit',data:e})}>✎</button>
+                    <button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>deleteEmployee(e.id)}>×</button>
+                  </td>
+                </tr>)}
+              </tbody>
+            </table>
+          </div>
+        </div>}
+
+    {modal?.kind==='edit' && <AdminEmployeeModal existing={modal.data} onSave={async d=>{ await saveEmployee(d, modal.data?.id); setModal(null); }} onClose={()=>setModal(null)} />}
+  </div>;
+}
+
+function AdminEmployeeModal({ existing, onSave, onClose }){
+  const [d,setD]=useState({
+    full_name: existing?.full_name||'',
+    emp_no: existing?.emp_no||'',
+    ic_no: existing?.ic_no||'',
+    position: existing?.position||'',
+    department: existing?.department||'',
+    employment_type: existing?.employment_type||'Full-time',
+    start_date: existing?.start_date||'',
+    status: existing?.status||'Active',
+    phone: existing?.phone||'',
+    email: existing?.email||'',
+    emergency_name: existing?.emergency_name||'',
+    emergency_phone: existing?.emergency_phone||'',
+    bank_name: existing?.bank_name||'',
+    bank_account: existing?.bank_account||'',
+    notes: existing?.notes||''
+  });
+  const [busy,setBusy]=useState(false);
+  async function save(){
+    if(!d.full_name.trim()){ alert('Name is required'); return; }
+    setBusy(true);
+    const payload={};
+    Object.keys(d).forEach(k=>{
+      const v=typeof d[k]==='string'?d[k].trim():d[k];
+      payload[k] = (v===''?null:v);
+    });
+    payload.full_name = d.full_name.trim();
+    await onSave(payload);
+    setBusy(false);
+  }
+  function up(k,v){ setD({...d,[k]:v}); }
+  return <div className="modal-backdrop" onClick={onClose}><div className="modal-card" onClick={e=>e.stopPropagation()} style={{maxWidth:640}}>
+    <div className="modal-head"><div style={{fontWeight:800,fontSize:16}}>{existing?.id?'Edit employee':'New employee'}</div><button className="btn btn-ghost small" onClick={onClose}>×</button></div>
+    <div style={{padding:14,display:'flex',flexDirection:'column',gap:12,maxHeight:'70vh',overflowY:'auto'}}>
+      <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:8}}>
+        <div className="field" style={{margin:0}}><label>Full name *</label><input className="input" autoFocus value={d.full_name} onChange={e=>up('full_name',e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Employee #</label><input className="input" value={d.emp_no} onChange={e=>up('emp_no',e.target.value)} /></div>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+        <div className="field" style={{margin:0}}><label>IC number</label><input className="input" value={d.ic_no} onChange={e=>up('ic_no',e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Start date</label><input className="input" type="date" value={d.start_date} onChange={e=>up('start_date',e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Position</label><input className="input" value={d.position} onChange={e=>up('position',e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Department</label><input className="input" value={d.department} onChange={e=>up('department',e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Employment type</label><select className="select" value={d.employment_type} onChange={e=>up('employment_type',e.target.value)}><option>Full-time</option><option>Part-time</option><option>Contract</option><option>Intern</option><option>Other</option></select></div>
+        <div className="field" style={{margin:0}}><label>Status</label><select className="select" value={d.status} onChange={e=>up('status',e.target.value)}><option>Active</option><option>Inactive</option></select></div>
+        <div className="field" style={{margin:0}}><label>Phone</label><input className="input" value={d.phone} onChange={e=>up('phone',e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Email</label><input className="input" value={d.email} onChange={e=>up('email',e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Emergency contact name</label><input className="input" value={d.emergency_name} onChange={e=>up('emergency_name',e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Emergency contact phone</label><input className="input" value={d.emergency_phone} onChange={e=>up('emergency_phone',e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Bank name</label><input className="input" value={d.bank_name} onChange={e=>up('bank_name',e.target.value)} /></div>
+        <div className="field" style={{margin:0}}><label>Bank account</label><input className="input" value={d.bank_account} onChange={e=>up('bank_account',e.target.value)} /></div>
+      </div>
+      <div className="field" style={{margin:0}}><label>Notes</label><textarea className="textarea" value={d.notes} onChange={e=>up('notes',e.target.value)} /></div>
+      <div style={{display:'flex',justifyContent:'flex-end',gap:8}}>
+        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" disabled={busy||!d.full_name.trim()} onClick={save}>{busy?'Saving…':'Save'}</button>
+      </div>
+    </div>
+  </div></div>;
+}
 function MessagesView({ messages, onMarkRead, onMarkAllRead, onDelete, onRefresh }){
   const [filter,setFilter]=useState('all'); // all | new
   const [openId,setOpenId]=useState(null);
@@ -10640,16 +11536,11 @@ function LoginView({ onLogin }){
           const auth={ id:user.id, username:user.username, displayName:user.display_name||user.username, role:user.role||'staff', ts:Date.now() };
           try{ localStorage.setItem(AUTH_KEY, JSON.stringify(auth)); }catch(_){}
           patchRows('app_users',{id:user.id},{last_login_at:new Date().toISOString()}).catch(()=>{});
-          // Role-based routing: if the user can't use the scheduler but CAN use
-          // the admin system, send them there. Their session survives the trip
-          // because localStorage is per-origin (they'll sign in there once too).
-          if(!canUseScheduler(user.role) && canUseAdminSystem(user.role)){
-            window.location.replace(ADMIN_SYSTEM_URL);
-            return;
-          }
-          if(!canUseScheduler(user.role)){
+          // Post-merger: admins land in the System side of this same app; no
+          // external redirect needed. Only reject roles that can access neither.
+          if(!canUseScheduler(user.role) && !canUseAdminSystem(user.role)){
             try{ localStorage.removeItem(AUTH_KEY); }catch(_){}
-            setErr('This account is not permitted to use the scheduler.');
+            setErr('This account is not permitted to sign in.');
             setBusy(false);
             return;
           }
