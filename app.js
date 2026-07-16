@@ -280,6 +280,18 @@ function App({ currentUser, onLogout }){
     if(next==='system') setView('adminDirectory');
     else setView('schedule');
   }
+  // Robust: header rendering follows the CURRENT VIEW, not a separate `side`
+  // state, so the header can never drift out of sync with the content area.
+  const isOnSystemView = ['adminDirectory','adminVouchers','adminCrew'].includes(view);
+  // Defensive: if view and side ever get out of sync (e.g. after login flow
+  // or a stale route), snap view back to the side's home. Prevents the
+  // "half-breed" state where system nav is shown but schedule content mounts.
+  useEffect(()=>{
+    const scheduleViews = new Set(['schedule','programme','accounts','shop','messages','enroll','settings','students']);
+    const systemViews = new Set(['adminDirectory','adminVouchers','adminCrew']);
+    if(side==='schedule' && systemViews.has(view)) setView('schedule');
+    if(side==='system' && scheduleViews.has(view)) setView('adminDirectory');
+  }, [side, view]);
   const [contactMessages,setContactMessages] = useState([]);
   const newMsgCount = useMemo(()=> (contactMessages||[]).filter(m=>m.status==='new').length, [contactMessages]);
   const [appUsers,setAppUsers] = useState([]);
@@ -3257,9 +3269,9 @@ function App({ currentUser, onLogout }){
 
   return <div>
     <div className="header"><div className="header-inner">
-      <a className="brand" href="./index.html" title="Go to mystarswim.com" style={{textDecoration:'none',color:'inherit'}}><img src="./logo.png" alt="SSB" className="logo" /><div><div style={{fontSize:14,fontWeight:800,letterSpacing:'-.3px',lineHeight:1}}>SSB Scheduler</div><div style={{fontSize:9,color:'#64748B',marginTop:2}}>Pool-aware lesson calendar</div></div></a>
+      <a className="brand" href="#" onClick={e=>{ e.preventDefault(); if(canSchedule){ setSide('schedule'); setView('schedule'); } else if(canSystem){ setSide('system'); setView('adminDirectory'); } }} title="Home" style={{textDecoration:'none',color:'inherit'}}><img src="./logo.png" alt="SSB" className="logo" /><div><div style={{fontSize:14,fontWeight:800,letterSpacing:'-.3px',lineHeight:1}}>{isOnSystemView?'SSB System':'SSB Scheduler'}</div><div style={{fontSize:9,color:'#64748B',marginTop:2}}>{isOnSystemView?'Admin & Procurement':'Pool-aware lesson calendar'}</div></div></a>
       <div className="header-meta">
-        <div className="branch-selector">
+        {!isOnSystemView && <><div className="branch-selector">
           <label className="branch-label">Branch</label>
           <select className="branch-select" value={currentBranchId || ''} onChange={e=>setCurrentBranchId(e.target.value || null)} title="Switch the active branch. Filters Accounts, Pools, Invoices, Intake.">
             {(options.branches||[]).filter(b=>b.is_active!==false).map(b => <option key={b.id} value={b.id}>{b.name}{b.code?` (${b.code})`:''}</option>)}
@@ -3270,7 +3282,7 @@ function App({ currentUser, onLogout }){
             return b ? <span className="branch-pill" style={b.color?{background:b.color+'22',borderColor:b.color,color:b.color}:{}}>● {b.code || b.name}</span> : null;
           })()}
         </div>
-        <div className="header-summary"><span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalStudents}</span> students · <span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalSessions}</span> sessions</div>
+        <div className="header-summary"><span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalStudents}</span> students · <span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalSessions}</span> sessions</div></>}
         <div className="header-status"><span className={`status-dot ${loading?'is-loading':(error?'is-error':'is-ok')}`} aria-hidden="true" />{loading ? 'Connecting…' : (error ? 'Error' : (status || 'Ready'))}</div>
       </div>
       <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:4}}>
@@ -3493,7 +3505,7 @@ function App({ currentUser, onLogout }){
       />}
 
       {/* ── Admin & Procurement (System side) ── */}
-      {!loading && view==='adminDirectory' && canSystem && <AdminDirectoryView
+      {!loading && side==='system' && view==='adminDirectory' && canSystem && <AdminDirectoryView
         companies={adminCompanies}
         contacts={adminContacts}
         categories={adminCategories}
@@ -3506,7 +3518,7 @@ function App({ currentUser, onLogout }){
         deleteContact={adminDeleteContact}
         onRefresh={loadAdminAll}
       />}
-      {!loading && view==='adminVouchers' && canSystem && <AdminVouchersView
+      {!loading && side==='system' && view==='adminVouchers' && canSystem && <AdminVouchersView
         vouchers={adminVouchers}
         payees={adminPayees}
         savePayee={adminSavePayee}
@@ -3515,7 +3527,7 @@ function App({ currentUser, onLogout }){
         setVoucherStatus={adminSetVoucherStatus}
         onRefresh={loadAdminAll}
       />}
-      {!loading && view==='adminCrew' && canSystem && <AdminCrewView
+      {!loading && side==='system' && view==='adminCrew' && canSystem && <AdminCrewView
         employees={adminEmployees}
         saveEmployee={adminSaveEmployee}
         deleteEmployee={adminDeleteEmployee}
