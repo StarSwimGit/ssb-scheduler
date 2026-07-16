@@ -546,6 +546,18 @@ function App({
     setSide(next);
     if (next === 'system') setView('adminDirectory');else setView('schedule');
   }
+  // Robust: header rendering follows the CURRENT VIEW, not a separate `side`
+  // state, so the header can never drift out of sync with the content area.
+  const isOnSystemView = ['adminDirectory', 'adminVouchers', 'adminCrew'].includes(view);
+  // Defensive: if view and side ever get out of sync (e.g. after login flow
+  // or a stale route), snap view back to the side's home. Prevents the
+  // "half-breed" state where system nav is shown but schedule content mounts.
+  useEffect(() => {
+    const scheduleViews = new Set(['schedule', 'programme', 'accounts', 'shop', 'messages', 'enroll', 'settings', 'students']);
+    const systemViews = new Set(['adminDirectory', 'adminVouchers', 'adminCrew']);
+    if (side === 'schedule' && systemViews.has(view)) setView('schedule');
+    if (side === 'system' && scheduleViews.has(view)) setView('adminDirectory');
+  }, [side, view]);
   const [contactMessages, setContactMessages] = useState([]);
   const newMsgCount = useMemo(() => (contactMessages || []).filter(m => m.status === 'new').length, [contactMessages]);
   const [appUsers, setAppUsers] = useState([]);
@@ -4890,8 +4902,18 @@ function App({
     className: "header-inner"
   }, /*#__PURE__*/React.createElement("a", {
     className: "brand",
-    href: "./index.html",
-    title: "Go to mystarswim.com",
+    href: "#",
+    onClick: e => {
+      e.preventDefault();
+      if (canSchedule) {
+        setSide('schedule');
+        setView('schedule');
+      } else if (canSystem) {
+        setSide('system');
+        setView('adminDirectory');
+      }
+    },
+    title: "Home",
     style: {
       textDecoration: 'none',
       color: 'inherit'
@@ -4907,15 +4929,15 @@ function App({
       letterSpacing: '-.3px',
       lineHeight: 1
     }
-  }, "SSB Scheduler"), /*#__PURE__*/React.createElement("div", {
+  }, isOnSystemView ? 'SSB System' : 'SSB Scheduler'), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 9,
       color: '#64748B',
       marginTop: 2
     }
-  }, "Pool-aware lesson calendar"))), /*#__PURE__*/React.createElement("div", {
+  }, isOnSystemView ? 'Admin & Procurement' : 'Pool-aware lesson calendar'))), /*#__PURE__*/React.createElement("div", {
     className: "header-meta"
-  }, /*#__PURE__*/React.createElement("div", {
+  }, !isOnSystemView && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "branch-selector"
   }, /*#__PURE__*/React.createElement("label", {
     className: "branch-label"
@@ -4951,7 +4973,7 @@ function App({
       color: 'var(--primary)',
       fontWeight: 800
     }
-  }, summary.totalSessions), " sessions"), /*#__PURE__*/React.createElement("div", {
+  }, summary.totalSessions), " sessions")), /*#__PURE__*/React.createElement("div", {
     className: "header-status"
   }, /*#__PURE__*/React.createElement("span", {
     className: `status-dot ${loading ? 'is-loading' : error ? 'is-error' : 'is-ok'}`,
@@ -5326,7 +5348,7 @@ function App({
     onMarkAllRead: markAllMessagesRead,
     onDelete: deleteContactMessage,
     onRefresh: loadContactMessages
-  }), !loading && view === 'adminDirectory' && canSystem && /*#__PURE__*/React.createElement(AdminDirectoryView, {
+  }), !loading && side === 'system' && view === 'adminDirectory' && canSystem && /*#__PURE__*/React.createElement(AdminDirectoryView, {
     companies: adminCompanies,
     contacts: adminContacts,
     categories: adminCategories,
@@ -5338,7 +5360,7 @@ function App({
     saveContact: adminSaveContact,
     deleteContact: adminDeleteContact,
     onRefresh: loadAdminAll
-  }), !loading && view === 'adminVouchers' && canSystem && /*#__PURE__*/React.createElement(AdminVouchersView, {
+  }), !loading && side === 'system' && view === 'adminVouchers' && canSystem && /*#__PURE__*/React.createElement(AdminVouchersView, {
     vouchers: adminVouchers,
     payees: adminPayees,
     savePayee: adminSavePayee,
@@ -5346,7 +5368,7 @@ function App({
     saveVoucher: adminSaveVoucher,
     setVoucherStatus: adminSetVoucherStatus,
     onRefresh: loadAdminAll
-  }), !loading && view === 'adminCrew' && canSystem && /*#__PURE__*/React.createElement(AdminCrewView, {
+  }), !loading && side === 'system' && view === 'adminCrew' && canSystem && /*#__PURE__*/React.createElement(AdminCrewView, {
     employees: adminEmployees,
     saveEmployee: adminSaveEmployee,
     deleteEmployee: adminDeleteEmployee,
