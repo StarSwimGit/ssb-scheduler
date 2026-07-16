@@ -4838,7 +4838,12 @@ function App({
       setView('settings');
       setAdminSection('pools');
     }
-  }, "⚙️ Settings"))))), !loading && view === 'schedule' && /*#__PURE__*/React.createElement("div", {
+  }, "⚙️ Settings"), isSysadmin && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "nav-btn nav-btn-link",
+    onClick: () => window.open(ADMIN_SYSTEM_URL, '_blank', 'noopener,noreferrer'),
+    title: "Admin & Procurement system"
+  }, "🏢 Admin System ↗"))))), !loading && view === 'schedule' && /*#__PURE__*/React.createElement("div", {
     className: "sub-bar"
   }, /*#__PURE__*/React.createElement("div", {
     className: "sub-bar-inner"
@@ -18811,7 +18816,7 @@ function UsersAdminView({
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [password, setPasswordVal] = useState('');
-  const [role, setRole] = useState('admin');
+  const [role, setRole] = useState('schedule_admin');
   const [busy, setBusy] = useState(false);
   const [pwFor, setPwFor] = useState(null);
   const [pwVal, setPwVal] = useState('');
@@ -18844,7 +18849,7 @@ function UsersAdminView({
     style: {
       marginBottom: 14
     }
-  }, "Create scheduler logins and manage passwords. ", /*#__PURE__*/React.createElement("strong", null, "Sysadmin"), " sees everything; ", /*#__PURE__*/React.createElement("strong", null, "Admin"), " cannot access Settings or Accounts › Reports."), /*#__PURE__*/React.createElement("div", {
+  }, "Create logins and manage passwords. ", /*#__PURE__*/React.createElement("strong", null, "Sysadmin"), " — full access to both the scheduler and the Admin & Procurement system. ", /*#__PURE__*/React.createElement("strong", null, "Schedule Admin"), " — this scheduler only (no Settings or Reports). ", /*#__PURE__*/React.createElement("strong", null, "Admin (Procurement)"), " — signs in here but is redirected to the Admin & Procurement system."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: '1fr 1fr 1fr 130px auto',
@@ -18893,8 +18898,10 @@ function UsersAdminView({
     value: role,
     onChange: e => setRole(e.target.value)
   }, /*#__PURE__*/React.createElement("option", {
+    value: "schedule_admin"
+  }, "Schedule Admin"), /*#__PURE__*/React.createElement("option", {
     value: "admin"
-  }, "Admin"), /*#__PURE__*/React.createElement("option", {
+  }, "Admin (Procurement)"), /*#__PURE__*/React.createElement("option", {
     value: "sysadmin"
   }, "Sysadmin"))), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-primary",
@@ -18975,8 +18982,10 @@ function UsersAdminView({
         role: e.target.value
       })
     }, /*#__PURE__*/React.createElement("option", {
+      value: "schedule_admin"
+    }, "Schedule Admin"), /*#__PURE__*/React.createElement("option", {
       value: "admin"
-    }, "Admin"), /*#__PURE__*/React.createElement("option", {
+    }, "Admin (Procurement)"), /*#__PURE__*/React.createElement("option", {
       value: "sysadmin"
     }, "Sysadmin"))), /*#__PURE__*/React.createElement("td", null, u.is_active !== false ? /*#__PURE__*/React.createElement("span", {
       style: {
@@ -21191,6 +21200,19 @@ function ProgrammeCategoriesView({
 // ── Application login gate ──────────────────────────────────────────────────
 const AUTH_KEY = 'ssb.auth';
 const AUTH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7-day session
+// Admin & Procurement system (separate Netlify site, separate Supabase project,
+// same app_users source of truth via the scheduler's Supabase).
+const ADMIN_SYSTEM_URL = 'https://system.mystarswim.com/';
+// Role rules:
+//   sysadmin       — full access to BOTH apps.
+//   schedule_admin — scheduler only (this app). Was 'admin' before.
+//   admin          — Admin & Procurement system only.
+function canUseScheduler(role) {
+  return role === 'sysadmin' || role === 'schedule_admin';
+}
+function canUseAdminSystem(role) {
+  return role === 'sysadmin' || role === 'admin';
+}
 async function sha256Hex(str) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -21251,6 +21273,21 @@ function LoginView({
           }, {
             last_login_at: new Date().toISOString()
           }).catch(() => {});
+          // Role-based routing: if the user can't use the scheduler but CAN use
+          // the admin system, send them there. Their session survives the trip
+          // because localStorage is per-origin (they'll sign in there once too).
+          if (!canUseScheduler(user.role) && canUseAdminSystem(user.role)) {
+            window.location.replace(ADMIN_SYSTEM_URL);
+            return;
+          }
+          if (!canUseScheduler(user.role)) {
+            try {
+              localStorage.removeItem(AUTH_KEY);
+            } catch (_) {}
+            setErr('This account is not permitted to use the scheduler.');
+            setBusy(false);
+            return;
+          }
           onLogin(auth);
           return;
         }
