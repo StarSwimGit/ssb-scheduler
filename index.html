@@ -213,7 +213,7 @@
       <a class="hd-link" href="#how">Getting Started</a>
       <a class="hd-link" href="#faq">FAQ</a>
       <a class="hd-link" href="#contact">Contact Us</a>
-      <a class="btn btn-solid" href="./app.html" title="Staff login — SSB Scheduler" style="padding:6px 14px;font-size:13px;border-radius:8px">Login</a>
+      <a id="loginLink" class="btn btn-solid" href="./app.html" title="Staff login" style="padding:6px 14px;font-size:13px;border-radius:8px">Login</a>
     </nav>
   </div>
 </header>
@@ -483,7 +483,7 @@
 <footer>
   <div class="wrap ft">
     <span>© <span id="yr"></span> Star Swim Sdn Bhd. All rights reserved.</span>
-    <span><a href="#contact">Contact Us</a> · <a href="./app.html">Staff Login</a></span>
+    <span><a href="#contact">Contact Us</a> · <a id="loginLinkFt" href="./app.html">Staff Login</a></span>
   </div>
 </footer>
 
@@ -531,6 +531,26 @@ document.querySelectorAll('.faq details').forEach(function(d){
     }
   });
   function show(msg, ok){ statusEl.style.display='block'; statusEl.style.color=ok?'#16A34A':'#DC2626'; statusEl.textContent=msg; }
+})();
+</script>
+<script>
+// Role-aware login routing. localStorage is per-origin (www.mystarswim.com),
+// so this only sees sessions established here. Admin role -> system subdomain.
+(function(){
+  var KEY='ssb.auth', TTL=7*24*60*60*1000;
+  var SCHED='./app.html', SYS='https://system.mystarswim.com/';
+  var target=SCHED;
+  try{
+    var raw=localStorage.getItem(KEY);
+    if(raw){
+      var a=JSON.parse(raw);
+      if(a && a.id && a.ts && (Date.now()-a.ts)<=TTL){
+        if(a.role==='admin') target=SYS;
+      } else { localStorage.removeItem(KEY); }
+    }
+  }catch(_){}
+  var els=[document.getElementById('loginLink'), document.getElementById('loginLinkFt')];
+  els.forEach(function(el){ if(el){ el.href=target; if(target===SYS) el.target='_self'; }});
 })();
 </script>
 </body>
