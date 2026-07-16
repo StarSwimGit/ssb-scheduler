@@ -3167,6 +3167,7 @@ function App({ currentUser, onLogout }){
         <button className={`nav-btn ${view==='enroll'?'active':''}`} onClick={()=>setView('enroll')}>🔍 Explore</button>
         <button type="button" className="nav-btn nav-btn-link" onClick={()=>window.open('./intake.html','_blank','noopener,noreferrer')}>📝 Intake ↗</button>
         {isSysadmin && <button className={`nav-btn ${view==='settings'?'active':''}`} onClick={()=>{ setView('settings'); setAdminSection('pools'); }}>⚙️ Settings</button>}
+        {isSysadmin && <button type="button" className="nav-btn nav-btn-link" onClick={()=>window.open(ADMIN_SYSTEM_URL,'_blank','noopener,noreferrer')} title="Admin & Procurement system">🏢 Admin System ↗</button>}
       </nav>
       </div>
     </div></div>
@@ -9980,7 +9981,7 @@ function UsersAdminView({ users, currentUser, createUser, setPassword, patchUser
   const [username,setUsername]=useState('');
   const [displayName,setDisplayName]=useState('');
   const [password,setPasswordVal]=useState('');
-  const [role,setRole]=useState('admin');
+  const [role,setRole]=useState('schedule_admin');
   const [busy,setBusy]=useState(false);
   const [pwFor,setPwFor]=useState(null);
   const [pwVal,setPwVal]=useState('');
@@ -9988,12 +9989,12 @@ function UsersAdminView({ users, currentUser, createUser, setPassword, patchUser
   return <>
     <div className="card" style={{marginBottom:12}}>
       <div style={{fontSize:18,fontWeight:800,marginBottom:4}}>👥 Users & Logins</div>
-      <div className="small subtle" style={{marginBottom:14}}>Create scheduler logins and manage passwords. <strong>Sysadmin</strong> sees everything; <strong>Admin</strong> cannot access Settings or Accounts › Reports.</div>
+      <div className="small subtle" style={{marginBottom:14}}>Create logins and manage passwords. <strong>Sysadmin</strong> — full access to both the scheduler and the Admin & Procurement system. <strong>Schedule Admin</strong> — this scheduler only (no Settings or Reports). <strong>Admin (Procurement)</strong> — signs in here but is redirected to the Admin & Procurement system.</div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 130px auto',gap:10,alignItems:'end'}}>
         <div className="field" style={{margin:0}}><label>Username</label><input className="input" autoCapitalize="none" value={username} onChange={e=>setUsername(e.target.value)} placeholder="e.g. jsmith" /></div>
         <div className="field" style={{margin:0}}><label>Display name</label><input className="input" value={displayName} onChange={e=>setDisplayName(e.target.value)} placeholder="e.g. John Smith" /></div>
         <div className="field" style={{margin:0}}><label>Password</label><input className="input" type="text" value={password} onChange={e=>setPasswordVal(e.target.value)} placeholder="min 8 chars" /></div>
-        <div className="field" style={{margin:0}}><label>Role</label><select className="select" value={role} onChange={e=>setRole(e.target.value)}><option value="admin">Admin</option><option value="sysadmin">Sysadmin</option></select></div>
+        <div className="field" style={{margin:0}}><label>Role</label><select className="select" value={role} onChange={e=>setRole(e.target.value)}><option value="schedule_admin">Schedule Admin</option><option value="admin">Admin (Procurement)</option><option value="sysadmin">Sysadmin</option></select></div>
         <button className="btn btn-primary" style={{height:38}} disabled={busy||!username.trim()||password.length<8} onClick={async()=>{ setBusy(true); try{ await createUser({username,displayName,password,role}); setUsername('');setDisplayName('');setPasswordVal(''); } finally{ setBusy(false);} }}>+ Create User</button>
       </div>
       {password&&password.length<8&&<div className="small" style={{color:'#DC2626',marginTop:6}}>Password must be at least 8 characters.</div>}
@@ -10009,7 +10010,7 @@ function UsersAdminView({ users, currentUser, createUser, setPassword, patchUser
                 <td>{u.display_name||'—'}</td>
                 <td>
                   <select className="select" style={{padding:'3px 6px',fontSize:12}} value={u.role||'admin'} disabled={me} onChange={e=>patchUser(u.id,{role:e.target.value})}>
-                    <option value="admin">Admin</option><option value="sysadmin">Sysadmin</option>
+                    <option value="schedule_admin">Schedule Admin</option><option value="admin">Admin (Procurement)</option><option value="sysadmin">Sysadmin</option>
                   </select>
                 </td>
                 <td>{u.is_active!==false?<span style={{color:'var(--green-tx)',fontWeight:700,fontSize:12}}>Active</span>:<span style={{color:'#DC2626',fontWeight:700,fontSize:12}}>Disabled</span>}</td>
@@ -10597,6 +10598,15 @@ function ProgrammeCategoriesView({ categories, addCategory, updateCategory, dele
 // ── Application login gate ──────────────────────────────────────────────────
 const AUTH_KEY='ssb.auth';
 const AUTH_TTL_MS=7*24*60*60*1000; // 7-day session
+// Admin & Procurement system (separate Netlify site, separate Supabase project,
+// same app_users source of truth via the scheduler's Supabase).
+const ADMIN_SYSTEM_URL='https://system.mystarswim.com/';
+// Role rules:
+//   sysadmin       — full access to BOTH apps.
+//   schedule_admin — scheduler only (this app). Was 'admin' before.
+//   admin          — Admin & Procurement system only.
+function canUseScheduler(role){ return role==='sysadmin' || role==='schedule_admin'; }
+function canUseAdminSystem(role){ return role==='sysadmin' || role==='admin'; }
 async function sha256Hex(str){
   const buf=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
@@ -10630,6 +10640,19 @@ function LoginView({ onLogin }){
           const auth={ id:user.id, username:user.username, displayName:user.display_name||user.username, role:user.role||'staff', ts:Date.now() };
           try{ localStorage.setItem(AUTH_KEY, JSON.stringify(auth)); }catch(_){}
           patchRows('app_users',{id:user.id},{last_login_at:new Date().toISOString()}).catch(()=>{});
+          // Role-based routing: if the user can't use the scheduler but CAN use
+          // the admin system, send them there. Their session survives the trip
+          // because localStorage is per-origin (they'll sign in there once too).
+          if(!canUseScheduler(user.role) && canUseAdminSystem(user.role)){
+            window.location.replace(ADMIN_SYSTEM_URL);
+            return;
+          }
+          if(!canUseScheduler(user.role)){
+            try{ localStorage.removeItem(AUTH_KEY); }catch(_){}
+            setErr('This account is not permitted to use the scheduler.');
+            setBusy(false);
+            return;
+          }
           onLogin(auth);
           return;
         }
