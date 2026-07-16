@@ -18945,7 +18945,7 @@ function UsersAdminView({
     }
   }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Username"), /*#__PURE__*/React.createElement("th", null, "Name"), /*#__PURE__*/React.createElement("th", {
     style: {
-      width: 110
+      width: 170
     }
   }, "Role"), /*#__PURE__*/React.createElement("th", {
     style: {
@@ -18974,9 +18974,10 @@ function UsersAdminView({
       className: "select",
       style: {
         padding: '3px 6px',
-        fontSize: 12
+        fontSize: 12,
+        minWidth: 150
       },
-      value: u.role || 'admin',
+      value: u.role || 'schedule_admin',
       disabled: me,
       onChange: e => patchUser(u.id, {
         role: e.target.value
