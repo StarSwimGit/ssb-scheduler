@@ -10002,14 +10002,14 @@ function UsersAdminView({ users, currentUser, createUser, setPassword, patchUser
     <div className="card" style={{padding:0,overflow:'hidden'}}>
       <div className="table-wrap" style={{border:'none',borderRadius:0}}>
         <table>
-          <thead><tr><th>Username</th><th>Name</th><th style={{width:110}}>Role</th><th style={{width:90}}>Status</th><th style={{width:150}}>Last login</th><th style={{width:250,textAlign:'right'}}>Actions</th></tr></thead>
+          <thead><tr><th>Username</th><th>Name</th><th style={{width:170}}>Role</th><th style={{width:90}}>Status</th><th style={{width:150}}>Last login</th><th style={{width:250,textAlign:'right'}}>Actions</th></tr></thead>
           <tbody>
             {(users||[]).map(u=>{ const me=u.username===currentUser?.username; return <React.Fragment key={u.id}>
               <tr>
                 <td style={{fontWeight:700}}>{u.username}{me&&<span className="small subtle"> (you)</span>}</td>
                 <td>{u.display_name||'—'}</td>
                 <td>
-                  <select className="select" style={{padding:'3px 6px',fontSize:12}} value={u.role||'admin'} disabled={me} onChange={e=>patchUser(u.id,{role:e.target.value})}>
+                  <select className="select" style={{padding:'3px 6px',fontSize:12,minWidth:150}} value={u.role||'schedule_admin'} disabled={me} onChange={e=>patchUser(u.id,{role:e.target.value})}>
                     <option value="schedule_admin">Schedule Admin</option><option value="admin">Admin (Procurement)</option><option value="sysadmin">Sysadmin</option>
                   </select>
                 </td>
