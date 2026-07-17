@@ -4900,6 +4900,8 @@ function App({
     className: "header"
   }, /*#__PURE__*/React.createElement("div", {
     className: "header-inner"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "header-row"
   }, /*#__PURE__*/React.createElement("a", {
     className: "brand",
     href: "#",
@@ -4913,16 +4915,14 @@ function App({
         setView('adminDirectory');
       }
     },
-    title: "Home",
-    style: {
-      textDecoration: 'none',
-      color: 'inherit'
-    }
+    title: "Home"
   }, /*#__PURE__*/React.createElement("img", {
     src: "./logo.png",
     alt: "SSB",
     className: "logo"
-  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "brand-titles"
+  }, /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 14,
       fontWeight: 800,
@@ -4930,39 +4930,39 @@ function App({
       lineHeight: 1
     }
   }, isOnSystemView ? 'SSB System' : 'SSB Scheduler'), /*#__PURE__*/React.createElement("div", {
+    className: "brand-tagline",
     style: {
       fontSize: 9,
       color: '#64748B',
-      marginTop: 2
+      marginTop: 2,
+      lineHeight: 1
     }
   }, isOnSystemView ? 'Admin & Procurement' : 'Pool-aware lesson calendar'))), /*#__PURE__*/React.createElement("div", {
-    className: "header-meta"
-  }, !isOnSystemView && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "branch-selector"
-  }, /*#__PURE__*/React.createElement("label", {
-    className: "branch-label"
-  }, "Branch"), /*#__PURE__*/React.createElement("select", {
-    className: "branch-select",
-    value: currentBranchId || '',
-    onChange: e => setCurrentBranchId(e.target.value || null),
-    title: "Switch the active branch. Filters Accounts, Pools, Invoices, Intake."
-  }, (options.branches || []).filter(b => b.is_active !== false).map(b => /*#__PURE__*/React.createElement("option", {
-    key: b.id,
-    value: b.id
-  }, b.name, b.code ? ` (${b.code})` : '')), /*#__PURE__*/React.createElement("option", {
-    value: "all"
-  }, "All branches")), currentBranchId && currentBranchId !== 'all' && (() => {
-    const b = branchById(currentBranchId);
-    return b ? /*#__PURE__*/React.createElement("span", {
-      className: "branch-pill",
-      style: b.color ? {
-        background: b.color + '22',
-        borderColor: b.color,
-        color: b.color
-      } : {}
-    }, "● ", b.code || b.name) : null;
-  })()), /*#__PURE__*/React.createElement("div", {
-    className: "header-summary"
+    className: "utility-cluster"
+  }, !isOnSystemView && (() => {
+    const b = currentBranchId && currentBranchId !== 'all' ? branchById(currentBranchId) : null;
+    const style = b?.color ? {
+      '--branch-tint': b.color + '22',
+      '--branch-color': b.color
+    } : {};
+    return /*#__PURE__*/React.createElement("div", {
+      className: "branch-selector",
+      "data-branch-color": b?.color ? '1' : undefined,
+      style: style,
+      title: "Switch the active branch"
+    }, /*#__PURE__*/React.createElement("select", {
+      className: "branch-select",
+      value: currentBranchId || '',
+      onChange: e => setCurrentBranchId(e.target.value || null)
+    }, (options.branches || []).filter(x => x.is_active !== false).map(x => /*#__PURE__*/React.createElement("option", {
+      key: x.id,
+      value: x.id
+    }, x.code || x.name)), /*#__PURE__*/React.createElement("option", {
+      value: "all"
+    }, "All")));
+  })(), !isOnSystemView && /*#__PURE__*/React.createElement("div", {
+    className: "header-summary",
+    title: "At a glance"
   }, /*#__PURE__*/React.createElement("span", {
     style: {
       color: 'var(--primary)',
@@ -4973,68 +4973,74 @@ function App({
       color: 'var(--primary)',
       fontWeight: 800
     }
-  }, summary.totalSessions), " sessions")), /*#__PURE__*/React.createElement("div", {
-    className: "header-status"
+  }, summary.totalSessions), " sessions"), /*#__PURE__*/React.createElement("div", {
+    className: "header-status",
+    title: loading ? 'Connecting to server…' : error ? 'Connection error' : 'All good'
   }, /*#__PURE__*/React.createElement("span", {
     className: `status-dot ${loading ? 'is-loading' : error ? 'is-error' : 'is-ok'}`,
     "aria-hidden": "true"
-  }), loading ? 'Connecting…' : error ? 'Error' : status || 'Ready')), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'flex-end',
-      gap: 4
-    }
-  }, currentUser && /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "header-status-label"
+  }, loading ? 'Connecting…' : error ? 'Error' : status || 'Ready')), currentUser && /*#__PURE__*/React.createElement("div", {
+    className: "user-chip",
+    title: `Signed in as ${currentUser.username} · Role: ${currentUser.role}`
+  }, /*#__PURE__*/React.createElement("span", null, "👤"), /*#__PURE__*/React.createElement("span", {
+    className: "user-name"
+  }, currentUser.displayName || currentUser.username), /*#__PURE__*/React.createElement("button", {
+    className: "user-logout",
+    onClick: () => {
+      if (confirm('Sign out?')) onLogout();
+    },
+    title: "Sign out"
+  }, "Logout")))), /*#__PURE__*/React.createElement("nav", {
+    className: "main-nav header-row"
+  }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
-      gap: 8,
-      paddingTop: 6
+      flexWrap: 'wrap',
+      gap: 1
     }
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "small",
-    style: {
-      fontWeight: 700,
-      color: 'var(--text-2)'
-    },
-    title: `Role: ${currentUser.role}`
-  }, "👤 ", currentUser.displayName || currentUser.username), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-ghost small",
-    style: {
-      padding: '2px 10px'
-    },
-    onClick: () => {
-      if (confirm('Sign out of the scheduler?')) onLogout();
-    },
-    title: "Sign out"
-  }, "Logout")), /*#__PURE__*/React.createElement("nav", {
-    className: "main-nav"
   }, side === 'schedule' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
     className: `nav-btn ${view === 'schedule' ? 'active' : ''}`,
-    onClick: () => setView('schedule')
-  }, "📅 Schedule"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setView('schedule'),
+    title: "Schedule"
+  }, "📅 ", /*#__PURE__*/React.createElement("span", {
+    className: "nav-label"
+  }, "Schedule")), /*#__PURE__*/React.createElement("button", {
     className: `nav-btn ${view === 'programme' ? 'active' : ''}`,
     onClick: () => {
       setView('programme');
       setProgrammeSection('week');
-    }
-  }, "📋 Programme"), /*#__PURE__*/React.createElement("button", {
+    },
+    title: "Programme"
+  }, "📋 ", /*#__PURE__*/React.createElement("span", {
+    className: "nav-label"
+  }, "Programme")), /*#__PURE__*/React.createElement("button", {
     className: `nav-btn ${view === 'accounts' ? 'active' : ''}`,
     onClick: () => {
       setView('accounts');
       setAccountSection('accounts');
-    }
-  }, "👤 Accounts"), /*#__PURE__*/React.createElement("button", {
+    },
+    title: "Accounts"
+  }, "👤 ", /*#__PURE__*/React.createElement("span", {
+    className: "nav-label"
+  }, "Accounts")), /*#__PURE__*/React.createElement("button", {
     className: `nav-btn ${view === 'shop' ? 'active' : ''}`,
-    onClick: () => setView('shop')
-  }, "🛒 Shop"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setView('shop'),
+    title: "Shop"
+  }, "🛒 ", /*#__PURE__*/React.createElement("span", {
+    className: "nav-label"
+  }, "Shop")), /*#__PURE__*/React.createElement("button", {
     className: `nav-btn ${view === 'messages' ? 'active' : ''}`,
     onClick: () => setView('messages'),
+    title: "Messages",
     style: {
       position: 'relative'
     }
-  }, "✉️ Messages", newMsgCount > 0 && /*#__PURE__*/React.createElement("span", {
+  }, "✉️ ", /*#__PURE__*/React.createElement("span", {
+    className: "nav-label"
+  }, "Messages"), newMsgCount > 0 && /*#__PURE__*/React.createElement("span", {
     style: {
       position: 'absolute',
       top: 2,
@@ -5052,38 +5058,55 @@ function App({
     }
   }, newMsgCount > 99 ? '99+' : newMsgCount)), /*#__PURE__*/React.createElement("button", {
     className: `nav-btn ${view === 'enroll' ? 'active' : ''}`,
-    onClick: () => setView('enroll')
-  }, "🔍 Explore"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setView('enroll'),
+    title: "Explore"
+  }, "🔍 ", /*#__PURE__*/React.createElement("span", {
+    className: "nav-label"
+  }, "Explore")), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "nav-btn nav-btn-link",
-    onClick: () => window.open('./intake.html', '_blank', 'noopener,noreferrer')
-  }, "📝 Intake ↗"), isSysadmin && /*#__PURE__*/React.createElement("button", {
+    onClick: () => window.open('./intake.html', '_blank', 'noopener,noreferrer'),
+    title: "Intake form (new tab)"
+  }, "📝 ", /*#__PURE__*/React.createElement("span", {
+    className: "nav-label"
+  }, "Intake ↗")), isSysadmin && /*#__PURE__*/React.createElement("button", {
     className: `nav-btn ${view === 'settings' ? 'active' : ''}`,
     onClick: () => {
       setView('settings');
       setAdminSection('pools');
-    }
-  }, "⚙️ Settings")), side === 'system' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    },
+    title: "Settings"
+  }, "⚙️ ", /*#__PURE__*/React.createElement("span", {
+    className: "nav-label"
+  }, "Settings"))), side === 'system' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
     className: `nav-btn ${view === 'adminDirectory' ? 'active' : ''}`,
-    onClick: () => setView('adminDirectory')
-  }, "📇 Directory"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setView('adminDirectory'),
+    title: "Directory"
+  }, "📇 ", /*#__PURE__*/React.createElement("span", {
+    className: "nav-label"
+  }, "Directory")), /*#__PURE__*/React.createElement("button", {
     className: `nav-btn ${view === 'adminVouchers' ? 'active' : ''}`,
-    onClick: () => setView('adminVouchers')
-  }, "🧾 Payment Vouchers"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setView('adminVouchers'),
+    title: "Payment Vouchers"
+  }, "🧾 ", /*#__PURE__*/React.createElement("span", {
+    className: "nav-label"
+  }, "Vouchers")), /*#__PURE__*/React.createElement("button", {
     className: `nav-btn ${view === 'adminCrew' ? 'active' : ''}`,
-    onClick: () => setView('adminCrew')
-  }, "👥 Crew")), canUseScheduler(currentUser?.role) && canUseAdminSystem(currentUser?.role) && /*#__PURE__*/React.createElement("button", {
+    onClick: () => setView('adminCrew'),
+    title: "Crew"
+  }, "👥 ", /*#__PURE__*/React.createElement("span", {
+    className: "nav-label"
+  }, "Crew")))), canUseScheduler(currentUser?.role) && canUseAdminSystem(currentUser?.role) && /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "nav-btn",
     style: {
-      marginLeft: 'auto',
       background: side === 'system' ? '#EEF7FD' : '#F0FDF4',
       border: '1px solid var(--border)',
       fontWeight: 800
     },
     onClick: () => switchSide(side === 'schedule' ? 'system' : 'schedule'),
     title: `Switch to ${side === 'schedule' ? 'System' : 'Scheduling'} side`
-  }, side === 'schedule' ? '🏢 System ↔' : '📅 Scheduling ↔'))))), !loading && view === 'schedule' && /*#__PURE__*/React.createElement("div", {
+  }, side === 'schedule' ? '🏢 System ↔' : '📅 Scheduling ↔')))), !loading && view === 'schedule' && /*#__PURE__*/React.createElement("div", {
     className: "sub-bar"
   }, /*#__PURE__*/React.createElement("div", {
     className: "sub-bar-inner"
