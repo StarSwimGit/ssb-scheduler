@@ -18974,13 +18974,32 @@ function AdminDirectoryView({
   const [q, setQ] = useState('');
   const [filterCat, setFilterCat] = useState('all');
   const [openCos, setOpenCos] = useState(new Set());
-  const [modal, setModal] = useState(null); // {kind:'company'|'contact'|'category'|'scan', data?, coId?}
+  const [modal, setModal] = useState(null); // {kind, data?, coId?}
   const [scanBusy, setScanBusy] = useState(false);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const addMenuRef = React.useRef(null);
+  const fileInputRef = React.useRef(null);
+  React.useEffect(() => {
+    function onDoc(e) {
+      if (addMenuRef.current && !addMenuRef.current.contains(e.target)) setAddMenuOpen(false);
+    }
+    if (addMenuOpen) document.addEventListener('click', onDoc);
+    return () => document.removeEventListener('click', onDoc);
+  }, [addMenuOpen]);
   const catById = useMemo(() => {
     const m = {};
     (categories || []).forEach(c => m[c.id] = c);
     return m;
   }, [categories]);
+
+  // Colour palette used to tint company monograms based on category id.
+  // Same category → same colour → subtle visual grouping in the list.
+  const catColors = ['#0EA5E9', '#22C55E', '#F59E0B', '#8B5CF6', '#EF4444', '#EC4899', '#14B8A6', '#F97316', '#6366F1', '#84CC16', '#06B6D4', '#D946EF', '#F43F5E', '#0284C7', '#65A30D'];
+  function colorForCat(id) {
+    if (!id) return '#94A3B8';
+    const idx = (categories || []).findIndex(c => c.id === id);
+    return catColors[idx % catColors.length] || '#94A3B8';
+  }
   const filteredCompanies = useMemo(() => {
     const term = q.trim().toLowerCase();
     let rows = (companies || []).slice();
@@ -18993,14 +19012,13 @@ function AdminDirectoryView({
     }
     return rows;
   }, [companies, contacts, q, filterCat]);
-
-  // Independent contacts (no company) that also match the search
   const independentContacts = useMemo(() => {
     const term = q.trim().toLowerCase();
     let rows = (contacts || []).filter(ct => !ct.company_id);
+    if (filterCat !== 'all' && filterCat !== 'none') rows = []; // categories don't apply to independent contacts
     if (term) rows = rows.filter(ct => (ct.name || '').toLowerCase().includes(term) || (ct.title || '').toLowerCase().includes(term) || (ct.email || '').toLowerCase().includes(term) || (ct.phone || '').toLowerCase().includes(term));
     return rows;
-  }, [contacts, q]);
+  }, [contacts, q, filterCat]);
   const contactsByCo = useMemo(() => {
     const m = {};
     (contacts || []).forEach(ct => {
@@ -19017,7 +19035,7 @@ function AdminDirectoryView({
     setOpenCos(s);
   }
 
-  // ── Business card scanner (calls /.netlify/functions/scan) ──
+  // ── Business card scanner ──
   async function onScanFile(file) {
     if (!file) return;
     setScanBusy(true);
@@ -19040,7 +19058,6 @@ function AdminDirectoryView({
       });
       if (!resp.ok) throw new Error('Scan failed: HTTP ' + resp.status);
       const data = await resp.json();
-      // Response shape: { name, title, email, phone, company_name, company_email, company_phone, address }
       setScanBusy(false);
       setModal({
         kind: 'scan',
@@ -19052,7 +19069,6 @@ function AdminDirectoryView({
     }
   }
   async function acceptScan(data) {
-    // Create company (if provided) then contact
     let coId = null;
     if (data.company_name?.trim()) {
       const existing = (companies || []).find(c => (c.name || '').toLowerCase() === data.company_name.trim().toLowerCase());
@@ -19126,56 +19142,33 @@ function AdminDirectoryView({
     w.document.write(printHTML);
     w.document.close();
   }
+  const totalContacts = (contacts || []).length;
+  const totalCompanies = (companies || []).length;
+  const uncategorisedCount = (companies || []).filter(c => !c.category_id).length;
   return /*#__PURE__*/React.createElement("div", {
     style: {
-      maxWidth: 1120,
+      maxWidth: 1200,
       margin: '18px auto 0'
     }
   }, /*#__PURE__*/React.createElement("div", {
-    className: "card",
-    style: {
-      marginBottom: 14
-    }
+    className: "dir-toolbar"
   }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      gap: 10,
-      flexWrap: 'wrap'
-    }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 20,
-      fontWeight: 800
-    }
+    className: "dir-toolbar-title"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "t"
   }, "📇 Directory"), /*#__PURE__*/React.createElement("div", {
-    className: "small subtle"
-  }, "Companies and their contacts, grouped by category. Scan a business card to add contacts instantly, filter by category, and print A4 contact sheets.")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 8,
-      flexWrap: 'wrap'
-    }
+    className: "c"
+  }, totalCompanies, " companies · ", totalContacts, " contacts")), /*#__PURE__*/React.createElement("div", {
+    className: "dir-toolbar-search"
   }, /*#__PURE__*/React.createElement("input", {
     className: "input",
-    style: {
-      minWidth: 220
-    },
     value: q,
     onChange: e => setQ(e.target.value),
-    placeholder: "Search company, contact, email, phone…"
-  }), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-ghost small",
-    onClick: () => setModal({
-      kind: 'categoryManager'
-    })
-  }, "🏷 Categories"), /*#__PURE__*/React.createElement("label", {
-    className: "btn btn-ghost small",
-    style: {
-      cursor: 'pointer'
-    }
-  }, "📸 ", scanBusy ? 'Scanning…' : 'Scan Card', /*#__PURE__*/React.createElement("input", {
+    placeholder: "Search company, contact, email, phone, address…"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "dir-toolbar-actions"
+  }, /*#__PURE__*/React.createElement("input", {
+    ref: fileInputRef,
     type: "file",
     accept: "image/*",
     capture: "environment",
@@ -19187,204 +19180,265 @@ function AdminDirectoryView({
       e.target.value = '';
     },
     disabled: scanBusy
-  })), /*#__PURE__*/React.createElement("button", {
+  }), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
-    onClick: printDirectory
-  }, "🖨 Print"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => fileInputRef.current?.click(),
+    disabled: scanBusy,
+    title: "Scan a business card"
+  }, "📸 ", scanBusy ? 'Scanning…' : 'Scan'), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
-    onClick: () => setModal({
-      kind: 'contact',
-      data: {}
-    })
-  }, "+ Contact"), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-primary small",
-    onClick: () => setModal({
-      kind: 'company',
-      data: {}
-    })
-  }, "+ Company"))), /*#__PURE__*/React.createElement("div", {
+    onClick: printDirectory,
+    title: "Print A4 directory"
+  }, "🖨 Print"), /*#__PURE__*/React.createElement("div", {
     style: {
-      marginTop: 10,
-      display: 'flex',
-      gap: 6,
-      alignItems: 'center',
-      flexWrap: 'wrap'
+      position: 'relative'
+    },
+    ref: addMenuRef
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "dir-splitbtn"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setAddMenuOpen(false);
+      setModal({
+        kind: 'contact',
+        data: {}
+      });
+    },
+    title: "Add a new contact"
+  }, "+ New Contact"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setAddMenuOpen(v => !v),
+    "aria-label": "More add options",
+    title: "More"
+  }, "▾")), addMenuOpen && /*#__PURE__*/React.createElement("div", {
+    className: "dir-menu"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setAddMenuOpen(false);
+      setModal({
+        kind: 'contact',
+        data: {}
+      });
     }
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "small subtle",
+  }, "👤 New contact"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setAddMenuOpen(false);
+      setModal({
+        kind: 'company',
+        data: {}
+      });
+    }
+  }, "🏢 New company"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setAddMenuOpen(false);
+      setModal({
+        kind: 'categoryManager'
+      });
+    }
+  }, "🏷 Manage categories"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setAddMenuOpen(false);
+      fileInputRef.current?.click();
+    }
+  }, "📸 Scan business card"))))), /*#__PURE__*/React.createElement("div", {
+    className: "side-shell",
     style: {
-      fontWeight: 700
+      marginTop: 0
     }
-  }, "Filter:"), /*#__PURE__*/React.createElement("button", {
-    className: `btn small ${filterCat === 'all' ? 'btn-primary' : 'btn-ghost'}`,
+  }, /*#__PURE__*/React.createElement("nav", {
+    className: "side-nav"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "dir-cat-heading"
+  }, "Categories"), /*#__PURE__*/React.createElement("button", {
+    className: `side-nav-btn dir-cat-btn ${filterCat === 'all' ? 'active' : ''}`,
     onClick: () => setFilterCat('all')
-  }, "All (", (companies || []).length, ")"), (categories || []).map(c => {
+  }, /*#__PURE__*/React.createElement("span", null, "All companies"), /*#__PURE__*/React.createElement("span", {
+    className: "count"
+  }, totalCompanies)), (categories || []).map(c => {
     const n = (companies || []).filter(co => co.category_id === c.id).length;
     return /*#__PURE__*/React.createElement("button", {
       key: c.id,
-      className: `btn small ${filterCat === c.id ? 'btn-primary' : 'btn-ghost'}`,
+      className: `side-nav-btn dir-cat-btn ${filterCat === c.id ? 'active' : ''}`,
       onClick: () => setFilterCat(c.id)
-    }, c.name, " (", n, ")");
-  }), /*#__PURE__*/React.createElement("button", {
-    className: `btn small ${filterCat === 'none' ? 'btn-primary' : 'btn-ghost'}`,
-    onClick: () => setFilterCat('none')
-  }, "Uncategorised"))), filteredCompanies.length === 0 && independentContacts.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    className: "empty",
-    style: {
-      padding: 30
-    }
-  }, "No results. Try a different search or filter.") : /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 8
-    }
-  }, filteredCompanies.map(co => {
-    const cts = contactsByCo[co.id] || [];
-    const open = openCos.has(co.id);
-    return /*#__PURE__*/React.createElement("div", {
-      key: co.id,
-      className: "card",
+    }, /*#__PURE__*/React.createElement("span", {
       style: {
-        padding: 0,
-        overflow: 'hidden'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      onClick: () => toggleCo(co.id),
-      style: {
-        cursor: 'pointer',
-        padding: '12px 16px',
-        display: 'flex',
+        display: 'inline-flex',
         alignItems: 'center',
-        gap: 12
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        width: 38,
-        height: 38,
-        borderRadius: 8,
-        background: '#EEF7FD',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontWeight: 800,
-        color: '#0284C7',
-        fontSize: 13,
-        flexShrink: 0
-      }
-    }, adminIni(co.name) || '—'), /*#__PURE__*/React.createElement("div", {
-      style: {
-        flex: 1,
+        gap: 8,
         minWidth: 0
       }
-    }, /*#__PURE__*/React.createElement("div", {
+    }, /*#__PURE__*/React.createElement("span", {
       style: {
-        fontWeight: 700,
-        fontSize: 14
+        width: 8,
+        height: 8,
+        borderRadius: '50%',
+        background: colorForCat(c.id),
+        flexShrink: 0
       }
-    }, co.name, " ", /*#__PURE__*/React.createElement("span", {
-      className: "small subtle",
+    }), /*#__PURE__*/React.createElement("span", {
       style: {
-        fontWeight: 600
-      }
-    }, "· ", cts.length, " contact", cts.length === 1 ? '' : 's')), /*#__PURE__*/React.createElement("div", {
-      className: "small subtle",
-      style: {
-        whiteSpace: 'nowrap',
         overflow: 'hidden',
         textOverflow: 'ellipsis'
       }
-    }, [co.email, co.phone, co.address].filter(Boolean).join(' · '))), co.category_id && catById[co.category_id] && /*#__PURE__*/React.createElement("span", {
-      className: "lt-branch-tag"
+    }, c.name)), /*#__PURE__*/React.createElement("span", {
+      className: "count"
+    }, n));
+  }), uncategorisedCount > 0 && /*#__PURE__*/React.createElement("button", {
+    className: `side-nav-btn dir-cat-btn ${filterCat === 'none' ? 'active' : ''}`,
+    onClick: () => setFilterCat('none')
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--text-3)',
+      fontStyle: 'italic'
+    }
+  }, "Uncategorised"), /*#__PURE__*/React.createElement("span", {
+    className: "count"
+  }, uncategorisedCount)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      borderTop: '1px solid var(--border)',
+      marginTop: 6,
+      paddingTop: 6
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "side-nav-btn",
+    style: {
+      color: 'var(--text-3)'
+    },
+    onClick: () => setModal({
+      kind: 'categoryManager'
+    })
+  }, "+ Manage categories"))), /*#__PURE__*/React.createElement("div", {
+    className: "side-content"
+  }, filteredCompanies.length === 0 && independentContacts.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "empty",
+    style: {
+      padding: 40,
+      textAlign: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 32,
+      marginBottom: 8,
+      opacity: .4
+    }
+  }, "📇"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 700,
+      color: 'var(--text-2)'
+    }
+  }, (companies || []).length === 0 ? 'No companies yet' : 'No results'), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginTop: 4
+    }
+  }, (companies || []).length === 0 ? 'Add a company or scan a business card to get started.' : 'Try a different search or filter.')) : /*#__PURE__*/React.createElement(React.Fragment, null, filteredCompanies.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "dir-section"
+  }, filterCat === 'all' ? 'All companies' : filterCat === 'none' ? 'Uncategorised' : catById[filterCat]?.name, " · ", filteredCompanies.length), /*#__PURE__*/React.createElement("div", {
+    className: "dir-list"
+  }, filteredCompanies.map(co => {
+    const cts = contactsByCo[co.id] || [];
+    const open = openCos.has(co.id);
+    const catColor = colorForCat(co.category_id);
+    return /*#__PURE__*/React.createElement("div", {
+      key: co.id,
+      className: "dir-card"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "dir-card-head",
+      onClick: () => toggleCo(co.id)
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "dir-mono",
+      style: {
+        background: catColor + '22',
+        color: catColor
+      }
+    }, adminIni(co.name) || '?'), /*#__PURE__*/React.createElement("div", {
+      className: "dir-card-body"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "dir-card-title"
+    }, co.name, /*#__PURE__*/React.createElement("span", {
+      className: "n"
+    }, "· ", cts.length, " contact", cts.length === 1 ? '' : 's')), /*#__PURE__*/React.createElement("div", {
+      className: "dir-card-meta"
+    }, [co.phone, co.email, co.address].filter(Boolean).join(' · ') || '—')), /*#__PURE__*/React.createElement("div", {
+      className: "dir-card-actions"
+    }, co.category_id && catById[co.category_id] && /*#__PURE__*/React.createElement("span", {
+      className: "dir-tag",
+      style: {
+        background: catColor + '1a',
+        color: catColor
+      }
     }, catById[co.category_id].name), /*#__PURE__*/React.createElement("span", {
       style: {
-        color: '#94A3B8',
-        fontSize: 16
+        color: 'var(--text-3)',
+        fontSize: 14,
+        marginLeft: 4,
+        transition: 'transform .12s ease',
+        display: 'inline-block',
+        transform: open ? 'rotate(90deg)' : 'rotate(0deg)'
       }
-    }, open ? '▾' : '▸')), open && /*#__PURE__*/React.createElement("div", {
-      style: {
-        padding: '0 16px 12px',
-        borderTop: '1px solid var(--border)'
-      }
+    }, "▸"))), open && /*#__PURE__*/React.createElement("div", {
+      className: "dir-card-expand"
     }, /*#__PURE__*/React.createElement("div", {
       style: {
         display: 'flex',
         gap: 6,
-        margin: '10px 0'
+        padding: '10px 0 6px'
       }
     }, /*#__PURE__*/React.createElement("button", {
       className: "btn btn-ghost small",
-      onClick: () => setModal({
-        kind: 'company',
-        data: co
-      })
+      onClick: e => {
+        e.stopPropagation();
+        setModal({
+          kind: 'company',
+          data: co
+        });
+      }
     }, "✎ Edit company"), /*#__PURE__*/React.createElement("button", {
       className: "btn btn-ghost small",
-      onClick: () => setModal({
-        kind: 'contact',
-        data: {},
-        coId: co.id
-      })
+      onClick: e => {
+        e.stopPropagation();
+        setModal({
+          kind: 'contact',
+          data: {},
+          coId: co.id
+        });
+      }
     }, "+ Add contact"), /*#__PURE__*/React.createElement("button", {
       className: "btn btn-ghost small",
       style: {
         color: '#DC2626',
         marginLeft: 'auto'
       },
-      onClick: () => deleteCompany(co.id)
-    }, "Delete company")), cts.length === 0 ? /*#__PURE__*/React.createElement("div", {
+      onClick: e => {
+        e.stopPropagation();
+        deleteCompany(co.id);
+      }
+    }, "Delete")), cts.length === 0 ? /*#__PURE__*/React.createElement("div", {
       className: "small subtle",
       style: {
-        padding: '8px 0'
+        padding: '12px 10px',
+        textAlign: 'center'
       }
     }, "No contacts yet. Click \"+ Add contact\" above.") : /*#__PURE__*/React.createElement("div", {
       style: {
         display: 'flex',
         flexDirection: 'column',
-        gap: 6
+        gap: 4,
+        paddingTop: 2
       }
     }, cts.map(ct => /*#__PURE__*/React.createElement("div", {
       key: ct.id,
-      style: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        padding: '6px 8px',
-        background: 'var(--surface-2)',
-        borderRadius: 6
-      }
+      className: "dir-contact-row"
     }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        width: 30,
-        height: 30,
-        borderRadius: '50%',
-        background: '#0EA5E9',
-        color: '#fff',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontWeight: 700,
-        fontSize: 11,
-        flexShrink: 0
-      }
+      className: "dir-contact-mono"
     }, adminIni(ct.name)), /*#__PURE__*/React.createElement("div", {
-      style: {
-        flex: 1,
-        minWidth: 0
-      }
+      className: "dir-contact-body"
     }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontWeight: 600,
-        fontSize: 13
-      }
+      className: "dir-contact-name"
     }, ct.name, ct.title && /*#__PURE__*/React.createElement("span", {
-      className: "small subtle",
-      style: {
-        fontWeight: 400
-      }
+      className: "role"
     }, " — ", ct.title)), /*#__PURE__*/React.createElement("div", {
-      className: "small subtle"
-    }, [ct.email, ct.phone].filter(Boolean).join(' · ') || '—')), /*#__PURE__*/React.createElement("button", {
+      className: "dir-contact-meta"
+    }, [ct.phone, ct.email].filter(Boolean).join(' · ') || '—')), /*#__PURE__*/React.createElement("button", {
       className: "btn btn-ghost small",
       onClick: () => setModal({
         kind: 'contact',
@@ -19397,66 +19451,37 @@ function AdminDirectoryView({
       },
       onClick: () => deleteContact(ct.id)
     }, "×"))))));
-  }), independentContacts.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "card"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontWeight: 700,
-      marginBottom: 8
-    }
-  }, "Independent contacts ", /*#__PURE__*/React.createElement("span", {
-    className: "small subtle",
-    style: {
-      fontWeight: 400
-    }
-  }, "· ", independentContacts.length)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 6
-    }
+  })), independentContacts.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "dir-section"
+  }, "Independent contacts · ", independentContacts.length), /*#__PURE__*/React.createElement("div", {
+    className: "dir-list"
   }, independentContacts.map(ct => /*#__PURE__*/React.createElement("div", {
     key: ct.id,
+    className: "dir-card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "dir-card-head",
     style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 10,
-      padding: '6px 8px',
-      background: 'var(--surface-2)',
-      borderRadius: 6
+      cursor: 'default'
     }
   }, /*#__PURE__*/React.createElement("div", {
+    className: "dir-contact-mono",
     style: {
-      width: 30,
-      height: 30,
-      borderRadius: '50%',
-      background: '#0EA5E9',
-      color: '#fff',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontWeight: 700,
-      fontSize: 11,
-      flexShrink: 0
+      width: 42,
+      height: 42,
+      borderRadius: 10,
+      fontSize: 14
     }
   }, adminIni(ct.name)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      minWidth: 0
-    }
+    className: "dir-card-body"
   }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontWeight: 600,
-      fontSize: 13
-    }
+    className: "dir-card-title"
   }, ct.name, ct.title && /*#__PURE__*/React.createElement("span", {
-    className: "small subtle",
-    style: {
-      fontWeight: 400
-    }
-  }, " — ", ct.title)), /*#__PURE__*/React.createElement("div", {
-    className: "small subtle"
-  }, [ct.email, ct.phone].filter(Boolean).join(' · ') || '—')), /*#__PURE__*/React.createElement("button", {
+    className: "n"
+  }, "— ", ct.title)), /*#__PURE__*/React.createElement("div", {
+    className: "dir-card-meta"
+  }, [ct.phone, ct.email].filter(Boolean).join(' · ') || '—')), /*#__PURE__*/React.createElement("div", {
+    className: "dir-card-actions"
+  }, /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
     onClick: () => setModal({
       kind: 'contact',
@@ -19468,7 +19493,7 @@ function AdminDirectoryView({
       color: '#DC2626'
     },
     onClick: () => deleteContact(ct.id)
-  }, "×")))))), modal?.kind === 'company' && /*#__PURE__*/React.createElement(AdminCompanyModal, {
+  }, "×")))))))))), modal?.kind === 'company' && /*#__PURE__*/React.createElement(AdminCompanyModal, {
     existing: modal.data,
     categories: categories,
     onSave: async d => {
