@@ -3269,47 +3269,61 @@ function App({ currentUser, onLogout }){
 
   return <div>
     <div className="header"><div className="header-inner">
-      <a className="brand" href="#" onClick={e=>{ e.preventDefault(); if(canSchedule){ setSide('schedule'); setView('schedule'); } else if(canSystem){ setSide('system'); setView('adminDirectory'); } }} title="Home" style={{textDecoration:'none',color:'inherit'}}><img src="./logo.png" alt="SSB" className="logo" /><div><div style={{fontSize:14,fontWeight:800,letterSpacing:'-.3px',lineHeight:1}}>{isOnSystemView?'SSB System':'SSB Scheduler'}</div><div style={{fontSize:9,color:'#64748B',marginTop:2}}>{isOnSystemView?'Admin & Procurement':'Pool-aware lesson calendar'}</div></div></a>
-      <div className="header-meta">
-        {!isOnSystemView && <><div className="branch-selector">
-          <label className="branch-label">Branch</label>
-          <select className="branch-select" value={currentBranchId || ''} onChange={e=>setCurrentBranchId(e.target.value || null)} title="Switch the active branch. Filters Accounts, Pools, Invoices, Intake.">
-            {(options.branches||[]).filter(b=>b.is_active!==false).map(b => <option key={b.id} value={b.id}>{b.name}{b.code?` (${b.code})`:''}</option>)}
-            <option value="all">All branches</option>
-          </select>
-          {currentBranchId && currentBranchId !== 'all' && (() => {
-            const b = branchById(currentBranchId);
-            return b ? <span className="branch-pill" style={b.color?{background:b.color+'22',borderColor:b.color,color:b.color}:{}}>● {b.code || b.name}</span> : null;
+      {/* Row 1: brand · utility (branch, status, user) */}
+      <div className="header-row">
+        <a className="brand" href="#" onClick={e=>{ e.preventDefault(); if(canSchedule){ setSide('schedule'); setView('schedule'); } else if(canSystem){ setSide('system'); setView('adminDirectory'); } }} title="Home">
+          <img src="./logo.png" alt="SSB" className="logo" />
+          <div className="brand-titles">
+            <div style={{fontSize:14,fontWeight:800,letterSpacing:'-.3px',lineHeight:1}}>{isOnSystemView?'SSB System':'SSB Scheduler'}</div>
+            <div className="brand-tagline" style={{fontSize:9,color:'#64748B',marginTop:2,lineHeight:1}}>{isOnSystemView?'Admin & Procurement':'Pool-aware lesson calendar'}</div>
+          </div>
+        </a>
+        <div className="utility-cluster">
+          {!isOnSystemView && (() => {
+            const b = currentBranchId && currentBranchId!=='all' ? branchById(currentBranchId) : null;
+            const style = b?.color ? { '--branch-tint': b.color+'22', '--branch-color': b.color } : {};
+            return <div className="branch-selector" data-branch-color={b?.color?'1':undefined} style={style} title="Switch the active branch">
+              <select className="branch-select" value={currentBranchId || ''} onChange={e=>setCurrentBranchId(e.target.value || null)}>
+                {(options.branches||[]).filter(x=>x.is_active!==false).map(x => <option key={x.id} value={x.id}>{x.code || x.name}</option>)}
+                <option value="all">All</option>
+              </select>
+            </div>;
           })()}
+          {!isOnSystemView && <div className="header-summary" title="At a glance"><span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalStudents}</span> students · <span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalSessions}</span> sessions</div>}
+          <div className="header-status" title={loading?'Connecting to server…':(error?'Connection error':'All good')}>
+            <span className={`status-dot ${loading?'is-loading':(error?'is-error':'is-ok')}`} aria-hidden="true" />
+            <span className="header-status-label">{loading ? 'Connecting…' : (error ? 'Error' : (status || 'Ready'))}</span>
+          </div>
+          {currentUser && <div className="user-chip" title={`Signed in as ${currentUser.username} · Role: ${currentUser.role}`}>
+            <span>👤</span>
+            <span className="user-name">{currentUser.displayName||currentUser.username}</span>
+            <button className="user-logout" onClick={()=>{ if(confirm('Sign out?')) onLogout(); }} title="Sign out">Logout</button>
+          </div>}
         </div>
-        <div className="header-summary"><span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalStudents}</span> students · <span style={{color:'var(--primary)',fontWeight:800}}>{summary.totalSessions}</span> sessions</div></>}
-        <div className="header-status"><span className={`status-dot ${loading?'is-loading':(error?'is-error':'is-ok')}`} aria-hidden="true" />{loading ? 'Connecting…' : (error ? 'Error' : (status || 'Ready'))}</div>
       </div>
-      <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:4}}>
-        {currentUser && <div style={{display:'flex',alignItems:'center',gap:8,paddingTop:6}}>
-          <span className="small" style={{fontWeight:700,color:'var(--text-2)'}} title={`Role: ${currentUser.role}`}>👤 {currentUser.displayName||currentUser.username}</span>
-          <button className="btn btn-ghost small" style={{padding:'2px 10px'}} onClick={()=>{ if(confirm('Sign out of the scheduler?')) onLogout(); }} title="Sign out">Logout</button>
-        </div>}
-      <nav className="main-nav">
+      {/* Row 2: primary nav */}
+      <nav className="main-nav header-row">
+        <div style={{display:'flex',alignItems:'center',flexWrap:'wrap',gap:1}}>
         {side==='schedule' && <>
-          <button className={`nav-btn ${view==='schedule'?'active':''}`} onClick={()=>setView('schedule')}>📅 Schedule</button>
-          <button className={`nav-btn ${view==='programme'?'active':''}`} onClick={()=>{ setView('programme'); setProgrammeSection('week'); }}>📋 Programme</button>
-          <button className={`nav-btn ${view==='accounts'?'active':''}`} onClick={()=>{ setView('accounts'); setAccountSection('accounts'); }}>👤 Accounts</button>
-          <button className={`nav-btn ${view==='shop'?'active':''}`} onClick={()=>setView('shop')}>🛒 Shop</button>
-          <button className={`nav-btn ${view==='messages'?'active':''}`} onClick={()=>setView('messages')} style={{position:'relative'}}>✉️ Messages{newMsgCount>0&&<span style={{position:'absolute',top:2,right:2,background:'#EF4444',color:'#fff',fontSize:10,fontWeight:800,borderRadius:999,minWidth:16,height:16,lineHeight:'16px',padding:'0 4px',textAlign:'center'}}>{newMsgCount>99?'99+':newMsgCount}</span>}</button>
-          <button className={`nav-btn ${view==='enroll'?'active':''}`} onClick={()=>setView('enroll')}>🔍 Explore</button>
-          <button type="button" className="nav-btn nav-btn-link" onClick={()=>window.open('./intake.html','_blank','noopener,noreferrer')}>📝 Intake ↗</button>
-          {isSysadmin && <button className={`nav-btn ${view==='settings'?'active':''}`} onClick={()=>{ setView('settings'); setAdminSection('pools'); }}>⚙️ Settings</button>}
+          <button className={`nav-btn ${view==='schedule'?'active':''}`} onClick={()=>setView('schedule')} title="Schedule">📅 <span className="nav-label">Schedule</span></button>
+          <button className={`nav-btn ${view==='programme'?'active':''}`} onClick={()=>{ setView('programme'); setProgrammeSection('week'); }} title="Programme">📋 <span className="nav-label">Programme</span></button>
+          <button className={`nav-btn ${view==='accounts'?'active':''}`} onClick={()=>{ setView('accounts'); setAccountSection('accounts'); }} title="Accounts">👤 <span className="nav-label">Accounts</span></button>
+          <button className={`nav-btn ${view==='shop'?'active':''}`} onClick={()=>setView('shop')} title="Shop">🛒 <span className="nav-label">Shop</span></button>
+          <button className={`nav-btn ${view==='messages'?'active':''}`} onClick={()=>setView('messages')} title="Messages" style={{position:'relative'}}>✉️ <span className="nav-label">Messages</span>{newMsgCount>0&&<span style={{position:'absolute',top:2,right:2,background:'#EF4444',color:'#fff',fontSize:10,fontWeight:800,borderRadius:999,minWidth:16,height:16,lineHeight:'16px',padding:'0 4px',textAlign:'center'}}>{newMsgCount>99?'99+':newMsgCount}</span>}</button>
+          <button className={`nav-btn ${view==='enroll'?'active':''}`} onClick={()=>setView('enroll')} title="Explore">🔍 <span className="nav-label">Explore</span></button>
+          <button type="button" className="nav-btn nav-btn-link" onClick={()=>window.open('./intake.html','_blank','noopener,noreferrer')} title="Intake form (new tab)">📝 <span className="nav-label">Intake ↗</span></button>
+          {isSysadmin && <button className={`nav-btn ${view==='settings'?'active':''}`} onClick={()=>{ setView('settings'); setAdminSection('pools'); }} title="Settings">⚙️ <span className="nav-label">Settings</span></button>}
         </>}
         {side==='system' && <>
-          <button className={`nav-btn ${view==='adminDirectory'?'active':''}`} onClick={()=>setView('adminDirectory')}>📇 Directory</button>
-          <button className={`nav-btn ${view==='adminVouchers'?'active':''}`} onClick={()=>setView('adminVouchers')}>🧾 Payment Vouchers</button>
-          <button className={`nav-btn ${view==='adminCrew'?'active':''}`} onClick={()=>setView('adminCrew')}>👥 Crew</button>
+          <button className={`nav-btn ${view==='adminDirectory'?'active':''}`} onClick={()=>setView('adminDirectory')} title="Directory">📇 <span className="nav-label">Directory</span></button>
+          <button className={`nav-btn ${view==='adminVouchers'?'active':''}`} onClick={()=>setView('adminVouchers')} title="Payment Vouchers">🧾 <span className="nav-label">Vouchers</span></button>
+          <button className={`nav-btn ${view==='adminCrew'?'active':''}`} onClick={()=>setView('adminCrew')} title="Crew">👥 <span className="nav-label">Crew</span></button>
         </>}
-        {canUseScheduler(currentUser?.role) && canUseAdminSystem(currentUser?.role) && <button type="button" className="nav-btn" style={{marginLeft:'auto',background:side==='system'?'#EEF7FD':'#F0FDF4',border:'1px solid var(--border)',fontWeight:800}} onClick={()=>switchSide(side==='schedule'?'system':'schedule')} title={`Switch to ${side==='schedule'?'System':'Scheduling'} side`}>{side==='schedule'?'🏢 System ↔':'📅 Scheduling ↔'}</button>}
+        </div>
+        {canUseScheduler(currentUser?.role) && canUseAdminSystem(currentUser?.role) && <button type="button" className="nav-btn" style={{background:side==='system'?'#EEF7FD':'#F0FDF4',border:'1px solid var(--border)',fontWeight:800}} onClick={()=>switchSide(side==='schedule'?'system':'schedule')} title={`Switch to ${side==='schedule'?'System':'Scheduling'} side`}>{side==='schedule'?'🏢 System ↔':'📅 Scheduling ↔'}</button>}
       </nav>
       </div>
-    </div></div>
+    </div>{/* end header */}
 
     {/* ── Sub-bar: schedule tabs ── */}
     {!loading && view==='schedule' && <div className="sub-bar"><div className="sub-bar-inner">
