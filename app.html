@@ -259,6 +259,49 @@
     .side-nav-btn.active{background:var(--primary);color:#fff}
     .side-content{min-width:0}
     @media (max-width:760px){.side-shell{grid-template-columns:1fr;margin-top:14px}.side-nav{position:static;flex-direction:row;flex-wrap:wrap;gap:6px;margin-bottom:10px;padding:6px}}
+    /* ── Directory module: reuses .side-shell but adds its own toolbar + list ── */
+    .dir-toolbar{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px 16px;display:flex;align-items:center;gap:12px;box-shadow:0 1px 3px rgba(15,23,42,.05);margin-bottom:14px;flex-wrap:wrap}
+    .dir-toolbar-title{display:flex;align-items:baseline;gap:10px;flex-shrink:0}
+    .dir-toolbar-title .t{font-size:17px;font-weight:800;letter-spacing:-.2px}
+    .dir-toolbar-title .c{font-size:12px;color:var(--text-3);font-weight:600}
+    .dir-toolbar-search{flex:1;min-width:200px}
+    .dir-toolbar-search input{width:100%}
+    .dir-toolbar-actions{display:flex;gap:6px;flex-shrink:0}
+    /* Split button — primary + chevron menu together */
+    .dir-splitbtn{display:inline-flex;align-items:stretch;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(2,132,199,.25)}
+    .dir-splitbtn > button{border:none;background:var(--primary);color:#fff;font-weight:700;font-size:13px;cursor:pointer;padding:8px 14px;transition:.15s}
+    .dir-splitbtn > button:hover{background:var(--primary-dk,#0284C7)}
+    .dir-splitbtn > button + button{border-left:1px solid rgba(255,255,255,.25);padding:8px 10px}
+    .dir-menu{position:absolute;top:100%;right:0;margin-top:4px;background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 20px rgba(15,23,42,.12);padding:4px;min-width:180px;z-index:20}
+    .dir-menu button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:8px 10px;font-size:13px;font-weight:600;color:var(--text-2);background:transparent;border:none;border-radius:6px;cursor:pointer}
+    .dir-menu button:hover{background:var(--surface-2);color:var(--text)}
+    /* Category sidebar — counts sit right-aligned */
+    .dir-cat-btn{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .dir-cat-btn .count{font-size:11px;font-weight:700;color:var(--text-3);background:var(--surface-2);border-radius:999px;padding:1px 8px;min-width:22px;text-align:center}
+    .dir-cat-btn.active .count{background:rgba(255,255,255,.25);color:#fff}
+    .dir-cat-heading{font-size:10px;text-transform:uppercase;letter-spacing:.9px;font-weight:800;color:var(--text-3);padding:6px 10px 4px}
+    /* Company card — elegant list rows */
+    .dir-list{display:flex;flex-direction:column;gap:8px}
+    .dir-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;transition:box-shadow .15s ease,border-color .15s ease}
+    .dir-card:hover{box-shadow:0 3px 12px rgba(14,40,60,.07);border-color:var(--border-2)}
+    .dir-card-head{display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer}
+    .dir-mono{width:42px;height:42px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;flex-shrink:0;letter-spacing:.5px}
+    .dir-card-body{flex:1;min-width:0}
+    .dir-card-title{font-weight:700;font-size:14.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .dir-card-title .n{color:var(--text-3);font-weight:500;font-size:12.5px;margin-left:8px}
+    .dir-card-meta{font-size:12.5px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+    .dir-card-actions{display:flex;align-items:center;gap:6px;flex-shrink:0}
+    .dir-tag{font-size:10.5px;font-weight:800;padding:3px 10px;border-radius:999px;background:var(--surface-2);color:var(--text-2);white-space:nowrap;letter-spacing:.2px}
+    .dir-card-expand{padding:0 14px 14px;border-top:1px solid var(--border);background:linear-gradient(180deg,var(--surface-2) 0%,var(--surface) 100%)}
+    .dir-contact-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;transition:background .12s ease}
+    .dir-contact-row:hover{background:var(--surface)}
+    .dir-contact-mono{width:30px;height:30px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;flex-shrink:0}
+    .dir-contact-body{flex:1;min-width:0}
+    .dir-contact-name{font-weight:600;font-size:13px}
+    .dir-contact-name .role{color:var(--text-3);font-weight:400}
+    .dir-contact-meta{font-size:12px;color:var(--text-3)}
+    /* Section header inside main column */
+    .dir-section{font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:800;color:var(--text-3);padding:12px 4px 8px}
     table{width:100%;border-collapse:collapse}.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:14px}
     th,td{padding:8px 12px;border-bottom:1px solid var(--border);font-size:12px;text-align:left;vertical-align:middle} thead th{background:var(--surface-2);color:var(--text-2);font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;font-weight:600;border-bottom:1.5px solid var(--border-2)}
     tr:last-child td{border-bottom:none}
