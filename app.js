@@ -10148,10 +10148,28 @@ function AdminDirectoryView({ companies, contacts, categories, addCategory, upda
   const [q,setQ]=useState('');
   const [filterCat,setFilterCat]=useState('all');
   const [openCos,setOpenCos]=useState(new Set());
-  const [modal,setModal]=useState(null); // {kind:'company'|'contact'|'category'|'scan', data?, coId?}
+  const [modal,setModal]=useState(null); // {kind, data?, coId?}
   const [scanBusy,setScanBusy]=useState(false);
+  const [addMenuOpen,setAddMenuOpen]=useState(false);
+  const addMenuRef = React.useRef(null);
+  const fileInputRef = React.useRef(null);
+
+  React.useEffect(()=>{
+    function onDoc(e){ if(addMenuRef.current && !addMenuRef.current.contains(e.target)) setAddMenuOpen(false); }
+    if(addMenuOpen) document.addEventListener('click', onDoc);
+    return ()=>document.removeEventListener('click', onDoc);
+  },[addMenuOpen]);
 
   const catById = useMemo(()=>{ const m={}; (categories||[]).forEach(c=>m[c.id]=c); return m; }, [categories]);
+
+  // Colour palette used to tint company monograms based on category id.
+  // Same category → same colour → subtle visual grouping in the list.
+  const catColors = ['#0EA5E9','#22C55E','#F59E0B','#8B5CF6','#EF4444','#EC4899','#14B8A6','#F97316','#6366F1','#84CC16','#06B6D4','#D946EF','#F43F5E','#0284C7','#65A30D'];
+  function colorForCat(id){
+    if(!id) return '#94A3B8';
+    const idx = (categories||[]).findIndex(c=>c.id===id);
+    return catColors[idx % catColors.length] || '#94A3B8';
+  }
 
   const filteredCompanies = useMemo(()=>{
     const term=q.trim().toLowerCase();
@@ -10166,13 +10184,13 @@ function AdminDirectoryView({ companies, contacts, categories, addCategory, upda
     return rows;
   }, [companies, contacts, q, filterCat]);
 
-  // Independent contacts (no company) that also match the search
   const independentContacts = useMemo(()=>{
     const term=q.trim().toLowerCase();
     let rows=(contacts||[]).filter(ct=>!ct.company_id);
+    if(filterCat!=='all' && filterCat!=='none') rows=[]; // categories don't apply to independent contacts
     if(term) rows=rows.filter(ct=> (ct.name||'').toLowerCase().includes(term) || (ct.title||'').toLowerCase().includes(term) || (ct.email||'').toLowerCase().includes(term) || (ct.phone||'').toLowerCase().includes(term));
     return rows;
-  }, [contacts, q]);
+  }, [contacts, q, filterCat]);
 
   const contactsByCo = useMemo(()=>{
     const m={};
@@ -10183,7 +10201,7 @@ function AdminDirectoryView({ companies, contacts, categories, addCategory, upda
 
   function toggleCo(id){ const s=new Set(openCos); if(s.has(id)) s.delete(id); else s.add(id); setOpenCos(s); }
 
-  // ── Business card scanner (calls /.netlify/functions/scan) ──
+  // ── Business card scanner ──
   async function onScanFile(file){
     if(!file) return;
     setScanBusy(true);
@@ -10192,13 +10210,11 @@ function AdminDirectoryView({ companies, contacts, categories, addCategory, upda
       const resp = await fetch('/.netlify/functions/scan',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ image:b64, mime:file.type||'image/jpeg' }) });
       if(!resp.ok) throw new Error('Scan failed: HTTP '+resp.status);
       const data = await resp.json();
-      // Response shape: { name, title, email, phone, company_name, company_email, company_phone, address }
       setScanBusy(false);
       setModal({kind:'scan', data});
     } catch(err){ setScanBusy(false); alert('Scan failed: '+(err?.message||err)); }
   }
   async function acceptScan(data){
-    // Create company (if provided) then contact
     let coId=null;
     if(data.company_name?.trim()){
       const existing=(companies||[]).find(c=> (c.name||'').toLowerCase()===data.company_name.trim().toLowerCase());
@@ -10245,88 +10261,134 @@ function AdminDirectoryView({ companies, contacts, categories, addCategory, upda
     const w=window.open('','_blank'); if(!w){ alert('Allow popups from this site to enable printing.'); return; } w.document.write(printHTML); w.document.close();
   }
 
-  return <div style={{maxWidth:1120,margin:'18px auto 0'}}>
-    <div className="card" style={{marginBottom:14}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap'}}>
-        <div>
-          <div style={{fontSize:20,fontWeight:800}}>📇 Directory</div>
-          <div className="small subtle">Companies and their contacts, grouped by category. Scan a business card to add contacts instantly, filter by category, and print A4 contact sheets.</div>
-        </div>
-        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-          <input className="input" style={{minWidth:220}} value={q} onChange={e=>setQ(e.target.value)} placeholder="Search company, contact, email, phone…" />
-          <button className="btn btn-ghost small" onClick={()=>setModal({kind:'categoryManager'})}>🏷 Categories</button>
-          <label className="btn btn-ghost small" style={{cursor:'pointer'}}>📸 {scanBusy?'Scanning…':'Scan Card'}
-            <input type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={e=>{ onScanFile(e.target.files?.[0]); e.target.value=''; }} disabled={scanBusy} />
-          </label>
-          <button className="btn btn-ghost small" onClick={printDirectory}>🖨 Print</button>
-          <button className="btn btn-ghost small" onClick={()=>setModal({kind:'contact', data:{}})}>+ Contact</button>
-          <button className="btn btn-primary small" onClick={()=>setModal({kind:'company', data:{}})}>+ Company</button>
-        </div>
+  const totalContacts = (contacts||[]).length;
+  const totalCompanies = (companies||[]).length;
+  const uncategorisedCount = (companies||[]).filter(c=>!c.category_id).length;
+
+  return <div style={{maxWidth:1200,margin:'18px auto 0'}}>
+    {/* ── Toolbar band: title · totals · search · utilities · primary CTA ── */}
+    <div className="dir-toolbar">
+      <div className="dir-toolbar-title">
+        <div className="t">📇 Directory</div>
+        <div className="c">{totalCompanies} companies · {totalContacts} contacts</div>
       </div>
-      <div style={{marginTop:10,display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
-        <span className="small subtle" style={{fontWeight:700}}>Filter:</span>
-        <button className={`btn small ${filterCat==='all'?'btn-primary':'btn-ghost'}`} onClick={()=>setFilterCat('all')}>All ({(companies||[]).length})</button>
-        {(categories||[]).map(c=>{
-          const n=(companies||[]).filter(co=>co.category_id===c.id).length;
-          return <button key={c.id} className={`btn small ${filterCat===c.id?'btn-primary':'btn-ghost'}`} onClick={()=>setFilterCat(c.id)}>{c.name} ({n})</button>;
-        })}
-        <button className={`btn small ${filterCat==='none'?'btn-primary':'btn-ghost'}`} onClick={()=>setFilterCat('none')}>Uncategorised</button>
+      <div className="dir-toolbar-search">
+        <input className="input" value={q} onChange={e=>setQ(e.target.value)} placeholder="Search company, contact, email, phone, address…" />
+      </div>
+      <div className="dir-toolbar-actions">
+        <input ref={fileInputRef} type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={e=>{ onScanFile(e.target.files?.[0]); e.target.value=''; }} disabled={scanBusy} />
+        <button className="btn btn-ghost small" onClick={()=>fileInputRef.current?.click()} disabled={scanBusy} title="Scan a business card">📸 {scanBusy?'Scanning…':'Scan'}</button>
+        <button className="btn btn-ghost small" onClick={printDirectory} title="Print A4 directory">🖨 Print</button>
+        <div style={{position:'relative'}} ref={addMenuRef}>
+          <div className="dir-splitbtn">
+            <button onClick={()=>{ setAddMenuOpen(false); setModal({kind:'contact', data:{}}); }} title="Add a new contact">+ New Contact</button>
+            <button onClick={()=>setAddMenuOpen(v=>!v)} aria-label="More add options" title="More">▾</button>
+          </div>
+          {addMenuOpen && <div className="dir-menu">
+            <button onClick={()=>{ setAddMenuOpen(false); setModal({kind:'contact', data:{}}); }}>👤 New contact</button>
+            <button onClick={()=>{ setAddMenuOpen(false); setModal({kind:'company', data:{}}); }}>🏢 New company</button>
+            <button onClick={()=>{ setAddMenuOpen(false); setModal({kind:'categoryManager'}); }}>🏷 Manage categories</button>
+            <button onClick={()=>{ setAddMenuOpen(false); fileInputRef.current?.click(); }}>📸 Scan business card</button>
+          </div>}
+        </div>
       </div>
     </div>
 
-    {filteredCompanies.length===0 && independentContacts.length===0
-      ? <div className="empty" style={{padding:30}}>No results. Try a different search or filter.</div>
-      : <div style={{display:'flex',flexDirection:'column',gap:8}}>
-          {filteredCompanies.map(co=>{
-            const cts=contactsByCo[co.id]||[]; const open=openCos.has(co.id);
-            return <div key={co.id} className="card" style={{padding:0,overflow:'hidden'}}>
-              <div onClick={()=>toggleCo(co.id)} style={{cursor:'pointer',padding:'12px 16px',display:'flex',alignItems:'center',gap:12}}>
-                <div style={{width:38,height:38,borderRadius:8,background:'#EEF7FD',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:800,color:'#0284C7',fontSize:13,flexShrink:0}}>{adminIni(co.name)||'—'}</div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:700,fontSize:14}}>{co.name} <span className="small subtle" style={{fontWeight:600}}>· {cts.length} contact{cts.length===1?'':'s'}</span></div>
-                  <div className="small subtle" style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{[co.email,co.phone,co.address].filter(Boolean).join(' · ')}</div>
-                </div>
-                {co.category_id&&catById[co.category_id]&&<span className="lt-branch-tag">{catById[co.category_id].name}</span>}
-                <span style={{color:'#94A3B8',fontSize:16}}>{open?'▾':'▸'}</span>
+    {/* ── Two-column body: category sidebar + company list ── */}
+    <div className="side-shell" style={{marginTop:0}}>
+      <nav className="side-nav">
+        <div className="dir-cat-heading">Categories</div>
+        <button className={`side-nav-btn dir-cat-btn ${filterCat==='all'?'active':''}`} onClick={()=>setFilterCat('all')}>
+          <span>All companies</span><span className="count">{totalCompanies}</span>
+        </button>
+        {(categories||[]).map(c=>{
+          const n=(companies||[]).filter(co=>co.category_id===c.id).length;
+          return <button key={c.id} className={`side-nav-btn dir-cat-btn ${filterCat===c.id?'active':''}`} onClick={()=>setFilterCat(c.id)}>
+            <span style={{display:'inline-flex',alignItems:'center',gap:8,minWidth:0}}><span style={{width:8,height:8,borderRadius:'50%',background:colorForCat(c.id),flexShrink:0}} /><span style={{overflow:'hidden',textOverflow:'ellipsis'}}>{c.name}</span></span>
+            <span className="count">{n}</span>
+          </button>;
+        })}
+        {uncategorisedCount>0 && <button className={`side-nav-btn dir-cat-btn ${filterCat==='none'?'active':''}`} onClick={()=>setFilterCat('none')}>
+          <span style={{color:'var(--text-3)',fontStyle:'italic'}}>Uncategorised</span><span className="count">{uncategorisedCount}</span>
+        </button>}
+        <div style={{borderTop:'1px solid var(--border)',marginTop:6,paddingTop:6}}>
+          <button className="side-nav-btn" style={{color:'var(--text-3)'}} onClick={()=>setModal({kind:'categoryManager'})}>+ Manage categories</button>
+        </div>
+      </nav>
+
+      <div className="side-content">
+        {filteredCompanies.length===0 && independentContacts.length===0
+          ? <div className="empty" style={{padding:40,textAlign:'center'}}>
+              <div style={{fontSize:32,marginBottom:8,opacity:.4}}>📇</div>
+              <div style={{fontWeight:700,color:'var(--text-2)'}}>{(companies||[]).length===0 ? 'No companies yet' : 'No results'}</div>
+              <div className="small subtle" style={{marginTop:4}}>{(companies||[]).length===0 ? 'Add a company or scan a business card to get started.' : 'Try a different search or filter.'}</div>
+            </div>
+          : <>
+              {filteredCompanies.length>0 && <div className="dir-section">
+                {filterCat==='all' ? 'All companies' : filterCat==='none' ? 'Uncategorised' : catById[filterCat]?.name} · {filteredCompanies.length}
+              </div>}
+              <div className="dir-list">
+                {filteredCompanies.map(co=>{
+                  const cts=contactsByCo[co.id]||[]; const open=openCos.has(co.id);
+                  const catColor=colorForCat(co.category_id);
+                  return <div key={co.id} className="dir-card">
+                    <div className="dir-card-head" onClick={()=>toggleCo(co.id)}>
+                      <div className="dir-mono" style={{background:catColor+'22',color:catColor}}>{adminIni(co.name)||'?'}</div>
+                      <div className="dir-card-body">
+                        <div className="dir-card-title">{co.name}<span className="n">· {cts.length} contact{cts.length===1?'':'s'}</span></div>
+                        <div className="dir-card-meta">{[co.phone, co.email, co.address].filter(Boolean).join(' · ') || '—'}</div>
+                      </div>
+                      <div className="dir-card-actions">
+                        {co.category_id&&catById[co.category_id]&&<span className="dir-tag" style={{background:catColor+'1a',color:catColor}}>{catById[co.category_id].name}</span>}
+                        <span style={{color:'var(--text-3)',fontSize:14,marginLeft:4,transition:'transform .12s ease',display:'inline-block',transform:open?'rotate(90deg)':'rotate(0deg)'}}>▸</span>
+                      </div>
+                    </div>
+                    {open && <div className="dir-card-expand">
+                      <div style={{display:'flex',gap:6,padding:'10px 0 6px'}}>
+                        <button className="btn btn-ghost small" onClick={e=>{ e.stopPropagation(); setModal({kind:'company',data:co}); }}>✎ Edit company</button>
+                        <button className="btn btn-ghost small" onClick={e=>{ e.stopPropagation(); setModal({kind:'contact',data:{},coId:co.id}); }}>+ Add contact</button>
+                        <button className="btn btn-ghost small" style={{color:'#DC2626',marginLeft:'auto'}} onClick={e=>{ e.stopPropagation(); deleteCompany(co.id); }}>Delete</button>
+                      </div>
+                      {cts.length===0
+                        ? <div className="small subtle" style={{padding:'12px 10px',textAlign:'center'}}>No contacts yet. Click "+ Add contact" above.</div>
+                        : <div style={{display:'flex',flexDirection:'column',gap:4,paddingTop:2}}>
+                            {cts.map(ct=><div key={ct.id} className="dir-contact-row">
+                              <div className="dir-contact-mono">{adminIni(ct.name)}</div>
+                              <div className="dir-contact-body">
+                                <div className="dir-contact-name">{ct.name}{ct.title&&<span className="role"> — {ct.title}</span>}</div>
+                                <div className="dir-contact-meta">{[ct.phone,ct.email].filter(Boolean).join(' · ')||'—'}</div>
+                              </div>
+                              <button className="btn btn-ghost small" onClick={()=>setModal({kind:'contact',data:ct})}>✎</button>
+                              <button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>deleteContact(ct.id)}>×</button>
+                            </div>)}
+                          </div>}
+                    </div>}
+                  </div>;
+                })}
               </div>
-              {open && <div style={{padding:'0 16px 12px',borderTop:'1px solid var(--border)'}}>
-                <div style={{display:'flex',gap:6,margin:'10px 0'}}>
-                  <button className="btn btn-ghost small" onClick={()=>setModal({kind:'company',data:co})}>✎ Edit company</button>
-                  <button className="btn btn-ghost small" onClick={()=>setModal({kind:'contact',data:{},coId:co.id})}>+ Add contact</button>
-                  <button className="btn btn-ghost small" style={{color:'#DC2626',marginLeft:'auto'}} onClick={()=>deleteCompany(co.id)}>Delete company</button>
-                </div>
-                {cts.length===0 ? <div className="small subtle" style={{padding:'8px 0'}}>No contacts yet. Click "+ Add contact" above.</div>
-                  : <div style={{display:'flex',flexDirection:'column',gap:6}}>
-                      {cts.map(ct=><div key={ct.id} style={{display:'flex',alignItems:'center',gap:10,padding:'6px 8px',background:'var(--surface-2)',borderRadius:6}}>
-                        <div style={{width:30,height:30,borderRadius:'50%',background:'#0EA5E9',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:11,flexShrink:0}}>{adminIni(ct.name)}</div>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontWeight:600,fontSize:13}}>{ct.name}{ct.title&&<span className="small subtle" style={{fontWeight:400}}> — {ct.title}</span>}</div>
-                          <div className="small subtle">{[ct.email,ct.phone].filter(Boolean).join(' · ')||'—'}</div>
-                        </div>
+              {independentContacts.length>0 && <>
+                <div className="dir-section">Independent contacts · {independentContacts.length}</div>
+                <div className="dir-list">
+                  {independentContacts.map(ct=><div key={ct.id} className="dir-card">
+                    <div className="dir-card-head" style={{cursor:'default'}}>
+                      <div className="dir-contact-mono" style={{width:42,height:42,borderRadius:10,fontSize:14}}>{adminIni(ct.name)}</div>
+                      <div className="dir-card-body">
+                        <div className="dir-card-title">{ct.name}{ct.title&&<span className="n">— {ct.title}</span>}</div>
+                        <div className="dir-card-meta">{[ct.phone,ct.email].filter(Boolean).join(' · ')||'—'}</div>
+                      </div>
+                      <div className="dir-card-actions">
                         <button className="btn btn-ghost small" onClick={()=>setModal({kind:'contact',data:ct})}>✎</button>
                         <button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>deleteContact(ct.id)}>×</button>
-                      </div>)}
-                    </div>}
-              </div>}
-            </div>;
-          })}
-          {independentContacts.length>0 && <div className="card">
-            <div style={{fontWeight:700,marginBottom:8}}>Independent contacts <span className="small subtle" style={{fontWeight:400}}>· {independentContacts.length}</span></div>
-            <div style={{display:'flex',flexDirection:'column',gap:6}}>
-              {independentContacts.map(ct=><div key={ct.id} style={{display:'flex',alignItems:'center',gap:10,padding:'6px 8px',background:'var(--surface-2)',borderRadius:6}}>
-                <div style={{width:30,height:30,borderRadius:'50%',background:'#0EA5E9',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:11,flexShrink:0}}>{adminIni(ct.name)}</div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:600,fontSize:13}}>{ct.name}{ct.title&&<span className="small subtle" style={{fontWeight:400}}> — {ct.title}</span>}</div>
-                  <div className="small subtle">{[ct.email,ct.phone].filter(Boolean).join(' · ')||'—'}</div>
+                      </div>
+                    </div>
+                  </div>)}
                 </div>
-                <button className="btn btn-ghost small" onClick={()=>setModal({kind:'contact',data:ct})}>✎</button>
-                <button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>deleteContact(ct.id)}>×</button>
-              </div>)}
-            </div>
-          </div>}
-        </div>}
+              </>}
+            </>}
+      </div>
+    </div>
 
-    {/* ── Modals ── */}
+    {/* Modals unchanged from original — the visual grammar around them is what got the facelift. */}
     {modal?.kind==='company' && <AdminCompanyModal existing={modal.data} categories={categories} onSave={async d=>{ await saveCompany(d, modal.data?.id); setModal(null); }} onClose={()=>setModal(null)} />}
     {modal?.kind==='contact' && <AdminContactModal existing={modal.data} companies={companies} preselectCompanyId={modal.coId} onSave={async d=>{ await saveContact(d, modal.data?.id); setModal(null); }} onClose={()=>setModal(null)} />}
     {modal?.kind==='categoryManager' && <AdminCategoryModal categories={categories} companies={companies} addCategory={addCategory} updateCategory={updateCategory} deleteCategory={deleteCategory} onClose={()=>setModal(null)} />}
