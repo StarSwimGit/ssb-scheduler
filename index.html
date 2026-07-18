@@ -642,23 +642,14 @@ document.querySelectorAll('.faq details').forEach(function(d){
 })();
 </script>
 <script>
-// Role-aware login routing. localStorage is per-origin (www.mystarswim.com),
-// so this only sees sessions established here. Admin role -> system subdomain.
+// Since the merger, everyone signs in at /app.html — the app itself lands
+// admins on Directory and everyone else on Schedule. The website Login button
+// just points there. Kept the id hooks in case we ever need role-based routing
+// again (e.g. a marketing-only login area for a future portal).
 (function(){
-  var KEY='ssb.auth', TTL=7*24*60*60*1000;
-  var SCHED='./app.html', SYS='https://system.mystarswim.com/';
-  var target=SCHED;
-  try{
-    var raw=localStorage.getItem(KEY);
-    if(raw){
-      var a=JSON.parse(raw);
-      if(a && a.id && a.ts && (Date.now()-a.ts)<=TTL){
-        if(a.role==='admin') target=SYS;
-      } else { localStorage.removeItem(KEY); }
-    }
-  }catch(_){}
-  var els=[document.getElementById('loginLink'), document.getElementById('loginLinkFt')];
-  els.forEach(function(el){ if(el){ el.href=target; if(target===SYS) el.target='_self'; }});
+  var target = './app.html';
+  var els = [document.getElementById('loginLink'), document.getElementById('loginLinkFt')];
+  els.forEach(function(el){ if(el) el.href = target; });
 })();
 </script>
 </body>
