@@ -548,13 +548,13 @@ function App({
   }
   // Robust: header rendering follows the CURRENT VIEW, not a separate `side`
   // state, so the header can never drift out of sync with the content area.
-  const isOnSystemView = ['adminDirectory', 'adminVouchers', 'adminCrew'].includes(view);
+  const isOnSystemView = ['adminDirectory', 'adminVouchers', 'adminCrew', 'adminPromos'].includes(view);
   // Defensive: if view and side ever get out of sync (e.g. after login flow
   // or a stale route), snap view back to the side's home. Prevents the
   // "half-breed" state where system nav is shown but schedule content mounts.
   useEffect(() => {
     const scheduleViews = new Set(['schedule', 'programme', 'accounts', 'shop', 'messages', 'enroll', 'settings', 'students']);
-    const systemViews = new Set(['adminDirectory', 'adminVouchers', 'adminCrew']);
+    const systemViews = new Set(['adminDirectory', 'adminVouchers', 'adminCrew', 'adminPromos']);
     if (side === 'schedule' && systemViews.has(view)) setView('schedule');
     if (side === 'system' && scheduleViews.has(view)) setView('adminDirectory');
   }, [side, view]);
@@ -568,6 +568,7 @@ function App({
   const [adminPayees, setAdminPayees] = useState([]);
   const [adminVouchers, setAdminVouchers] = useState([]);
   const [adminEmployees, setAdminEmployees] = useState([]);
+  const [promos, setPromos] = useState([]);
   const [programmeModal, setProgrammeModal] = useState(null);
   const [programmeDate, setProgrammeDate] = useState(todayStr()); // own week cursor (independent of Schedule)
   const [programmeMonthCursor, setProgrammeMonthCursor] = useState(new Date());
@@ -1385,13 +1386,14 @@ function App({
   // ── Admin & Procurement loaders ──
   async function loadAdminAll() {
     try {
-      const [cats, cos, cts, pys, vs, eps] = await Promise.all([selectRows('admin_categories', '*', '&order=name.asc').catch(() => []), selectRows('admin_companies', '*', '&order=name.asc').catch(() => []), selectRows('admin_contacts', '*', '&order=name.asc').catch(() => []), selectRows('admin_payees', '*', '&order=name.asc').catch(() => []), selectRows('admin_payment_vouchers', '*', '&order=serial_no.desc').catch(() => []), selectRows('admin_employees', '*', '&order=full_name.asc').catch(() => [])]);
+      const [cats, cos, cts, pys, vs, eps, prs] = await Promise.all([selectRows('admin_categories', '*', '&order=name.asc').catch(() => []), selectRows('admin_companies', '*', '&order=name.asc').catch(() => []), selectRows('admin_contacts', '*', '&order=name.asc').catch(() => []), selectRows('admin_payees', '*', '&order=name.asc').catch(() => []), selectRows('admin_payment_vouchers', '*', '&order=serial_no.desc').catch(() => []), selectRows('admin_employees', '*', '&order=full_name.asc').catch(() => []), selectRows('promos', '*', '&order=starts_at.desc').catch(() => [])]);
       setAdminCategories(cats || []);
       setAdminCompanies(cos || []);
       setAdminContacts(cts || []);
       setAdminPayees(pys || []);
       setAdminVouchers(vs || []);
       setAdminEmployees(eps || []);
+      setPromos(prs || []);
     } catch (_) {}
   }
   async function loadStudents() {
@@ -4037,6 +4039,44 @@ function App({
     }
   }
 
+  // ── Promotions (marketing banners on the public website) ─────────────────
+  async function adminSavePromo(data, id) {
+    try {
+      if (id) await patchRows('promos', {
+        id
+      }, data);else await insertRows('promos', data);
+      await loadAdminAll();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to save promo');
+    }
+  }
+  async function adminDeletePromo(id) {
+    if (!confirm('Delete this promo? This cannot be undone.')) return;
+    try {
+      await deleteRows('promos', {
+        id
+      });
+      await loadAdminAll();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to delete promo');
+    }
+  }
+  async function adminTogglePromoActive(id, next) {
+    try {
+      await patchRows('promos', {
+        id
+      }, {
+        is_active: next
+      });
+      await loadAdminAll();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to update promo');
+    }
+  }
+
   // Reorder a settings list by reindexing sort_order across the whole list, so
   // the result is clean and gap-free regardless of the existing values.
   async function reorderOption(table, list, index, dir) {
@@ -5096,7 +5136,13 @@ function App({
     title: "Crew"
   }, "👥 ", /*#__PURE__*/React.createElement("span", {
     className: "nav-label"
-  }, "Crew")))), canUseScheduler(currentUser?.role) && canUseAdminSystem(currentUser?.role) && /*#__PURE__*/React.createElement("button", {
+  }, "Crew")), /*#__PURE__*/React.createElement("button", {
+    className: `nav-btn ${view === 'adminPromos' ? 'active' : ''}`,
+    onClick: () => setView('adminPromos'),
+    title: "Website Promotions"
+  }, "📢 ", /*#__PURE__*/React.createElement("span", {
+    className: "nav-label"
+  }, "Promotions")))), canUseScheduler(currentUser?.role) && canUseAdminSystem(currentUser?.role) && /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "nav-btn",
     style: {
@@ -5395,6 +5441,12 @@ function App({
     employees: adminEmployees,
     saveEmployee: adminSaveEmployee,
     deleteEmployee: adminDeleteEmployee,
+    onRefresh: loadAdminAll
+  }), !loading && side === 'system' && view === 'adminPromos' && canSystem && /*#__PURE__*/React.createElement(AdminPromosView, {
+    promos: promos,
+    savePromo: adminSavePromo,
+    deletePromo: adminDeletePromo,
+    toggleActive: adminTogglePromoActive,
     onRefresh: loadAdminAll
   }), !loading && view === 'accounts' && /*#__PURE__*/React.createElement("div", {
     className: "side-shell"
@@ -21066,6 +21118,795 @@ function AdminCrewView({
     },
     onClose: () => setModal(null)
   }));
+}
+
+// ── Promotions module ─────────────────────────────────────────────────────
+// Marketing banners for the public website. Each promo becomes a top bar +
+// homepage hero card while its window (starts_at → ends_at) is live. Website
+// reads from the promos table (public via anon key). Multiple concurrent
+// promos are allowed; site picks the most-recently-updated active one.
+
+function promoStatus(p) {
+  if (!p) return 'unknown';
+  if (!p.is_active) return 'paused';
+  const now = new Date();
+  const s = p.starts_at ? new Date(p.starts_at) : null;
+  const e = p.ends_at ? new Date(p.ends_at) : null;
+  if (s && now < s) return 'scheduled';
+  if (e && now > e) return 'expired';
+  return 'live';
+}
+function fmtLocalDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleString(undefined, {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+// Convert an ISO timestamp to the value format needed for <input type="datetime-local">
+function isoToLocalInput(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function localInputToIso(v) {
+  if (!v) return null;
+  const d = new Date(v);
+  return d.toISOString();
+}
+function AdminPromosView({
+  promos,
+  savePromo,
+  deletePromo,
+  toggleActive,
+  onRefresh
+}) {
+  const [editingId, setEditingId] = useState(null); // uuid or 'new'
+  const [preview, setPreview] = useState(null); // promo obj
+
+  const sorted = useMemo(() => {
+    // Sort: live first (by ends_at asc), then scheduled (by starts_at asc),
+    // then paused (by updated_at desc), then expired (by ends_at desc).
+    const bucket = {
+      live: 0,
+      scheduled: 1,
+      paused: 2,
+      expired: 3,
+      unknown: 4
+    };
+    const now = Date.now();
+    return (promos || []).slice().sort((a, b) => {
+      const sa = promoStatus(a),
+        sb = promoStatus(b);
+      if (sa !== sb) return bucket[sa] - bucket[sb];
+      if (sa === 'live') return new Date(a.ends_at) - new Date(b.ends_at);
+      if (sa === 'scheduled') return new Date(a.starts_at) - new Date(b.starts_at);
+      return new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0);
+    });
+  }, [promos]);
+  const liveCount = sorted.filter(p => promoStatus(p) === 'live').length;
+  const scheduledCount = sorted.filter(p => promoStatus(p) === 'scheduled').length;
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxWidth: 1120,
+      margin: '18px auto 0'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 10,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 20,
+      fontWeight: 800
+    }
+  }, "📢 Website Promotions"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle"
+  }, "Schedule marketing banners that appear on ", /*#__PURE__*/React.createElement("strong", null, "www.mystarswim.com"), ". Each active promo shows as a top bar across every page plus a highlighted card on the homepage — both linking to a pre-filled WhatsApp message.")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      alignItems: 'center',
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "small subtle"
+  }, /*#__PURE__*/React.createElement("strong", {
+    style: {
+      color: 'var(--green-tx)'
+    }
+  }, liveCount), " live · ", /*#__PURE__*/React.createElement("strong", {
+    style: {
+      color: '#F59E0B'
+    }
+  }, scheduledCount), " scheduled"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary small",
+    onClick: () => setEditingId('new')
+  }, "+ New Promo"))), liveCount > 1 && /*#__PURE__*/React.createElement("div", {
+    className: "small",
+    style: {
+      marginTop: 10,
+      padding: '8px 12px',
+      background: '#FEF3C7',
+      border: '1px solid #FCD34D',
+      borderRadius: 8,
+      color: '#78350F',
+      fontWeight: 600
+    }
+  }, "⚠ Multiple promos are live at the same time. The website shows only the most-recently-updated one. Consider pausing older promos for a clean message.")), sorted.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "empty",
+    style: {
+      padding: 40,
+      textAlign: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 32,
+      marginBottom: 8,
+      opacity: .4
+    }
+  }, "📢"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 700,
+      color: 'var(--text-2)'
+    }
+  }, "No promos yet"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginTop: 4
+    }
+  }, "Create your first promo — it will appear on the website during its scheduled window.")) : /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 10
+    }
+  }, sorted.map(p => {
+    const status = promoStatus(p);
+    const badge = {
+      live: {
+        bg: '#DCFCE7',
+        fg: '#15803D',
+        label: '● LIVE'
+      },
+      scheduled: {
+        bg: '#FEF3C7',
+        fg: '#B45309',
+        label: '⏱ SCHEDULED'
+      },
+      paused: {
+        bg: '#F1F5F9',
+        fg: '#475569',
+        label: '⏸ PAUSED'
+      },
+      expired: {
+        bg: '#F3F4F6',
+        fg: '#6B7280',
+        label: '⌛ EXPIRED'
+      }
+    }[status] || {
+      bg: '#F3F4F6',
+      fg: '#6B7280',
+      label: '—'
+    };
+    return /*#__PURE__*/React.createElement("div", {
+      key: p.id,
+      className: "card",
+      style: {
+        padding: 0,
+        overflow: 'hidden',
+        borderLeft: `4px solid ${badge.fg}`
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: '14px 16px',
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 14,
+        flexWrap: 'wrap'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1,
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        flexWrap: 'wrap',
+        marginBottom: 4
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        background: badge.bg,
+        color: badge.fg,
+        fontSize: 10.5,
+        fontWeight: 800,
+        padding: '3px 10px',
+        borderRadius: 999,
+        letterSpacing: '.3px'
+      }
+    }, badge.label), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: 700,
+        fontSize: 15
+      }
+    }, p.title || /*#__PURE__*/React.createElement("span", {
+      className: "subtle"
+    }, "(untitled)"))), p.subtitle && /*#__PURE__*/React.createElement("div", {
+      className: "small subtle",
+      style: {
+        marginBottom: 4
+      }
+    }, p.subtitle), /*#__PURE__*/React.createElement("div", {
+      className: "small subtle",
+      style: {
+        fontSize: 12
+      }
+    }, /*#__PURE__*/React.createElement("strong", null, "Runs"), " ", fmtLocalDateTime(p.starts_at), " → ", fmtLocalDateTime(p.ends_at))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 6,
+        flexWrap: 'wrap'
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      onClick: () => setPreview(p)
+    }, "👁 Preview"), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      onClick: () => setEditingId(p.id)
+    }, "✎ Edit"), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      onClick: () => toggleActive(p.id, !p.is_active)
+    }, p.is_active ? '⏸ Pause' : '▶ Resume'), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      style: {
+        color: '#DC2626'
+      },
+      onClick: () => deletePromo(p.id)
+    }, "Delete"))));
+  })), editingId && /*#__PURE__*/React.createElement(AdminPromoModal, {
+    existing: editingId === 'new' ? null : (promos || []).find(p => p.id === editingId),
+    onSave: async d => {
+      await savePromo(d, editingId === 'new' ? null : editingId);
+      setEditingId(null);
+    },
+    onPreview: p => setPreview(p),
+    onClose: () => setEditingId(null)
+  }), preview && /*#__PURE__*/React.createElement(AdminPromoPreviewModal, {
+    promo: preview,
+    onClose: () => setPreview(null)
+  }));
+}
+function AdminPromoModal({
+  existing,
+  onSave,
+  onPreview,
+  onClose
+}) {
+  const now = new Date();
+  const in7days = new Date(now.getTime() + 7 * 86400000);
+  const [d, setD] = useState({
+    slug: existing?.slug || '',
+    title: existing?.title || '',
+    subtitle: existing?.subtitle || '',
+    body: existing?.body || '',
+    bar_text: existing?.bar_text || '',
+    cta_label: existing?.cta_label || 'WhatsApp Us',
+    prefill_message: existing?.prefill_message || '',
+    wa_number: existing?.wa_number || '60122539655',
+    bar_dismissible: existing?.bar_dismissible ?? true,
+    bar_color: existing?.bar_color || 'primary',
+    is_active: existing?.is_active ?? true,
+    starts_at: isoToLocalInput(existing?.starts_at || now.toISOString()),
+    ends_at: isoToLocalInput(existing?.ends_at || in7days.toISOString())
+  });
+  const [busy, setBusy] = useState(false);
+  function up(k, v) {
+    setD(prev => ({
+      ...prev,
+      [k]: v
+    }));
+  }
+  async function save() {
+    if (!d.title.trim()) {
+      alert('Title is required');
+      return;
+    }
+    if (!d.starts_at || !d.ends_at) {
+      alert('Start and end times are required');
+      return;
+    }
+    const startIso = localInputToIso(d.starts_at);
+    const endIso = localInputToIso(d.ends_at);
+    if (new Date(endIso) <= new Date(startIso)) {
+      alert('End time must be after start time');
+      return;
+    }
+    setBusy(true);
+    await onSave({
+      slug: d.slug.trim() || null,
+      title: d.title.trim(),
+      subtitle: d.subtitle.trim() || null,
+      body: d.body.trim() || null,
+      bar_text: d.bar_text.trim() || null,
+      cta_label: d.cta_label.trim() || 'WhatsApp Us',
+      prefill_message: d.prefill_message.trim() || null,
+      wa_number: d.wa_number.replace(/[^0-9]/g, '') || '60122539655',
+      bar_dismissible: !!d.bar_dismissible,
+      bar_color: d.bar_color,
+      is_active: !!d.is_active,
+      starts_at: startIso,
+      ends_at: endIso
+    });
+    setBusy(false);
+  }
+  // Build a live preview payload from the current form state
+  const previewPayload = {
+    title: d.title,
+    subtitle: d.subtitle,
+    body: d.body,
+    bar_text: d.bar_text,
+    cta_label: d.cta_label,
+    prefill_message: d.prefill_message,
+    wa_number: d.wa_number,
+    bar_dismissible: d.bar_dismissible,
+    bar_color: d.bar_color
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "modal-backdrop",
+    onClick: onClose
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "modal-card",
+    onClick: e => e.stopPropagation(),
+    style: {
+      maxWidth: 720
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "modal-head"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 800,
+      fontSize: 16
+    }
+  }, existing ? 'Edit promo' : 'New promo'), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: onClose
+  }, "×")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: 16,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 14,
+      maxHeight: '70vh',
+      overflowY: 'auto'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'var(--surface-2)',
+      padding: '10px 12px',
+      borderRadius: 8,
+      fontSize: 12.5,
+      color: 'var(--text-2)'
+    }
+  }, "Sections marked ", /*#__PURE__*/React.createElement("strong", null, "Bar"), " appear in the site-wide top banner. Sections marked ", /*#__PURE__*/React.createElement("strong", null, "Hero card"), " appear in the highlighted card on the homepage. WhatsApp fields drive both CTAs."), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 800,
+      fontSize: 13,
+      marginBottom: 6,
+      color: 'var(--primary)'
+    }
+  }, "Top Bar"), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0,
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Bar text"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: d.bar_text,
+    onChange: e => up('bar_text', e.target.value),
+    placeholder: "e.g. 🌟 Toddler Term Pass: 12 lessons for RM650. August enrolment open."
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: '1fr 1fr',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Bar colour"), /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    value: d.bar_color,
+    onChange: e => up('bar_color', e.target.value)
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "primary"
+  }, "Blue (primary)"), /*#__PURE__*/React.createElement("option", {
+    value: "coral"
+  }, "Coral"), /*#__PURE__*/React.createElement("option", {
+    value: "green"
+  }, "Green"), /*#__PURE__*/React.createElement("option", {
+    value: "navy"
+  }, "Navy"))), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Dismissible?"), /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      padding: '8px 0'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: d.bar_dismissible,
+    onChange: e => up('bar_dismissible', e.target.checked)
+  }), " ", /*#__PURE__*/React.createElement("span", {
+    className: "small"
+  }, "Show ✕ close button"))))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 800,
+      fontSize: 13,
+      marginBottom: 6,
+      color: 'var(--primary)'
+    }
+  }, "Homepage Hero Card"), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0,
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Title *"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    autoFocus: true,
+    value: d.title,
+    onChange: e => up('title', e.target.value),
+    placeholder: "e.g. Toddler Term Pass — August Enrolment Open"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0,
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Subtitle"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: d.subtitle,
+    onChange: e => up('subtitle', e.target.value),
+    placeholder: "e.g. 12 lessons · Ages 3–4 · Small groups · RM650"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Body (multi-line supported)"), /*#__PURE__*/React.createElement("textarea", {
+    className: "textarea",
+    style: {
+      minHeight: 120
+    },
+    value: d.body,
+    onChange: e => up('body', e.target.value),
+    placeholder: "Full marketing copy. Use blank lines for paragraphs. Emojis welcome."
+  }))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 800,
+      fontSize: 13,
+      marginBottom: 6,
+      color: 'var(--primary)'
+    }
+  }, "WhatsApp CTA"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: '1fr 1fr',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Button label"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: d.cta_label,
+    onChange: e => up('cta_label', e.target.value),
+    placeholder: "WhatsApp Us"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "WhatsApp number (no +)"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: d.wa_number,
+    onChange: e => up('wa_number', e.target.value),
+    placeholder: "60122539655"
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0,
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Pre-filled message"), /*#__PURE__*/React.createElement("textarea", {
+    className: "textarea",
+    style: {
+      minHeight: 60
+    },
+    value: d.prefill_message,
+    onChange: e => up('prefill_message', e.target.value),
+    placeholder: "Hi! I'd like to know more about the Toddler Term Pass. My child is __ years old."
+  }))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 800,
+      fontSize: 13,
+      marginBottom: 6,
+      color: 'var(--primary)'
+    }
+  }, "Schedule"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: '1fr 1fr',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Publish at *"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "datetime-local",
+    value: d.starts_at,
+    onChange: e => up('starts_at', e.target.value)
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Expire at *"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "datetime-local",
+    value: d.ends_at,
+    onChange: e => up('ends_at', e.target.value)
+  }))), /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 10
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: d.is_active,
+    onChange: e => up('is_active', e.target.checked)
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "small"
+  }, /*#__PURE__*/React.createElement("strong", null, "Active"), " — uncheck to keep the promo saved but hidden from the website, even during its scheduled window."))), /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", {
+    style: {
+      cursor: 'pointer',
+      fontWeight: 700,
+      fontSize: 12.5,
+      color: 'var(--text-3)'
+    }
+  }, "Advanced"), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: '8px 0 0'
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Slug (internal name, optional)"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: d.slug,
+    onChange: e => up('slug', e.target.value),
+    placeholder: "e.g. toddler-term-pass-aug"
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      gap: 8,
+      paddingTop: 8,
+      borderTop: '1px solid var(--border)'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: () => onPreview(previewPayload)
+  }, "👁 Preview"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: onClose
+  }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary",
+    disabled: busy || !d.title.trim(),
+    onClick: save
+  }, busy ? 'Saving…' : 'Save'))))));
+}
+function AdminPromoPreviewModal({
+  promo,
+  onClose
+}) {
+  const colors = {
+    primary: {
+      bg: '#0EA5E9',
+      fg: '#fff'
+    },
+    coral: {
+      bg: '#FB7185',
+      fg: '#fff'
+    },
+    green: {
+      bg: '#22C55E',
+      fg: '#fff'
+    },
+    navy: {
+      bg: '#0C4A6E',
+      fg: '#fff'
+    }
+  };
+  const barCol = colors[promo?.bar_color] || colors.primary;
+  const wa = 'https://wa.me/' + (promo?.wa_number || '60122539655') + (promo?.prefill_message ? '?text=' + encodeURIComponent(promo.prefill_message) : '');
+  return /*#__PURE__*/React.createElement("div", {
+    className: "modal-backdrop",
+    onClick: onClose
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "modal-card",
+    onClick: e => e.stopPropagation(),
+    style: {
+      maxWidth: 720
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "modal-head"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 800,
+      fontSize: 16
+    }
+  }, "👁 Preview"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: onClose
+  }, "×")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: 16,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 20,
+      maxHeight: '70vh',
+      overflowY: 'auto',
+      background: '#F8FAFC'
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginBottom: 6,
+      fontWeight: 700
+    }
+  }, "Top bar (every website page)"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: barCol.bg,
+      color: barCol.fg,
+      padding: '10px 16px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      fontSize: 13.5,
+      fontWeight: 600,
+      borderRadius: 8
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      flex: 1
+    }
+  }, promo?.bar_text || '(no bar text — bar will be hidden)'), /*#__PURE__*/React.createElement("a", {
+    href: wa,
+    target: "_blank",
+    rel: "noopener noreferrer",
+    style: {
+      background: 'rgba(255,255,255,.25)',
+      color: '#fff',
+      textDecoration: 'none',
+      padding: '4px 12px',
+      borderRadius: 999,
+      fontSize: 12,
+      fontWeight: 800
+    }
+  }, promo?.cta_label || 'WhatsApp Us', " →"), promo?.bar_dismissible && /*#__PURE__*/React.createElement("span", {
+    style: {
+      opacity: .7,
+      cursor: 'pointer',
+      padding: '0 4px'
+    }
+  }, "✕"))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginBottom: 6,
+      fontWeight: 700
+    }
+  }, "Hero card (homepage)"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: '#fff',
+      border: `2px solid ${barCol.bg}`,
+      borderRadius: 16,
+      padding: '24px 28px',
+      boxShadow: '0 6px 20px rgba(14,165,233,.14)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'inline-block',
+      background: barCol.bg,
+      color: barCol.fg,
+      fontSize: 11,
+      fontWeight: 800,
+      padding: '4px 12px',
+      borderRadius: 999,
+      letterSpacing: '.4px',
+      marginBottom: 12
+    }
+  }, "LIMITED TIME"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 22,
+      fontWeight: 900,
+      color: '#0C4A6E',
+      marginBottom: 6,
+      lineHeight: 1.15
+    }
+  }, promo?.title || '(title)'), promo?.subtitle && /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: '#475569',
+      fontSize: 15,
+      fontWeight: 600,
+      marginBottom: 12
+    }
+  }, promo.subtitle), promo?.body && /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: '#475569',
+      fontSize: 14,
+      whiteSpace: 'pre-wrap',
+      marginBottom: 16,
+      lineHeight: 1.6
+    }
+  }, promo.body), /*#__PURE__*/React.createElement("a", {
+    href: wa,
+    target: "_blank",
+    rel: "noopener noreferrer",
+    style: {
+      display: 'inline-block',
+      background: '#22C55E',
+      color: '#fff',
+      textDecoration: 'none',
+      padding: '12px 26px',
+      borderRadius: 12,
+      fontWeight: 700,
+      fontSize: 15
+    }
+  }, "💬 ", promo?.cta_label || 'WhatsApp Us'))), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      fontStyle: 'italic',
+      textAlign: 'center'
+    }
+  }, "This is exactly how the promo will render on the website. Timing depends on the schedule you set."))));
 }
 function AdminEmployeeModal({
   existing,
