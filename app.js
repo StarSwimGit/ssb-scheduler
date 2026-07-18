@@ -3292,7 +3292,7 @@ function App({ currentUser, onLogout }){
     <div className="header"><div className="header-inner">
       {/* Row 1: brand · utility (branch, status, user) */}
       <div className="header-row">
-        <a className="brand" href="#" onClick={e=>{ e.preventDefault(); if(canSchedule){ setSide('schedule'); setView('schedule'); } else if(canSystem){ setSide('system'); setView('adminDirectory'); } }} title="Home">
+        <a className="brand" href="./index.html" title="Go to mystarswim.com">
           <img src="./logo.png" alt="SSB" className="logo" />
           <div className="brand-titles">
             <div style={{fontSize:14,fontWeight:800,letterSpacing:'-.3px',lineHeight:1}}>{isOnSystemView?'SSB System':'SSB Scheduler'}</div>
