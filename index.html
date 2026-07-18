@@ -134,6 +134,27 @@
     @media (max-width:780px){.contact-grid{grid-template-columns:1fr}}
     .contact-side{text-align:center;padding:30px 26px}
     .contact-note{margin-top:16px;font-size:13px;color:var(--text-2)}
+    /* ── Promotions (scheduled marketing banners) ── */
+    .promo-bar{padding:11px 22px;font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:14px;color:#fff}
+    .promo-bar-text{flex:1;text-align:center;line-height:1.4}
+    .promo-bar-cta{background:rgba(255,255,255,.22);color:#fff;text-decoration:none;padding:5px 14px;border-radius:999px;font-size:12.5px;font-weight:800;white-space:nowrap;transition:.15s}
+    .promo-bar-cta:hover{background:rgba(255,255,255,.35)}
+    .promo-bar-close{background:transparent;border:none;color:rgba(255,255,255,.8);font-size:18px;cursor:pointer;padding:0 6px;line-height:1}
+    .promo-bar-close:hover{color:#fff}
+    @media (max-width:640px){.promo-bar{padding:10px 14px;flex-wrap:wrap;gap:8px;font-size:12.5px}.promo-bar-text{text-align:left;flex-basis:100%;order:1}.promo-bar-cta{order:2;margin-right:auto}}
+    .promo-hero{padding:36px 0}
+    .promo-card{background:#fff;border-radius:20px;padding:34px 36px;box-shadow:0 10px 36px rgba(14,165,233,.14);position:relative;overflow:hidden;max-width:800px;margin:0 auto}
+    .promo-card::before{content:"";position:absolute;top:0;left:0;right:0;height:6px}
+    .promo-badge{display:inline-block;font-size:11px;font-weight:800;padding:5px 14px;border-radius:999px;letter-spacing:.5px;margin-bottom:14px;color:#fff}
+    .promo-title{font-size:clamp(22px,3.6vw,32px);font-weight:900;color:var(--navy);letter-spacing:-.4px;line-height:1.15;margin-bottom:8px}
+    .promo-subtitle{font-size:16px;font-weight:600;color:var(--text-2);margin-bottom:16px}
+    .promo-body{font-size:14.5px;color:var(--text-2);white-space:pre-wrap;line-height:1.65;margin-bottom:22px}
+    .promo-cta{display:inline-flex;align-items:center;gap:8px;background:#22C55E;color:#fff;text-decoration:none;padding:13px 26px;border-radius:12px;font-weight:700;font-size:15px;transition:.15s}
+    .promo-cta:hover{background:#16A34A;transform:translateY(-1px)}
+    .promo-color-primary{background:var(--primary)}
+    .promo-color-coral{background:#FB7185}
+    .promo-color-green{background:#22C55E}
+    .promo-color-navy{background:var(--navy)}
     .f-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
     @media (max-width:560px){.f-row{grid-template-columns:1fr}}
     .f-field{margin-bottom:12px}
@@ -148,6 +169,8 @@
   </style>
 </head>
 <body>
+<!-- Promo top bar (populated at runtime; hidden if no live promo) -->
+<div id="promoBar" style="display:none"></div>
 
 <!-- Shared SVG defs: swim equipment + waves -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -254,6 +277,9 @@
     </div>
     <div class="wave"><svg viewBox="0 0 1440 60" preserveAspectRatio="none"><path d="M0,32 C240,64 480,0 720,32 C960,64 1200,0 1440,32 L1440,60 L0,60 Z" fill="#fff"/></svg></div>
   </div>
+
+  <!-- Promo hero card (populated at runtime; hidden if no live promo) -->
+  <div id="promoHero" style="display:none"></div>
 
   <!-- Why us -->
   <section id="why">
@@ -531,6 +557,88 @@ document.querySelectorAll('.faq details').forEach(function(d){
     }
   });
   function show(msg, ok){ statusEl.style.display='block'; statusEl.style.color=ok?'#16A34A':'#DC2626'; statusEl.textContent=msg; }
+})();
+</script>
+<script>
+// ── Promotions: fetch active promo and render top bar + hero card. ─────
+// Reads from the scheduler's Supabase project (public via anon key). Filters
+// by is_active + starts_at <= now <= ends_at. If multiple qualify, the most
+// recently updated wins — matches the admin module's "one live at a time"
+// recommendation while still gracefully handling overlap.
+(function(){
+  var cfg = window.APP_CONFIG || {};
+  if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) return;
+  var nowIso = new Date().toISOString();
+  var url = cfg.supabaseUrl + '/rest/v1/promos'
+    + '?is_active=eq.true'
+    + '&starts_at=lte.' + encodeURIComponent(nowIso)
+    + '&ends_at=gte.' + encodeURIComponent(nowIso)
+    + '&order=updated_at.desc'
+    + '&limit=1';
+  fetch(url, { headers: { apikey: cfg.supabaseAnonKey, Authorization: 'Bearer '+cfg.supabaseAnonKey }})
+    .then(function(r){ return r.ok ? r.json() : []; })
+    .then(function(rows){
+      var p = rows && rows[0];
+      if (!p) return;
+      renderPromoBar(p);
+      renderPromoHero(p);
+    })
+    .catch(function(){});
+
+  function esc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function waLink(p){
+    var num = (p.wa_number||'60122539655').replace(/[^0-9]/g,'');
+    var link = 'https://wa.me/' + num;
+    if (p.prefill_message) link += '?text=' + encodeURIComponent(p.prefill_message);
+    return link;
+  }
+  function isDismissed(id){
+    try { return localStorage.getItem('promo_dismissed_' + id) === '1'; } catch(_) { return false; }
+  }
+  function markDismissed(id){
+    try { localStorage.setItem('promo_dismissed_' + id, '1'); } catch(_) {}
+  }
+  function renderPromoBar(p){
+    if (!p.bar_text || !String(p.bar_text).trim()) return;
+    if (p.bar_dismissible && isDismissed(p.id)) return;
+    var el = document.getElementById('promoBar');
+    if (!el) return;
+    var wa = waLink(p);
+    var colorClass = 'promo-color-' + (p.bar_color || 'primary');
+    el.innerHTML =
+      '<div class="promo-bar ' + colorClass + '">' +
+      '  <span class="promo-bar-text">' + esc(p.bar_text) + '</span>' +
+      '  <a class="promo-bar-cta" href="' + wa + '" target="_blank" rel="noopener">' + esc(p.cta_label||'WhatsApp Us') + ' →</a>' +
+      (p.bar_dismissible ? '  <button class="promo-bar-close" aria-label="Dismiss">✕</button>' : '') +
+      '</div>';
+    el.style.display = 'block';
+    if (p.bar_dismissible) {
+      el.querySelector('.promo-bar-close').addEventListener('click', function(){
+        markDismissed(p.id);
+        el.style.display = 'none';
+      });
+    }
+  }
+  function renderPromoHero(p){
+    if (!p.title || !String(p.title).trim()) return;
+    var el = document.getElementById('promoHero');
+    if (!el) return;
+    var wa = waLink(p);
+    var badgeClass = 'promo-color-' + (p.bar_color || 'primary');
+    var borderColor = { primary:'#0EA5E9', coral:'#FB7185', green:'#22C55E', navy:'#0C4A6E' }[p.bar_color||'primary'];
+    el.className = 'promo-hero alt';
+    el.innerHTML =
+      '<div class="wrap">' +
+      '  <div class="promo-card" style="border:2px solid ' + borderColor + '">' +
+      '    <div class="promo-badge ' + badgeClass + '">LIMITED TIME</div>' +
+      '    <h2 class="promo-title">' + esc(p.title) + '</h2>' +
+           (p.subtitle ? '<div class="promo-subtitle">' + esc(p.subtitle) + '</div>' : '') +
+           (p.body     ? '<div class="promo-body">'     + esc(p.body)     + '</div>' : '') +
+      '    <a class="promo-cta" href="' + wa + '" target="_blank" rel="noopener">💬 ' + esc(p.cta_label||'WhatsApp Us') + '</a>' +
+      '  </div>' +
+      '</div>';
+    el.style.display = 'block';
+  }
 })();
 </script>
 <script>
