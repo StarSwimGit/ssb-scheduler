@@ -4944,18 +4944,8 @@ function App({
     className: "header-row"
   }, /*#__PURE__*/React.createElement("a", {
     className: "brand",
-    href: "#",
-    onClick: e => {
-      e.preventDefault();
-      if (canSchedule) {
-        setSide('schedule');
-        setView('schedule');
-      } else if (canSystem) {
-        setSide('system');
-        setView('adminDirectory');
-      }
-    },
-    title: "Home"
+    href: "./index.html",
+    title: "Go to mystarswim.com"
   }, /*#__PURE__*/React.createElement("img", {
     src: "./logo.png",
     alt: "SSB",
