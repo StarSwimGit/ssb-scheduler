@@ -100,14 +100,37 @@
     .choice{display:grid;grid-template-columns:1fr 1fr;gap:18px;max-width:760px;margin:36px auto 0}
     /* ── MAS BADGES pathway — dedicated section between Programmes & Testimonials ── */
     .mas-section{background:#fff;padding:20px 0 60px}
-    .mas-hero{text-align:center;max-width:820px;margin:0 auto 44px}
+    .mas-hero{text-align:center;max-width:820px;margin:0 auto 40px}
     .mas-kicker{display:inline-flex;align-items:center;gap:8px;font-size:11px;text-transform:uppercase;letter-spacing:2.2px;font-weight:800;padding:6px 14px;border-radius:999px;background:#FFF7D6;color:#7A5E00;border:1px solid #F9C61033;margin-bottom:14px}
     .mas-kicker::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:#F9C610;box-shadow:0 0 0 3px #F9C61033}
     .mas-title{font-size:clamp(26px,3.8vw,36px);font-weight:900;color:#1E2752;letter-spacing:-.5px;line-height:1.12;margin-bottom:14px}
     .mas-title em{font-style:normal;background:linear-gradient(180deg,transparent 55%,#F9C61044 55%,#F9C61044 92%,transparent 92%);padding:0 4px}
-    .mas-sub{font-size:16px;color:var(--text-2);line-height:1.6;max-width:640px;margin:0 auto}
+    .mas-sub{font-size:16px;color:var(--text-2);line-height:1.6;max-width:680px;margin:0 auto}
     .mas-sub strong{color:#1E2752}
+
+    /* Two-column accreditation brands (SSI + MAS BADGES) */
+    .accr-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:1000px;margin:0 auto 48px}
+    .accr{background:#fff;border:1.5px solid #E2E8F0;border-radius:16px;padding:22px 24px;position:relative;transition:.18s ease;display:flex;flex-direction:column;gap:10px}
+    .accr:hover{border-color:#CBD5E1;box-shadow:0 6px 20px rgba(15,23,42,.06)}
+    .accr-badge{display:inline-flex;align-items:center;gap:6px;position:absolute;top:14px;right:14px;font-size:10px;font-weight:800;letter-spacing:.6px;padding:4px 10px;border-radius:999px}
+    .accr-badge.now{background:#DCFCE7;color:#15803D}
+    .accr-badge.soon{background:#FEF3C7;color:#92400E}
+    .accr-logo{width:86px;height:86px;border-radius:12px;background:#F8FAFC;border:1px dashed #CBD5E1;display:flex;align-items:center;justify-content:center;color:#94A3B8;font-size:11px;font-weight:700;text-align:center;line-height:1.25;padding:8px;flex-shrink:0}
+    .accr-logo img{width:100%;height:100%;object-fit:contain}
+    .accr-head{display:flex;align-items:center;gap:14px}
+    .accr-name{font-size:16px;font-weight:900;color:#1E2752;letter-spacing:-.2px;line-height:1.15}
+    .accr-role{font-size:12px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.8px;margin-top:2px}
+    .accr-desc{font-size:13.5px;color:var(--text-2);line-height:1.55;margin:0}
+    .accr-desc strong{color:#1E2752}
+    .accr-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
+    .accr-tag{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:999px;background:#F1F5F9;color:#475569}
+    .accr-verify{font-size:12.5px;font-weight:700;color:#0EA5E9;text-decoration:none;margin-top:auto;padding-top:6px}
+    .accr-verify:hover{text-decoration:underline}
+
     /* 7-badge showcase */
+    .mas-badges-heading{text-align:center;margin:20px auto 22px;max-width:720px}
+    .mas-badges-heading h3{font-size:18px;font-weight:800;color:#1E2752;margin:0 0 6px;letter-spacing:-.2px}
+    .mas-badges-heading p{font-size:13.5px;color:var(--text-2);margin:0;line-height:1.5}
     .mas-badges{display:grid;grid-template-columns:repeat(7,1fr);gap:18px 8px;max-width:1080px;margin:0 auto;position:relative}
     .mas-badges::before{content:"";position:absolute;top:62px;left:6%;right:6%;height:2px;background:repeating-linear-gradient(90deg,#1E275233 0 6px,transparent 6px 12px);z-index:0}
     .mas-step{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px;transition:transform .2s ease}
@@ -123,18 +146,17 @@
     .mas-value .vi{width:38px;height:38px;border-radius:10px;background:#1E2752;color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;margin-bottom:12px}
     .mas-value h4{font-size:15px;color:#1E2752;font-weight:800;margin:0 0 6px;letter-spacing:-.2px}
     .mas-value p{font-size:13.5px;color:var(--text-2);line-height:1.55;margin:0}
-    /* trust bar */
+    /* trust bar (instructor safety line) */
     .mas-trust{display:flex;align-items:center;justify-content:center;gap:22px;flex-wrap:wrap;max-width:1000px;margin:32px auto 0;padding:16px 20px;background:linear-gradient(90deg,#F8FAFC 0%,#fff 50%,#F8FAFC 100%);border-top:1px solid #E2E8F0;border-bottom:1px solid #E2E8F0;font-size:13.5px;color:var(--text-2);font-weight:600}
     .mas-trust .rec{display:inline-flex;align-items:center;gap:9px;color:#1E2752;font-weight:800}
     .mas-trust .rec::before{content:"✓";display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;background:#22C55E;color:#fff;border-radius:50%;font-size:13px}
-    .mas-verify{display:inline-flex;align-items:center;gap:5px;color:#0EA5E9;text-decoration:none;font-weight:800}
-    .mas-verify:hover{text-decoration:underline}
     /* responsive */
     @media (max-width:1080px){.mas-badge-img{width:100px;height:100px}.mas-badges::before{top:52px}}
     @media (max-width:900px){
       .mas-badges{grid-template-columns:repeat(4,1fr);gap:26px 8px}
       .mas-badges::before{display:none}
       .mas-values{grid-template-columns:1fr}
+      .accr-grid{grid-template-columns:1fr}
     }
     @media (max-width:520px){
       .mas-badges{grid-template-columns:repeat(2,1fr);gap:24px 8px}
@@ -279,7 +301,7 @@
     <nav class="hd-nav">
       <a class="hd-link" href="#why">Why Us</a>
       <a class="hd-link" href="#programmes">Programmes</a>
-      <a class="hd-link" href="#masbadges">MAS Badges</a>
+      <a class="hd-link" href="#pathways">Accreditations</a>
       <a class="hd-link" href="#how">Getting Started</a>
       <a class="hd-link" href="#faq">FAQ</a>
       <a class="hd-link" href="#contact">Contact Us</a>
@@ -411,14 +433,67 @@
   <div class="wave" style="background:#EEF7FD"><svg viewBox="0 0 1440 60" preserveAspectRatio="none"><path d="M0,30 C240,62 480,-2 720,30 C960,62 1200,-2 1440,30 L1440,60 L0,60 Z" fill="#fff"/></svg></div>
 
   <!-- ── MAS BADGES: dedicated section ── -->
-  <section class="mas-section" id="masbadges">
+  <section class="mas-section" id="pathways">
     <div class="wrap">
       <div class="mas-hero">
-        <div class="mas-kicker">Nationally certified pathway</div>
-        <h2 class="mas-title">The MAS BADGES pathway — from <em>Starfish to Dolphin</em></h2>
-        <p class="mas-sub">Star Swim teaches and assesses the full seven-level <strong>MAS BADGES</strong> syllabus — Malaysia Aquatics' national Learn-to-Swim standard for children aged 5–12. Every level ends in a named badge and a portable certificate that follows your child anywhere in Malaysia.</p>
+        <div class="mas-kicker">Accredited pathways</div>
+        <h2 class="mas-title">Learn under real standards, with <em>credentialed instructors</em></h2>
+        <p class="mas-sub">Star Swim delivers curriculum from recognised national and international bodies — so parents can enroll knowing exactly what standard their child is being taught to, and instructors can point to the framework they teach against.</p>
       </div>
 
+      <!-- Two-column accreditation brands: SSI (live) + MAS BADGES (launching) -->
+      <div class="accr-grid">
+        <div class="accr">
+          <span class="accr-badge now">● ACCREDITED</span>
+          <div class="accr-head">
+            <div class="accr-logo">
+              <!-- TODO: replace with SSI Swim Schools logo (assets/ssi-logo.png) -->
+              SSI logo<br/>placeholder
+            </div>
+            <div>
+              <div class="accr-name">SSI Swim Schools</div>
+              <div class="accr-role">Accredited centre</div>
+            </div>
+          </div>
+          <p class="accr-desc">An internationally recognised swim school curriculum spanning early years, technique, and specialty programmes. Star Swim is an accredited SSI Swim Schools centre — the curriculum you'll see day-to-day across most of our programmes.</p>
+          <div class="accr-tags">
+            <span class="accr-tag">Baby &amp; Me</span>
+            <span class="accr-tag">Nursery</span>
+            <span class="accr-tag">Developing Swimmers</span>
+            <span class="accr-tag">Mermaiding</span>
+            <span class="accr-tag">Life Saving</span>
+          </div>
+          <!-- TODO: replace with real SSI verification link (Star Swim's SSI centre page) -->
+          <a class="accr-verify" href="#" title="Verification link to be added">Verify our SSI accreditation ↗</a>
+        </div>
+
+        <div class="accr">
+          <span class="accr-badge soon">⏱ LAUNCHING SOON</span>
+          <div class="accr-head">
+            <div class="accr-logo">
+              <!-- TODO: replace with MAS BADGES logo when publicly available -->
+              MAS BADGES<br/>logo placeholder
+            </div>
+            <div>
+              <div class="accr-name">MAS BADGES</div>
+              <div class="accr-role">Malaysia Aquatics · National syllabus</div>
+            </div>
+          </div>
+          <p class="accr-desc">Malaysia's forthcoming national Learn-to-Swim standard, developed by <strong>Malaysia Aquatics</strong> for ages 5–12. Star Swim's head instructor, <strong>Anthony Ang</strong>, is the programme's <strong>Chief Examiner</strong> — actively shaping the framework being launched as the national syllabus.</p>
+          <div class="accr-tags">
+            <span class="accr-tag">Learn-to-Swim</span>
+            <span class="accr-tag">Stroke Development</span>
+            <span class="accr-tag">Competition-Ready</span>
+          </div>
+          <a class="accr-verify" href="https://www.masbadges.org" target="_blank" rel="noopener">masbadges.org (in preparation) ↗</a>
+        </div>
+      </div>
+
+      <!-- 7-badge MAS BADGES pathway centrepiece -->
+      <div class="mas-badges-heading">
+        <h3>The MAS BADGES 7-level pathway — Starfish to Dolphin</h3>
+        <p>A national progression from complete beginner to competition-ready swimmer, with a named badge at every level.</p>
+      </div>
       <div class="mas-badges">
         <div class="mas-step">
           <img class="mas-badge-img" src="./level1.png" alt="MAS Badges Level 1 — Starfish" loading="lazy" />
@@ -468,24 +543,22 @@
         <div class="mas-value">
           <div class="vi">🎯</div>
           <h4>Full pathway, one place</h4>
-          <p>No mid-programme transfer. We take swimmers from complete beginner all the way to the highest badge — you never have to find a new centre when your child outgrows the first few levels.</p>
+          <p>No mid-programme transfer. From complete beginner all the way to competition-ready — you never have to find a new centre when your child outgrows the first few levels.</p>
         </div>
         <div class="mas-value">
           <div class="vi">🏊</div>
-          <h4>Assessed in-house</h4>
-          <p>Your child is assessed in the pool they've been training in, by the coaches who know them — reducing test-day anxiety and getting them a fair, familiar assessment.</p>
+          <h4>Independent assessors</h4>
+          <p>Assessments are conducted by certified examiners — never by the child's own instructor. This independence is core to the syllabus: a badge means the same thing at every recognised centre, without favouritism.</p>
         </div>
         <div class="mas-value">
           <div class="vi">🇲🇾</div>
-          <h4>National standard</h4>
-          <p>Each badge is issued under Malaysia Aquatics' national syllabus and recorded on your child's Malaysia Aquatics record. Move house, change centres — the badges travel with them.</p>
+          <h4>National recognition</h4>
+          <p>Every badge is recorded on your child's Malaysia Aquatics record. Move house, change centres, or continue with any recognised partner — the achievements travel with them.</p>
         </div>
       </div>
 
       <div class="mas-trust">
-        <span class="rec">Recognised by Malaysia Aquatics</span>
-        <span>Full 7-level teaching &amp; assessment authorisation</span>
-        <a class="mas-verify" href="https://www.masbadges.org" target="_blank" rel="noopener">Verify at masbadges.org ↗</a>
+        <span class="rec">Every instructor holds active REACT Right and LSSM Bronze Medallion lifesaving certification</span>
       </div>
     </div>
   </section>
