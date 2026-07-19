@@ -110,21 +110,22 @@
 
     /* Two-column accreditation brands (SSI + MAS BADGES) */
     .accr-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:1000px;margin:0 auto 48px}
-    .accr{background:#fff;border:1.5px solid #E2E8F0;border-radius:16px;padding:22px 24px;position:relative;transition:.18s ease;display:flex;flex-direction:column;gap:10px}
+    .accr{background:#fff;border:1.5px solid #E2E8F0;border-radius:16px;padding:0;position:relative;transition:.18s ease;display:flex;flex-direction:column;overflow:hidden}
     .accr:hover{border-color:#CBD5E1;box-shadow:0 6px 20px rgba(15,23,42,.06)}
-    .accr-badge{display:inline-flex;align-items:center;gap:6px;position:absolute;top:14px;right:14px;font-size:10px;font-weight:800;letter-spacing:.6px;padding:4px 10px;border-radius:999px}
+    .accr-badge{display:inline-flex;align-items:center;gap:6px;position:absolute;top:14px;right:14px;font-size:10px;font-weight:800;letter-spacing:.6px;padding:4px 10px;border-radius:999px;z-index:2}
     .accr-badge.now{background:#DCFCE7;color:#15803D}
     .accr-badge.soon{background:#FEF3C7;color:#92400E}
-    .accr-logo{width:86px;height:86px;border-radius:12px;background:#F8FAFC;border:1px dashed #CBD5E1;display:flex;align-items:center;justify-content:center;color:#94A3B8;font-size:11px;font-weight:700;text-align:center;line-height:1.25;padding:8px;flex-shrink:0}
-    .accr-logo img{width:100%;height:100%;object-fit:contain}
-    .accr-head{display:flex;align-items:center;gap:14px}
-    .accr-name{font-size:16px;font-weight:900;color:#1E2752;letter-spacing:-.2px;line-height:1.15}
-    .accr-role{font-size:12px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.8px;margin-top:2px}
+    /* Horizontal logo band across the top — transparent, respectful spacing */
+    .accr-logo-band{display:flex;align-items:center;justify-content:center;padding:26px 24px 22px;background:linear-gradient(180deg,#F8FAFC 0%,#fff 100%);border-bottom:1px solid #F1F5F9;min-height:96px}
+    .accr-logo-band img{max-width:100%;max-height:52px;width:auto;height:auto;object-fit:contain}
+    /* Body content */
+    .accr-body{padding:20px 24px 22px;display:flex;flex-direction:column;gap:10px;flex:1}
+    .accr-role{font-size:11px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:1px}
     .accr-desc{font-size:13.5px;color:var(--text-2);line-height:1.55;margin:0}
     .accr-desc strong{color:#1E2752}
-    .accr-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
+    .accr-tags{display:flex;flex-wrap:wrap;gap:6px}
     .accr-tag{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:999px;background:#F1F5F9;color:#475569}
-    .accr-verify{font-size:12.5px;font-weight:700;color:#0EA5E9;text-decoration:none;margin-top:auto;padding-top:6px}
+    .accr-verify{font-size:12.5px;font-weight:700;color:#0EA5E9;text-decoration:none;margin-top:auto;padding-top:6px;display:inline-flex;align-items:center;gap:4px}
     .accr-verify:hover{text-decoration:underline}
 
     /* 7-badge showcase */
@@ -445,47 +446,38 @@
       <div class="accr-grid">
         <div class="accr">
           <span class="accr-badge now">● ACCREDITED</span>
-          <div class="accr-head">
-            <div class="accr-logo">
-              <!-- TODO: replace with SSI Swim Schools logo (assets/ssi-logo.png) -->
-              SSI logo<br/>placeholder
-            </div>
-            <div>
-              <div class="accr-name">SSI Swim Schools</div>
-              <div class="accr-role">Accredited centre</div>
-            </div>
+          <div class="accr-logo-band">
+            <img src="./ssi-logo.webp" alt="SSI Swim Schools International" loading="lazy" />
           </div>
-          <p class="accr-desc">An internationally recognised swim school curriculum spanning early years, technique, and specialty programmes. Star Swim is an accredited SSI Swim Schools centre — the curriculum you'll see day-to-day across most of our programmes.</p>
-          <div class="accr-tags">
-            <span class="accr-tag">Baby &amp; Me</span>
-            <span class="accr-tag">Nursery</span>
-            <span class="accr-tag">Developing Swimmers</span>
-            <span class="accr-tag">Mermaiding</span>
-            <span class="accr-tag">Life Saving</span>
+          <div class="accr-body">
+            <div class="accr-role">Accredited centre</div>
+            <p class="accr-desc">An internationally recognised swim school curriculum spanning early years, technique, and specialty programmes. Star Swim is an accredited SSI Swim Schools centre — the curriculum you'll see day-to-day across most of our programmes.</p>
+            <div class="accr-tags">
+              <span class="accr-tag">Baby &amp; Me</span>
+              <span class="accr-tag">Nursery</span>
+              <span class="accr-tag">Developing Swimmers</span>
+              <span class="accr-tag">Mermaiding</span>
+              <span class="accr-tag">Life Saving</span>
+            </div>
+            <a class="accr-verify" href="https://www.divessi.com/en/divecenter/star-swim-hub-ipoh-anthony-ang-perak-malaysia-765241" target="_blank" rel="noopener">Verify our SSI accreditation ↗</a>
           </div>
-          <!-- TODO: replace with real SSI verification link (Star Swim's SSI centre page) -->
-          <a class="accr-verify" href="#" title="Verification link to be added">Verify our SSI accreditation ↗</a>
         </div>
 
         <div class="accr">
           <span class="accr-badge soon">⏱ LAUNCHING SOON</span>
-          <div class="accr-head">
-            <div class="accr-logo">
-              <!-- TODO: replace with MAS BADGES logo when publicly available -->
-              MAS BADGES<br/>logo placeholder
-            </div>
-            <div>
-              <div class="accr-name">MAS BADGES</div>
-              <div class="accr-role">Malaysia Aquatics · National syllabus</div>
-            </div>
+          <div class="accr-logo-band">
+            <img src="./mas-badges-logo.png" alt="MAS BADGES Learn to Swim" loading="lazy" />
           </div>
-          <p class="accr-desc">Malaysia's forthcoming national Learn-to-Swim standard, developed by <strong>Malaysia Aquatics</strong> for ages 5–12. Star Swim's head instructor is the <strong>designer of the MAS BADGES system</strong> — actively shaping the framework being launched as the national syllabus.</p>
-          <div class="accr-tags">
-            <span class="accr-tag">Learn-to-Swim</span>
-            <span class="accr-tag">Stroke Development</span>
-            <span class="accr-tag">Competition-Ready</span>
+          <div class="accr-body">
+            <div class="accr-role">National syllabus · Malaysia Aquatics</div>
+            <p class="accr-desc">Malaysia's forthcoming national Learn-to-Swim standard, developed by <strong>Malaysia Aquatics</strong> for ages 5–12. Star Swim will be a partner centre delivering the syllabus once the programme officially launches.</p>
+            <div class="accr-tags">
+              <span class="accr-tag">Learn-to-Swim</span>
+              <span class="accr-tag">Stroke Development</span>
+              <span class="accr-tag">Competition-Ready</span>
+            </div>
+            <a class="accr-verify" href="https://www.masbadges.org/" target="_blank" rel="noopener">masbadges.org ↗</a>
           </div>
-          <a class="accr-verify" href="https://www.masbadges.org" target="_blank" rel="noopener">masbadges.org (in preparation) ↗</a>
         </div>
       </div>
 
