@@ -57,7 +57,7 @@
        Visibility: .pose-rest is visible by default; .pose-excited on hover.
        Which pose is flow vs overlay depends on which is wider per character. */
     .side-char-morph{pointer-events:auto;cursor:default}
-    .side-char-morph .pose{height:100%;width:auto;display:block;transition:opacity .4s ease}
+    .side-char-morph .pose{height:100%;width:auto;max-width:none;display:block;transition:opacity .4s ease}
     .side-char-morph .pose-overlay{position:absolute;bottom:0}
     .side-char-morph .pose-excited{opacity:0}
     .side-char-morph .pose-rest{opacity:1}
@@ -972,9 +972,9 @@
 
   <!-- Getting started -->
   <section id="how" style="padding-top:30px">
-    <div class="side-char side-char-morph right" aria-hidden="true" style="bottom:0;height:70%;opacity:.94;left:calc(50% + 250px)">
-      <img class="pose pose-excited pose-flow" src="./coach-whistle-excited.png" alt=""/>
-      <img class="pose pose-rest pose-overlay" src="./coach-whistle.png" alt="" style="left:54.4%"/>
+    <div class="side-char side-char-morph right" aria-hidden="true" style="bottom:0;height:70%;opacity:.94">
+      <img class="pose pose-rest pose-flow" src="./coach-whistle.png" alt=""/>
+      <img class="pose pose-excited pose-overlay" src="./coach-whistle-excited.png" alt="" style="left:-82%;height:75%"/>
     </div>
     <svg class="floaty" style="top:70px;left:2%;width:44px;opacity:.4;animation-delay:.8s" aria-hidden="true"><use href="#i-board"/></svg>
     <div class="wrap">
