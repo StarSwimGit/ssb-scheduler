@@ -51,13 +51,16 @@
     .side-char{position:absolute;pointer-events:none;z-index:5;width:auto;filter:drop-shadow(0 12px 28px rgba(0,0,0,.18));animation:sideCharBob 6s ease-in-out infinite}
     .side-char.left{right:calc(50% + 478px);left:auto}
     .side-char.right{left:calc(50% + 478px);right:auto}
-    /* Morph variant: two poses stacked, cross-fade on hover. Container is a <div>.
-       The wider EXCITED pose is the flow element (sets container width) and stays hidden by default.
-       The narrower REST pose sits centred over it (position:absolute) and is visible by default. */
+    /* Morph variant: two poses stacked, cross-fade on hover.
+       Layout: one pose has .pose-flow (defines container size via natural flow),
+               the other has .pose-overlay (position:absolute) — feet aligned via inline left:.
+       Visibility: .pose-rest is visible by default; .pose-excited on hover.
+       Which pose is flow vs overlay depends on which is wider per character. */
     .side-char-morph{pointer-events:auto;cursor:default}
     .side-char-morph .pose{height:100%;width:auto;display:block;transition:opacity .4s ease}
+    .side-char-morph .pose-overlay{position:absolute;bottom:0}
     .side-char-morph .pose-excited{opacity:0}
-    .side-char-morph .pose-rest{position:absolute;bottom:0;left:50%;transform:translateX(-50%);opacity:1}
+    .side-char-morph .pose-rest{opacity:1}
     .side-char-morph:hover .pose-excited{opacity:1}
     .side-char-morph:hover .pose-rest{opacity:0}
     @keyframes sideCharBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
@@ -806,8 +809,8 @@
 
   <section class="alt" id="why" style="padding-top:36px">
     <div class="side-char side-char-morph left" aria-hidden="true" style="bottom:0;height:66%;opacity:.94">
-      <img class="pose pose-excited" src="./coach-swimmer-excited.png" alt=""/>
-      <img class="pose pose-rest" src="./coach-swimmer.png" alt=""/>
+      <img class="pose pose-excited pose-flow" src="./coach-swimmer-excited.png" alt=""/>
+      <img class="pose pose-rest pose-overlay" src="./coach-swimmer.png" alt="" style="left:16.2%"/>
     </div>
     <svg class="floaty" style="top:40px;right:2%;width:52px;opacity:.35" aria-hidden="true"><use href="#i-fish"/></svg>
     <div class="wrap">
@@ -969,9 +972,9 @@
 
   <!-- Getting started -->
   <section id="how" style="padding-top:30px">
-    <div class="side-char side-char-morph right" aria-hidden="true" style="bottom:0;height:70%;opacity:.94;left:calc(50% + 356px)">
-      <img class="pose pose-excited" src="./coach-whistle-excited.png" alt=""/>
-      <img class="pose pose-rest" src="./coach-whistle.png" alt=""/>
+    <div class="side-char side-char-morph right" aria-hidden="true" style="bottom:0;height:70%;opacity:.94;left:calc(50% + 250px)">
+      <img class="pose pose-excited pose-flow" src="./coach-whistle-excited.png" alt=""/>
+      <img class="pose pose-rest pose-overlay" src="./coach-whistle.png" alt="" style="left:54.4%"/>
     </div>
     <svg class="floaty" style="top:70px;left:2%;width:44px;opacity:.4;animation-delay:.8s" aria-hidden="true"><use href="#i-board"/></svg>
     <div class="wrap">
@@ -1111,7 +1114,10 @@
 
   <!-- Contact -->
   <section id="contact" style="padding-top:30px">
-    <img class="side-char left" src="./coach-lead.png" alt="" aria-hidden="true" style="bottom:0;height:78%;opacity:.95;right:calc(50% + 395px)"/>
+    <div class="side-char side-char-morph left" aria-hidden="true" style="bottom:0;height:78%;opacity:.95;right:calc(50% + 395px)">
+      <img class="pose pose-rest pose-flow" src="./coach-lead.png" alt=""/>
+      <img class="pose pose-excited pose-overlay" src="./coach-lead-excited.png" alt="" style="left:11.6%"/>
+    </div>
     <div class="wrap">
       <h2 class="sec-title">Ready to <em>get started?</em></h2>
       <p class="sec-sub">WhatsApp us for a quick answer, or drop us a message and our team will get back to you.</p>
