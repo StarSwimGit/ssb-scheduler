@@ -46,10 +46,20 @@
     /* ── Section side-flanker character illustrations ─────────────────── */
     /* Anchored to the CONTENT WIDTH (1080px wrap), not the viewport edges.
        Formula: distance from centre to inner-content-edge = 540px (half wrap) - 22px (wrap padding) = 518px.
-       So .left has right-edge kissing content-left; .right has left-edge kissing content-right. */
-    .side-char{position:absolute;pointer-events:none;z-index:1;width:auto;filter:drop-shadow(0 10px 24px rgba(0,0,0,.14));animation:sideCharBob 6s ease-in-out infinite}
-    .side-char.left{right:calc(50% + 518px);left:auto}
-    .side-char.right{left:calc(50% + 518px);right:auto}
+       For a slight overlap INTO the content (so characters feel layered on top of cards, not floating
+       beside them), subtract an overlap amount. 40px reads as "leaning in" without covering content. */
+    .side-char{position:absolute;pointer-events:none;z-index:5;width:auto;filter:drop-shadow(0 12px 28px rgba(0,0,0,.18));animation:sideCharBob 6s ease-in-out infinite}
+    .side-char.left{right:calc(50% + 478px);left:auto}
+    .side-char.right{left:calc(50% + 478px);right:auto}
+    /* Morph variant: two poses stacked, cross-fade on hover. Container is a <div>.
+       The wider EXCITED pose is the flow element (sets container width) and stays hidden by default.
+       The narrower REST pose sits centred over it (position:absolute) and is visible by default. */
+    .side-char-morph{pointer-events:auto;cursor:default}
+    .side-char-morph .pose{height:100%;width:auto;display:block;transition:opacity .4s ease}
+    .side-char-morph .pose-excited{opacity:0}
+    .side-char-morph .pose-rest{position:absolute;bottom:0;left:50%;transform:translateX(-50%);opacity:1}
+    .side-char-morph:hover .pose-excited{opacity:1}
+    .side-char-morph:hover .pose-rest{opacity:0}
     @keyframes sideCharBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
     /* Hide side characters on narrower screens — no room next to content once wrap is near viewport width */
     @media (max-width:1240px){.side-char{display:none}}
@@ -795,7 +805,10 @@
   <div class="wave"><svg viewBox="0 0 1440 60" preserveAspectRatio="none"><path d="M0,30 C240,62 480,-2 720,30 C960,62 1200,-2 1440,30 L1440,60 L0,60 Z" fill="#EEF7FD"/></svg></div>
 
   <section class="alt" id="why" style="padding-top:36px">
-    <img class="side-char left" src="./coach-swimmer.png" alt="" aria-hidden="true" style="bottom:0;height:66%;opacity:.94"/>
+    <div class="side-char side-char-morph left" aria-hidden="true" style="bottom:0;height:66%;opacity:.94">
+      <img class="pose pose-excited" src="./coach-swimmer-excited.png" alt=""/>
+      <img class="pose pose-rest" src="./coach-swimmer.png" alt=""/>
+    </div>
     <svg class="floaty" style="top:40px;right:2%;width:52px;opacity:.35" aria-hidden="true"><use href="#i-fish"/></svg>
     <div class="wrap">
       <div class="kicker">Why parents choose us</div>
