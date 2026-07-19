@@ -88,16 +88,54 @@
     .card h3{font-size:16.5px;font-weight:800;color:var(--navy);margin-bottom:6px}
     .card p{font-size:13.5px;color:var(--text-2)}
     .why-ico{width:58px;height:58px;border-radius:16px;background:var(--foam);display:flex;align-items:center;justify-content:center;margin-bottom:14px}
-    /* ── Why parents choose us — dedicated card grammar (see reference) ── */
-    .why-cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px;margin-top:8px}
-    .why-card{background:#fff;border-radius:24px;padding:30px 26px 28px;box-shadow:0 20px 44px -22px rgba(31,102,148,.28);border:1px solid rgba(31,102,148,.05);transition:transform .18s ease,box-shadow .18s ease;display:flex;flex-direction:column;align-items:flex-start;text-align:left}
-    .why-card:hover{transform:translateY(-5px);box-shadow:0 30px 54px -22px rgba(31,102,148,.34)}
-    .why-card .why-svg{width:104px;height:100px;margin-bottom:16px}
-    .why-card .why-svg svg{width:100%;height:100%;display:block}
-    .why-card h3{margin:0 0 10px;font-size:18px;font-weight:800;color:#16577a;letter-spacing:-.01em}
-    .why-card p{margin:0;font-size:14px;line-height:1.6;color:#5f7079}
-    @media (max-width:960px){.why-cards{grid-template-columns:repeat(2,1fr);gap:20px}}
-    @media (max-width:520px){.why-cards{grid-template-columns:1fr;gap:16px}}
+    /* ── Why parents choose us — flip cards with staggered layout ── */
+    .why-cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:30px;align-items:start;margin-top:8px}
+    .why-cards .why-card:nth-child(2n){margin-top:48px}
+    .why-card{perspective:1400px;height:380px;background:transparent;border:none;padding:0;box-shadow:none;border-radius:0;display:block}
+    .why-card:hover{transform:none;box-shadow:none}
+    .why-flip{position:relative;width:100%;height:100%;transition:transform .7s cubic-bezier(.4,.15,.25,1);transform-style:preserve-3d}
+    @media (hover:hover){.why-card:hover .why-flip{transform:rotateY(180deg)}}
+    .why-card.is-flipped .why-flip{transform:rotateY(180deg)}
+    .why-face{position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;border-radius:28px;padding:30px 26px 26px;display:flex;flex-direction:column}
+    .why-face.front{background:#fff;box-shadow:0 20px 44px -22px rgba(31,102,148,.30);border:1px solid rgba(31,102,148,.05)}
+    .why-face.back{transform:rotateY(180deg);color:#fff;box-shadow:0 24px 48px -22px rgba(20,121,189,.6);justify-content:center;text-align:left}
+    .why-face.back .stat{font-size:52px;font-weight:900;line-height:1;letter-spacing:-.02em}
+    .why-face.back .stat-label{font-size:14px;font-weight:700;opacity:.92;margin:8px 0 16px}
+    .why-face.back .stat-body{margin:0;font-size:13.5px;line-height:1.6;opacity:.94}
+    .why-card.blue  .why-face.back{background:linear-gradient(160deg,#38aee6,#1479bd)}
+    .why-card.coral .why-face.back{background:linear-gradient(160deg,#ff8296,#e23a57);box-shadow:0 24px 48px -22px rgba(226,58,87,.55)}
+    .why-card.teal  .why-face.back{background:linear-gradient(160deg,#37cbb3,#0e8f7e);box-shadow:0 24px 48px -22px rgba(14,143,126,.55)}
+    .why-card.amber .why-face.back{background:linear-gradient(160deg,#ffc33d,#e08a00);box-shadow:0 24px 48px -22px rgba(224,138,0,.5)}
+    .why-card.blue  .flip-hint{color:#1590d2}
+    .why-card.coral .flip-hint{color:#f2536e}
+    .why-card.teal  .flip-hint{color:#12a894}
+    .why-card.amber .flip-hint{color:#e39400}
+    .why-face .why-svg{width:104px;height:100px;margin:0 auto 14px}
+    .why-face .why-svg svg{width:100%;height:100%;display:block}
+    .why-face h3{margin:0 0 10px;font-size:18px;font-weight:800;color:#16577a;letter-spacing:-.01em;text-align:center}
+    .why-face p{margin:0;font-size:14px;line-height:1.55;color:#5f7079;text-align:center}
+    .why-face.back .stat,.why-face.back .stat-label,.why-face.back .stat-body{text-align:left}
+    .flip-hint{margin-top:auto;padding-top:14px;font-size:12.5px;font-weight:700;display:inline-flex;align-items:center;gap:6px;align-self:center}
+    .flip-hint svg{width:14px;height:14px}
+    @media (hover:none){
+      .why-cards{gap:16px}
+      .why-cards .why-card:nth-child(2n){margin-top:0}
+      .why-card{height:auto}
+      .why-flip{position:static;transform:none!important;height:auto}
+      .why-face{position:static;height:auto}
+      .why-face.back,.flip-hint{display:none}
+    }
+    @media (max-width:960px){
+      .why-cards{grid-template-columns:repeat(2,1fr);gap:24px}
+      .why-cards .why-card:nth-child(2n){margin-top:0}
+    }
+    @media (max-width:520px) and (hover:hover){
+      .why-cards{grid-template-columns:1fr;gap:16px}
+      .why-card{height:360px}
+    }
+    @media (max-width:520px) and (hover:none){
+      .why-cards{grid-template-columns:1fr;gap:16px}
+    }
     .why-ico svg{width:34px;height:34px}
 
     /* Programme cards */
@@ -177,16 +215,23 @@
     .mas-num{display:inline-block;font-size:9.5px;font-weight:800;color:#C62026;letter-spacing:1.3px;padding:2px 8px;border-radius:999px;background:rgba(198,32,38,.10);margin-top:6px}
     .mas-name{font-size:15px;font-weight:900;color:#1E2752;line-height:1.15}
     .mas-hint{font-size:12px;color:var(--text-2);line-height:1.4;padding:0 4px;max-width:130px}
-    /* value cards */
-    .mas-values{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;max-width:1000px;margin:52px auto 0}
-    .mas-value{background:#F8FAFC;border:1px solid #E2E8F0;border-radius:14px;padding:22px 22px 20px;text-align:left}
-    .mas-value .vi{width:38px;height:38px;border-radius:10px;background:#1E2752;color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;margin-bottom:12px}
-    .mas-value h4{font-size:15px;color:#1E2752;font-weight:800;margin:0 0 6px;letter-spacing:-.2px}
-    .mas-value p{font-size:13.5px;color:var(--text-2);line-height:1.55;margin:0}
-    /* trust bar (instructor safety line) */
-    .mas-trust{display:flex;align-items:center;justify-content:center;gap:22px;flex-wrap:wrap;max-width:1000px;margin:32px auto 0;padding:16px 20px;background:linear-gradient(90deg,#F8FAFC 0%,#fff 50%,#F8FAFC 100%);border-top:1px solid #E2E8F0;border-bottom:1px solid #E2E8F0;font-size:13.5px;color:var(--text-2);font-weight:600}
-    .mas-trust .rec{display:inline-flex;align-items:center;gap:9px;color:#1E2752;font-weight:800}
-    .mas-trust .rec::before{content:"✓";display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;background:#22C55E;color:#fff;border-radius:50%;font-size:13px}
+    /* value cards — soft-tinted gradient per theme colour, richer SVG icons */
+    .mas-values{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;max-width:1120px;margin:52px auto 0}
+    .mas-value{border-radius:24px;padding:32px 26px 28px;text-align:left;transition:transform .18s ease,box-shadow .18s ease;border:1px solid rgba(31,102,148,.08)}
+    .mas-value:hover{transform:translateY(-4px);box-shadow:0 30px 54px -22px rgba(31,102,148,.34)}
+    .mas-value.v-blue {background:linear-gradient(180deg,#f2faff,#e2f2fd);box-shadow:0 20px 44px -22px rgba(31,102,148,.30)}
+    .mas-value.v-coral{background:linear-gradient(180deg,#fff5f6,#ffe7eb);box-shadow:0 20px 44px -22px rgba(242,83,110,.22);border-color:rgba(242,83,110,.12)}
+    .mas-value.v-amber{background:linear-gradient(180deg,#fffaf0,#fdefd6);box-shadow:0 20px 44px -22px rgba(245,164,23,.22);border-color:rgba(245,164,23,.14)}
+    .mas-value .vi{width:108px;height:100px;margin-bottom:16px;padding:0;background:transparent;border-radius:0;display:block}
+    .mas-value .vi svg{width:100%;height:100%;display:block}
+    .mas-value h4{font-size:18px;color:#16577a;font-weight:800;margin:0 0 10px;letter-spacing:-.2px}
+    .mas-value p{font-size:14px;color:#5f7079;line-height:1.6;margin:0}
+    /* trust banner — soft gradient card with a green check bubble */
+    .mas-trust{display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:nowrap;max-width:1120px;margin:24px auto 0;padding:20px 28px;background:linear-gradient(180deg,#fff,#f2f8fd);border:1px solid rgba(31,102,148,.08);border-radius:20px;box-shadow:0 14px 34px -22px rgba(31,102,148,.35);font-size:14px;color:var(--text-2);font-weight:600}
+    .mas-trust .check{flex:none;width:36px;height:36px;border-radius:50%;background:linear-gradient(180deg,#42c765,#2fae52);display:flex;align-items:center;justify-content:center;box-shadow:0 8px 16px -6px rgba(47,174,82,.7)}
+    .mas-trust .check svg{width:19px;height:19px}
+    .mas-trust .rec{color:#16577a;font-weight:800;font-size:15px;text-align:center;line-height:1.4;padding:0}
+    .mas-trust .rec::before{content:none}
     /* responsive */
     @media (max-width:1080px){.mas-badge-img{width:100px;height:100px}.mas-badges::before{top:52px}}
     @media (max-width:900px){
@@ -624,24 +669,76 @@
       </div>
 
       <div class="mas-values">
-        <div class="mas-value">
-          <div class="vi">🎯</div>
+        <div class="mas-value v-blue">
+          <div class="vi" aria-hidden="true">
+            <svg viewBox="0 0 120 108" width="120" height="108" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <radialGradient id="a1blob" cx="0.5" cy="0.4" r="0.65"><stop stop-color="#d5f0fc"/><stop offset="1" stop-color="#e4f5fd" stop-opacity="0"/></radialGradient>
+                <linearGradient id="a1g" x1="24" y1="20" x2="96" y2="94" gradientUnits="userSpaceOnUse"><stop stop-color="#4cc0f2"/><stop offset="1" stop-color="#1590d2"/></linearGradient>
+                <linearGradient id="a1flag" x1="60" y1="20" x2="60" y2="52" gradientUnits="userSpaceOnUse"><stop stop-color="#ff90a1"/><stop offset="1" stop-color="#f2506b"/></linearGradient>
+              </defs>
+              <ellipse cx="60" cy="56" rx="55" ry="49" fill="url(#a1blob)"/>
+              <circle cx="96" cy="24" r="6" fill="#bfe8fb"/><circle cx="22" cy="76" r="4.5" fill="#a6dff8"/><circle cx="100" cy="78" r="3.5" fill="#c9edfc"/>
+              <path d="M34 84c14 0 8-20 22-20s10-20 24-20" stroke="#cfeafa" stroke-width="8" stroke-linecap="round" stroke-dasharray="1 15"/>
+              <circle cx="34" cy="84" r="9" fill="url(#a1g)"/>
+              <circle cx="56" cy="64" r="8" fill="#7cccf0"/>
+              <path d="M80 20v28" stroke="url(#a1g)" stroke-width="5" stroke-linecap="round"/>
+              <path d="M80 22h20l-5 8 5 8H80V22Z" fill="url(#a1flag)"/>
+              <circle cx="80" cy="48" r="6.5" fill="url(#a1g)"/>
+            </svg>
+          </div>
           <h4>Full pathway, one place</h4>
           <p>No mid-programme transfer. From complete beginner all the way to competition-ready — you never have to find a new centre when your child outgrows the first few levels.</p>
         </div>
-        <div class="mas-value">
-          <div class="vi">🏊</div>
+        <div class="mas-value v-coral">
+          <div class="vi" aria-hidden="true">
+            <svg viewBox="0 0 120 108" width="120" height="108" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <radialGradient id="a2blob" cx="0.5" cy="0.4" r="0.65"><stop stop-color="#ffdfe4"/><stop offset="1" stop-color="#ffe9ec" stop-opacity="0"/></radialGradient>
+                <linearGradient id="a2g" x1="26" y1="20" x2="94" y2="92" gradientUnits="userSpaceOnUse"><stop stop-color="#ff90a1"/><stop offset="1" stop-color="#f2506b"/></linearGradient>
+              </defs>
+              <ellipse cx="60" cy="56" rx="55" ry="49" fill="url(#a2blob)"/>
+              <circle cx="96" cy="24" r="6" fill="#ffc6cf"/><circle cx="22" cy="76" r="4.5" fill="#ffb2bd"/><circle cx="100" cy="78" r="3.5" fill="#ff9fac"/>
+              <rect x="34" y="26" width="46" height="60" rx="11" fill="#fff" stroke="#ffd1d8" stroke-width="3"/>
+              <rect x="48" y="21" width="18" height="11" rx="5.5" fill="url(#a2g)"/>
+              <rect x="43" y="42" width="28" height="4.5" rx="2.25" fill="#ffd8dd"/>
+              <rect x="43" y="53" width="28" height="4.5" rx="2.25" fill="#ffd8dd"/>
+              <rect x="43" y="64" width="18" height="4.5" rx="2.25" fill="#ffd8dd"/>
+              <circle cx="78" cy="70" r="17" fill="none" stroke="url(#a2g)" stroke-width="6"/>
+              <circle cx="78" cy="70" r="11" fill="#fff" fill-opacity="0.6"/>
+              <path d="m90 82 8 8" stroke="url(#a2g)" stroke-width="7" stroke-linecap="round"/>
+              <path d="m72 70 4.5 4.5L86 65" stroke="#f2506b" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
           <h4>Independent assessors</h4>
           <p>Assessments are conducted by certified examiners — never by the child's own instructor. This independence is core to the syllabus: a badge means the same thing at every recognised centre, without favouritism.</p>
         </div>
-        <div class="mas-value">
-          <div class="vi">🇲🇾</div>
+        <div class="mas-value v-amber">
+          <div class="vi" aria-hidden="true">
+            <svg viewBox="0 0 120 108" width="120" height="108" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <radialGradient id="a3blob" cx="0.5" cy="0.4" r="0.65"><stop stop-color="#ffeecb"/><stop offset="1" stop-color="#fff3d9" stop-opacity="0"/></radialGradient>
+                <linearGradient id="a3g" x1="40" y1="42" x2="82" y2="96" gradientUnits="userSpaceOnUse"><stop stop-color="#ffcf4d"/><stop offset="1" stop-color="#f5a417"/></linearGradient>
+              </defs>
+              <ellipse cx="60" cy="56" rx="55" ry="49" fill="url(#a3blob)"/>
+              <circle cx="96" cy="24" r="6" fill="#ffe0a0"/><circle cx="22" cy="76" r="4.5" fill="#ffd486"/><circle cx="100" cy="78" r="3.5" fill="#ffe6b3"/>
+              <path d="M48 66h10l-4 30-8-6-8 6 4-24" fill="#2ea6e0"/>
+              <path d="M72 66H62l4 30 8-6 8 6-4-24" fill="#1e93d6"/>
+              <circle cx="60" cy="50" r="26" fill="url(#a3g)"/>
+              <circle cx="60" cy="50" r="18" fill="#ffe08a"/>
+              <path d="M60 40l3.1 6.3 6.9 1-5 4.9 1.2 6.9L60 55.8l-6.2 3.3 1.2-6.9-5-4.9 6.9-1L60 40Z" fill="#f5a417"/>
+              <path d="M60 24a26 26 0 0 1 26 26c0 1.4-.1 2.8-.3 4.1A26 26 0 0 0 34.3 54 26 26 0 0 1 60 24Z" fill="#fff" fill-opacity="0.22"/>
+            </svg>
+          </div>
           <h4>National recognition</h4>
           <p>Every badge is recorded on your child's Malaysia Aquatics record. Move house, change centres, or continue with any recognised partner — the achievements travel with them.</p>
         </div>
       </div>
 
       <div class="mas-trust">
+        <div class="check" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="m5 13 4 4L19 7" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
         <span class="rec">Every instructor holds active REACT Right and LSSM Bronze Medallion lifesaving certification</span>
       </div>
     </div>
@@ -656,91 +753,77 @@
       <h2 class="sec-title">Four reasons we're <em>different</em></h2>
       <p class="sec-sub">Plenty of places teach swimming. Here's what makes ours the one families stay with.</p>
       <div class="why-cards">
-        <!-- Card 1: Certified Coaches (blue shield) -->
-        <div class="why-card">
-          <div class="why-svg" aria-hidden="true">
+        <!-- Certified Coaches (blue) -->
+        <div class="why-card blue">
+          <div class="why-flip">
+            <div class="why-face front">
+              <div class="why-svg" aria-hidden="true">
             <svg viewBox="0 0 118 108" width="118" height="108" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <radialGradient id="wc1blob" cx="0.5" cy="0.4" r="0.65"><stop stop-color="#d5f0fc"/><stop offset="1" stop-color="#e4f5fd" stop-opacity="0"/></radialGradient>
-                <linearGradient id="wc1g" x1="30" y1="16" x2="88" y2="96" gradientUnits="userSpaceOnUse"><stop stop-color="#4cc0f2"/><stop offset="1" stop-color="#1590d2"/></linearGradient>
-              </defs>
-              <ellipse cx="59" cy="56" rx="54" ry="48" fill="url(#wc1blob)"/>
-              <circle cx="94" cy="24" r="6" fill="#bfe8fb"/>
-              <circle cx="22" cy="74" r="4.5" fill="#a6dff8"/>
-              <circle cx="98" cy="76" r="3.5" fill="#c9edfc"/>
-              <path d="M59 20l26 9v22c0 17-11 29-26 35-15-6-26-18-26-35V29l26-9Z" fill="url(#wc1g)"/>
-              <path d="M59 20l26 9v11c0-2-1-3-3-4l-23-8-23 8c-2 1-3 2-3 4V29l26-9Z" fill="#fff" fill-opacity="0.16"/>
-              <path d="m49 55 7 7 15-16" stroke="#fff" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
+              </div>
+              <h3>Certified Coaches</h3>
+              <p>Our instructors are trained, certified professionals — with water safety and rescue skills to match. Your swimmer is in careful hands.</p>
+              <span class="flip-hint">Flip for detail <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 9a8 8 0 0 1 15-1M20 15a8 8 0 0 1-15 1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 4v4h-4M5 20v-4h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            </div>
+            <div class="why-face back">
+              <div class="stat">100%</div>
+              <div class="stat-label">certified in lifesaving</div>
+              <p class="stat-body">Every instructor holds active REACT Right and LSSM Bronze Medallion — the baseline safety qualifications for teaching in the water.</p>
+            </div>
           </div>
-          <h3>Certified Coaches</h3>
-          <p>Our instructors are trained, certified professionals — with water safety and rescue skills to match. Your swimmer is in careful hands.</p>
         </div>
-        <!-- Card 2: Patient Teaching (coral heart) -->
-        <div class="why-card">
-          <div class="why-svg" aria-hidden="true">
+        <!-- Patient Teaching (coral) -->
+        <div class="why-card coral">
+          <div class="why-flip">
+            <div class="why-face front">
+              <div class="why-svg" aria-hidden="true">
             <svg viewBox="0 0 118 108" width="118" height="108" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <radialGradient id="wc2blob" cx="0.5" cy="0.4" r="0.65"><stop stop-color="#ffdfe4"/><stop offset="1" stop-color="#ffe9ec" stop-opacity="0"/></radialGradient>
-                <linearGradient id="wc2g" x1="28" y1="18" x2="92" y2="92" gradientUnits="userSpaceOnUse"><stop stop-color="#ff90a1"/><stop offset="1" stop-color="#f2506b"/></linearGradient>
-              </defs>
-              <ellipse cx="59" cy="56" rx="54" ry="48" fill="url(#wc2blob)"/>
-              <circle cx="94" cy="24" r="6" fill="#ffc6cf"/>
-              <circle cx="22" cy="74" r="4.5" fill="#ffb2bd"/>
-              <circle cx="98" cy="76" r="3.5" fill="#ff9fac"/>
-              <path d="M59 88C40 76 30 63 30 49c0-10 7-17 16-17 6 0 11 3 13 8 2-5 7-8 13-8 9 0 16 7 16 17 0 14-10 27-29 39Z" fill="url(#wc2g)"/>
-              <path d="M46 32c-9 0-16 7-16 17 0 3 .4 5.6 1.2 8-.1-1-.2-2-.2-3 0-10 7-17 16-17 6 0 11 3 13 8l-1.2 3C56 40 52 32 46 32Z" fill="#fff" fill-opacity="0.20"/>
-            </svg>
+              </div>
+              <h3>Patient Teaching</h3>
+              <p>No shouting, no rushing. We specialise in building confidence first — including swimmers who've had a bad experience elsewhere.</p>
+              <span class="flip-hint">Flip for detail <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 9a8 8 0 0 1 15-1M20 15a8 8 0 0 1-15 1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 4v4h-4M5 20v-4h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            </div>
+            <div class="why-face back">
+              <div class="stat">At their pace</div>
+              <div class="stat-label">never rushed, never shouted</div>
+              <p class="stat-body">Nervous beginners start at the wall and only progress when they're ready. No rush, no pressure — confidence first, always.</p>
+            </div>
           </div>
-          <h3>Patient Teaching</h3>
-          <p>No shouting, no rushing. We specialise in building confidence first — including swimmers who've had a bad experience elsewhere.</p>
         </div>
-        <!-- Card 3: Small Class Sizes (teal group) -->
-        <div class="why-card">
-          <div class="why-svg" aria-hidden="true">
+        <!-- Small Class Sizes (teal) -->
+        <div class="why-card teal">
+          <div class="why-flip">
+            <div class="why-face front">
+              <div class="why-svg" aria-hidden="true">
             <svg viewBox="0 0 118 108" width="118" height="108" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <radialGradient id="wc3blob" cx="0.5" cy="0.4" r="0.65"><stop stop-color="#cdf2ec"/><stop offset="1" stop-color="#ddf6f1" stop-opacity="0"/></radialGradient>
-                <linearGradient id="wc3g" x1="26" y1="24" x2="92" y2="90" gradientUnits="userSpaceOnUse"><stop stop-color="#37cbb3"/><stop offset="1" stop-color="#12a894"/></linearGradient>
-                <linearGradient id="wc3g2" x1="26" y1="24" x2="92" y2="90" gradientUnits="userSpaceOnUse"><stop stop-color="#5fd8c4"/><stop offset="1" stop-color="#2bbca8"/></linearGradient>
-              </defs>
-              <ellipse cx="59" cy="56" rx="54" ry="48" fill="url(#wc3blob)"/>
-              <circle cx="94" cy="24" r="6" fill="#b6ece2"/>
-              <circle cx="22" cy="74" r="4.5" fill="#9be5d7"/>
-              <circle cx="98" cy="76" r="3.5" fill="#c4efe7"/>
-              <circle cx="40" cy="44" r="10" fill="url(#wc3g2)"/>
-              <path d="M24 74c0-9 7-15 16-15s16 6 16 15v3H24v-3Z" fill="url(#wc3g2)"/>
-              <circle cx="78" cy="44" r="10" fill="url(#wc3g2)"/>
-              <path d="M62 74c0-9 7-15 16-15s16 6 16 15v3H62v-3Z" fill="url(#wc3g2)"/>
-              <circle cx="59" cy="40" r="13" fill="url(#wc3g)"/>
-              <path d="M38 78c0-12 9-20 21-20s21 8 21 20v4H38v-4Z" fill="url(#wc3g)"/>
-              <path d="M59 27a13 13 0 0 1 13 13c0 1-.1 2-.3 3A13 13 0 0 0 46 43c-.2-1-.3-2-.3-3A13 13 0 0 1 59 27Z" fill="#fff" fill-opacity="0.20"/>
-            </svg>
+              </div>
+              <h3>Small Class Sizes</h3>
+              <p>Small groups mean real attention on every swimmer, faster progress, and coaching that's genuinely personal.</p>
+              <span class="flip-hint">Flip for detail <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 9a8 8 0 0 1 15-1M20 15a8 8 0 0 1-15 1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 4v4h-4M5 20v-4h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            </div>
+            <div class="why-face back">
+              <div class="stat">Small groups</div>
+              <div class="stat-label">every swimmer, every minute</div>
+              <p class="stat-body">Small class sizes so every child gets real coach attention in the water — faster corrections, faster progress, less waiting.</p>
+            </div>
           </div>
-          <h3>Small Class Sizes</h3>
-          <p>Small groups mean real attention on every swimmer, faster progress, and coaching that's genuinely personal.</p>
         </div>
-        <!-- Card 4: Clear, Structured Levels (amber medal + blue ribbon) -->
-        <div class="why-card">
-          <div class="why-svg" aria-hidden="true">
+        <!-- Clear, Structured Levels (amber) -->
+        <div class="why-card amber">
+          <div class="why-flip">
+            <div class="why-face front">
+              <div class="why-svg" aria-hidden="true">
             <svg viewBox="0 0 118 108" width="118" height="108" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <radialGradient id="wc4blob" cx="0.5" cy="0.4" r="0.65"><stop stop-color="#ffeecb"/><stop offset="1" stop-color="#fff3d9" stop-opacity="0"/></radialGradient>
-                <linearGradient id="wc4g" x1="42" y1="44" x2="80" y2="94" gradientUnits="userSpaceOnUse"><stop stop-color="#ffcf4d"/><stop offset="1" stop-color="#f5a417"/></linearGradient>
-              </defs>
-              <ellipse cx="59" cy="56" rx="54" ry="48" fill="url(#wc4blob)"/>
-              <circle cx="94" cy="24" r="6" fill="#ffe0a0"/>
-              <circle cx="22" cy="74" r="4.5" fill="#ffd486"/>
-              <circle cx="98" cy="76" r="3.5" fill="#ffe6b3"/>
-              <path d="M47 22h24l-7 30h-10l-7-30Z" fill="#2ea6e0"/>
-              <path d="M47 22h24l-2 8H49l-2-8Z" fill="#fff" fill-opacity="0.25"/>
-              <circle cx="59" cy="70" r="22" fill="url(#wc4g)"/>
-              <circle cx="59" cy="70" r="15" fill="#ffe08a"/>
-              <path d="M59 62l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9L59 62Z" fill="#f5a417"/>
-            </svg>
+              </div>
+              <h3>Clear, Structured Levels</h3>
+              <p>Every swimmer is assessed, placed and tracked through structured levels — so you always know exactly how your child is progressing.</p>
+              <span class="flip-hint">Flip for detail <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 9a8 8 0 0 1 15-1M20 15a8 8 0 0 1-15 1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 4v4h-4M5 20v-4h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            </div>
+            <div class="why-face back">
+              <div class="stat">7 levels</div>
+              <div class="stat-label">Starfish to Dolphin</div>
+              <p class="stat-body">The MAS BADGES pathway — a national syllabus with a named badge at every stage, so you always know exactly how your child is progressing.</p>
+            </div>
           </div>
-          <h3>Clear, Structured Levels</h3>
-          <p>Every swimmer is assessed, placed and tracked through structured levels — so you always know exactly how your child is progressing.</p>
         </div>
       </div>
     </div>
@@ -1034,6 +1117,39 @@ document.querySelectorAll('.faq details').forEach(function(d){
   var target = './app.html';
   var els = [document.getElementById('loginLink'), document.getElementById('loginLinkFt')];
   els.forEach(function(el){ if(el) el.href = target; });
+})();
+</script>
+<script>
+// ── Why Us flip cards: keyboard + touch accessibility ─────────────────────
+// Desktop mouse users get hover-to-flip via CSS. But keyboard users need a
+// way to reach the back face, and touch users get nothing from hover. This
+// makes each card a real button: click / Enter / Space toggles the .is-flipped
+// state, which the CSS reads to hold the rotation in place. On hover devices,
+// clicking after a hover just "pins" the flipped state so people can read
+// without keeping the mouse over the card.
+(function(){
+  var cards = document.querySelectorAll('.why-card');
+  cards.forEach(function(card){
+    card.setAttribute('role', 'button');
+    card.setAttribute('tabindex', '0');
+    card.setAttribute('aria-pressed', 'false');
+    var toggle = function(){
+      var flipped = card.classList.toggle('is-flipped');
+      card.setAttribute('aria-pressed', flipped ? 'true' : 'false');
+    };
+    card.addEventListener('click', function(e){
+      // Don't hijack clicks on links or buttons inside the card (there aren't
+      // any today, but guarding is cheap and future-proof).
+      if (e.target.closest('a,button')) return;
+      toggle();
+    });
+    card.addEventListener('keydown', function(e){
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        toggle();
+      }
+    });
+  });
 })();
 </script>
 </body>
