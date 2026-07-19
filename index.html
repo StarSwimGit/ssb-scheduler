@@ -66,14 +66,18 @@
 
     /* Sections */
     section{padding:60px 0;position:relative}
-    .kicker{text-align:center;font-size:12.5px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;color:var(--primary);margin-bottom:8px}
+    .kicker{display:flex;align-items:center;gap:6px;width:fit-content;margin:0 auto 10px;font-size:11px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;padding:5px 12px;border-radius:999px;background:rgba(14,165,233,.12);color:var(--primary)}
+    .kicker::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.7}
+    /* Kicker on deep-water sections (testimonials) — aqua on dark */
+    .deepsec .kicker{background:rgba(103,232,249,.15);color:var(--aqua)}
+    /* Left-anchored variant when a section title is left-aligned instead of centered */
+    .kicker.kicker-left{margin:0 0 10px}
     .sec-title{font-size:clamp(22px,3.4vw,32px);font-weight:900;letter-spacing:-.6px;color:var(--navy);text-align:center}
     .sec-sub{max-width:600px;margin:10px auto 38px;color:var(--text-2);text-align:center;font-size:15px}
     .alt{background:var(--bg)}
     .deepsec{background:linear-gradient(180deg,var(--deep),var(--navy));color:#E0F2FE}
     .deepsec .sec-title{color:#fff}
     .deepsec .sec-sub{color:#BAE6FD}
-    .deepsec .kicker{color:var(--aqua)}
 
     .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
     .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
@@ -101,8 +105,8 @@
     /* ── MAS BADGES pathway — dedicated section between Programmes & Testimonials ── */
     .mas-section{background:#fff;padding:20px 0 60px}
     .mas-hero{text-align:center;max-width:820px;margin:0 auto 40px}
-    .mas-kicker{display:inline-flex;align-items:center;gap:8px;font-size:11px;text-transform:uppercase;letter-spacing:2.2px;font-weight:800;padding:6px 14px;border-radius:999px;background:#FFF7D6;color:#7A5E00;border:1px solid #F9C61033;margin-bottom:14px}
-    .mas-kicker::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:#F9C610;box-shadow:0 0 0 3px #F9C61033}
+    .mas-kicker{display:flex;align-items:center;gap:6px;width:fit-content;margin:0 auto 14px;font-size:11px;text-transform:uppercase;letter-spacing:1.4px;font-weight:800;padding:5px 12px;border-radius:999px;background:rgba(30,39,82,.10);color:#1E2752}
+    .mas-kicker::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.7}
     .mas-title{font-size:clamp(26px,3.8vw,36px);font-weight:900;color:#1E2752;letter-spacing:-.5px;line-height:1.12;margin-bottom:14px}
     .mas-title em{font-style:normal;background:linear-gradient(180deg,transparent 55%,#F9C61044 55%,#F9C61044 92%,transparent 92%);padding:0 4px}
     .mas-sub{font-size:16px;color:var(--text-2);line-height:1.6;max-width:680px;margin:0 auto}
@@ -112,9 +116,10 @@
     .accr-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:1000px;margin:0 auto 48px}
     .accr{background:#fff;border:1.5px solid #E2E8F0;border-radius:16px;padding:0;position:relative;transition:.18s ease;display:flex;flex-direction:column;overflow:hidden}
     .accr:hover{border-color:#CBD5E1;box-shadow:0 6px 20px rgba(15,23,42,.06)}
-    .accr-badge{display:inline-flex;align-items:center;gap:6px;position:absolute;top:14px;right:14px;font-size:10px;font-weight:800;letter-spacing:.6px;padding:4px 10px;border-radius:999px;z-index:2}
-    .accr-badge.now{background:#DCFCE7;color:#15803D}
-    .accr-badge.soon{background:#FEF3C7;color:#92400E}
+    .accr-badge{display:inline-flex;align-items:center;gap:6px;position:absolute;top:14px;right:14px;font-size:10px;font-weight:800;letter-spacing:.9px;padding:5px 12px;border-radius:999px;text-transform:uppercase;z-index:2}
+    .accr-badge::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.75}
+    .accr-badge.now{background:rgba(34,197,94,.14);color:#15803D}
+    .accr-badge.soon{background:rgba(245,158,11,.14);color:#B45309}
     /* Horizontal logo band across the top — transparent, respectful spacing */
     .accr-logo-band{display:flex;align-items:center;justify-content:center;padding:26px 24px 22px;background:linear-gradient(180deg,#F8FAFC 0%,#fff 100%);border-bottom:1px solid #F1F5F9;min-height:96px}
     .accr-logo-band img{max-width:100%;max-height:52px;width:auto;height:auto;object-fit:contain}
@@ -124,7 +129,7 @@
     .accr-desc{font-size:13.5px;color:var(--text-2);line-height:1.55;margin:0}
     .accr-desc strong{color:#1E2752}
     .accr-tags{display:flex;flex-wrap:wrap;gap:6px}
-    .accr-tag{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:999px;background:#F1F5F9;color:#475569}
+    .accr-tag{font-size:10.5px;font-weight:700;padding:4px 10px;border-radius:999px;background:rgba(71,85,105,.10);color:#334155;letter-spacing:.2px}
     .accr-verify{font-size:12.5px;font-weight:700;color:#0EA5E9;text-decoration:none;margin-top:auto;padding-top:6px;display:inline-flex;align-items:center;gap:4px}
     .accr-verify:hover{text-decoration:underline}
 
@@ -138,7 +143,7 @@
     .mas-step:hover{transform:translateY(-4px)}
     .mas-badge-img{width:120px;height:120px;object-fit:contain;filter:drop-shadow(0 6px 14px rgba(30,39,82,.18));transition:filter .2s ease}
     .mas-step:hover .mas-badge-img{filter:drop-shadow(0 10px 20px rgba(30,39,82,.28))}
-    .mas-num{font-size:10px;font-weight:800;color:#C62026;letter-spacing:1.5px;margin-top:4px}
+    .mas-num{display:inline-block;font-size:9.5px;font-weight:800;color:#C62026;letter-spacing:1.3px;padding:2px 8px;border-radius:999px;background:rgba(198,32,38,.10);margin-top:6px}
     .mas-name{font-size:15px;font-weight:900;color:#1E2752;line-height:1.15}
     .mas-hint{font-size:12px;color:var(--text-2);line-height:1.4;padding:0 4px;max-width:130px}
     /* value cards */
@@ -214,16 +219,23 @@
     .promo-hero{padding:36px 0}
     .promo-card{background:#fff;border-radius:20px;padding:34px 36px;box-shadow:0 10px 36px rgba(14,165,233,.14);position:relative;overflow:hidden;max-width:800px;margin:0 auto}
     .promo-card::before{content:"";position:absolute;top:0;left:0;right:0;height:6px}
-    .promo-badge{display:inline-block;font-size:11px;font-weight:800;padding:5px 14px;border-radius:999px;letter-spacing:.5px;margin-bottom:14px;color:#fff}
+    .promo-badge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:800;padding:5px 12px;border-radius:999px;letter-spacing:1.4px;text-transform:uppercase;margin-bottom:14px}
+    .promo-badge::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.7}
     .promo-title{font-size:clamp(22px,3.6vw,32px);font-weight:900;color:var(--navy);letter-spacing:-.4px;line-height:1.15;margin-bottom:8px}
     .promo-subtitle{font-size:16px;font-weight:600;color:var(--text-2);margin-bottom:16px}
     .promo-body{font-size:14.5px;color:var(--text-2);white-space:pre-wrap;line-height:1.65;margin-bottom:22px}
     .promo-cta{display:inline-flex;align-items:center;gap:8px;background:#22C55E;color:#fff;text-decoration:none;padding:13px 26px;border-radius:12px;font-weight:700;font-size:15px;transition:.15s}
     .promo-cta:hover{background:#16A34A;transform:translateY(-1px)}
-    .promo-color-primary{background:var(--primary)}
-    .promo-color-coral{background:#FB7185}
-    .promo-color-green{background:#22C55E}
-    .promo-color-navy{background:var(--navy)}
+    /* Solid-fill color helpers used by the top-of-page BAR (kept solid + white text) */
+    .promo-color-primary{background:var(--primary);color:#fff}
+    .promo-color-coral{background:#FB7185;color:#fff}
+    .promo-color-green{background:#22C55E;color:#fff}
+    .promo-color-navy{background:var(--navy);color:#fff}
+    /* Soft-tinted variants when applied to the .promo-badge (LIMITED TIME on hero card) */
+    .promo-badge.promo-color-primary{background:rgba(14,165,233,.14);color:var(--primary)}
+    .promo-badge.promo-color-coral{background:rgba(251,113,133,.16);color:#B4243D}
+    .promo-badge.promo-color-green{background:rgba(34,197,94,.14);color:#15803D}
+    .promo-badge.promo-color-navy{background:rgba(30,39,82,.12);color:#1E2752}
     .f-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
     @media (max-width:560px){.f-row{grid-template-columns:1fr}}
     .f-field{margin-bottom:12px}
@@ -445,7 +457,7 @@
       <!-- Two-column accreditation brands: SSI (live) + MAS BADGES (launching) -->
       <div class="accr-grid">
         <div class="accr">
-          <span class="accr-badge now">● ACCREDITED</span>
+          <span class="accr-badge now">Accredited</span>
           <div class="accr-logo-band">
             <img src="./ssi-logo.webp" alt="SSI Swim Schools International" loading="lazy" />
           </div>
@@ -464,7 +476,7 @@
         </div>
 
         <div class="accr">
-          <span class="accr-badge soon">⏱ LAUNCHING SOON</span>
+          <span class="accr-badge soon">Launching Soon</span>
           <div class="accr-logo-band">
             <img src="./mas-badges-logo.png" alt="MAS BADGES Learn to Swim" loading="lazy" />
           </div>
