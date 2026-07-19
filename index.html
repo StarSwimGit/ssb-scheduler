@@ -43,6 +43,17 @@
     .wave{line-height:0;position:relative;z-index:1}
     .wave svg{width:100%;height:52px}
     .floaty{position:absolute;opacity:.5;pointer-events:none;animation:bob 5.5s ease-in-out infinite}
+    /* ── Section side-flanker character illustrations ─────────────────── */
+    /* Positioned relative to their parent <section>, protruding from an edge. */
+    /* Section already has position:relative + overflow:visible so no extra wiring needed. */
+    .side-char{position:absolute;pointer-events:none;z-index:1;width:auto;filter:drop-shadow(0 10px 24px rgba(0,0,0,.14));animation:sideCharBob 6s ease-in-out infinite}
+    .side-char.left{left:2%}
+    .side-char.right{right:2%}
+    /* Sizing per placement — the specific `height` and `bottom`/`top` are set inline
+       per-instance so each character can be tuned to its section without new CSS rules. */
+    @keyframes sideCharBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+    /* Hide side characters on narrower screens — they'd cover text or feel cramped */
+    @media (max-width:1024px){.side-char{display:none}}
     @keyframes bob{0%,100%{transform:translateY(0) rotate(-4deg)}50%{transform:translateY(-14px) rotate(5deg)}}
     .bubble{position:absolute;bottom:-30px;border-radius:50%;background:radial-gradient(circle at 32% 30%,rgba(255,255,255,.95),rgba(103,232,249,.35));border:1px solid rgba(255,255,255,.7);animation:rise linear infinite;pointer-events:none}
     @keyframes rise{0%{transform:translateY(0);opacity:0}12%{opacity:.85}100%{transform:translateY(-540px);opacity:0}}
@@ -785,6 +796,7 @@
   <div class="wave"><svg viewBox="0 0 1440 60" preserveAspectRatio="none"><path d="M0,30 C240,62 480,-2 720,30 C960,62 1200,-2 1440,30 L1440,60 L0,60 Z" fill="#EEF7FD"/></svg></div>
 
   <section class="alt" id="why" style="padding-top:36px">
+    <img class="side-char left" src="./coach-swimmer.png" alt="" aria-hidden="true" style="bottom:0;height:66%;left:1%;opacity:.94"/>
     <svg class="floaty" style="top:40px;right:2%;width:52px;opacity:.35" aria-hidden="true"><use href="#i-fish"/></svg>
     <div class="wrap">
       <div class="kicker">Why parents choose us</div>
@@ -945,6 +957,7 @@
 
   <!-- Getting started -->
   <section id="how" style="padding-top:30px">
+    <img class="side-char right" src="./coach-whistle.png" alt="" aria-hidden="true" style="bottom:0;height:70%;right:1%;opacity:.94"/>
     <svg class="floaty" style="top:70px;left:2%;width:44px;opacity:.4;animation-delay:.8s" aria-hidden="true"><use href="#i-board"/></svg>
     <div class="wrap">
       <div class="kicker">Getting started</div>
@@ -1083,6 +1096,7 @@
 
   <!-- Contact -->
   <section id="contact" style="padding-top:30px">
+    <img class="side-char left" src="./coach-lead.png" alt="" aria-hidden="true" style="bottom:0;height:78%;left:1%;opacity:.95"/>
     <div class="wrap">
       <h2 class="sec-title">Ready to <em>get started?</em></h2>
       <p class="sec-sub">WhatsApp us for a quick answer, or drop us a message and our team will get back to you.</p>
