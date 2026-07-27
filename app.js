@@ -63,6 +63,52 @@ async function rest(path, opts={}){
   return txt ? JSON.parse(txt) : null;
 }
 async function selectRows(table, select='*', extra=''){ return rest(`${table}?select=${select}${extra}`); }
+// Fetch EVERY row of a table in 1000-row chunks. PostgREST silently caps un-ranged
+// requests at 1000 rows — invoices/payments outgrow that, so all financial tables
+// must load through this helper or records quietly vanish from the UI and reports.
+async function selectAllRows(table, select='*', extra=''){
+  const CHUNK=1000; let out=[]; let offset=0;
+  for(;;){
+    const rows = await rest(`${table}?select=${select}${extra}&limit=${CHUNK}&offset=${offset}`);
+    out = out.concat(rows||[]);
+    if(!rows || rows.length < CHUNK) break;
+    offset += CHUNK;
+    if(offset > 200000) break; // safety valve
+  }
+  return out;
+}
+
+// ── Payment-method registry ─────────────────────────────────────────
+// Built-in defaults keep the app working before the payment_methods table
+// exists (pre-migration) and give legacy codes stable labels/colours forever.
+// After loadInvoiceData() fetches the table, PM_LIST holds the configured
+// methods; helpers below prefer it and fall back to the defaults.
+const PM_DEFAULTS = [
+  { code:'cash',          label:'Cash',          color:'green'  },
+  { code:'bank_transfer', label:'Bank Transfer', color:'blue'   },
+  { code:'duitnow',       label:'DuitNow',       color:'pink'   },
+  { code:'card',          label:'Card',          color:'purple' },
+  { code:'cheque',        label:'Cheque',        color:'amber'  },
+  { code:'other',         label:'Other',         color:'slate'  },
+];
+let PM_LIST = null; // set after payment_methods table loads
+function activeMethods(){
+  const src = (PM_LIST&&PM_LIST.length) ? PM_LIST.filter(m=>m.is_active!==false) : PM_DEFAULTS;
+  return src.slice().sort((a,b)=>(a.sort_order??0)-(b.sort_order??0));
+}
+function allMethods(){ return (PM_LIST&&PM_LIST.length) ? PM_LIST : PM_DEFAULTS; }
+function methodDef(code){
+  const c=(code||'').toLowerCase();
+  return allMethods().find(m=>m.code===c) || PM_DEFAULTS.find(m=>m.code===c) || null;
+}
+const PM_COLORS = ['green','blue','pink','purple','amber','teal','coral','slate'];
+function methodColor(code){
+  const d=methodDef(code);
+  if(d&&d.color) return d.color;
+  // stable hash for unconfigured codes
+  let h=0; const s=String(code||'other'); for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))>>>0;
+  return PM_COLORS[h%PM_COLORS.length];
+}
 async function insertRows(table, payload, select='*'){ return rest(`${table}?select=${select}`, { method:'POST', headers:{ Prefer:'return=representation' }, body: JSON.stringify(Array.isArray(payload)?payload:[payload]) }); }
 async function patchRows(table, match, payload, select='*'){
   const q = Object.entries(match).map(([k,v]) => `&${encodeURIComponent(k)}=eq.${encodeURIComponent(v)}`).join('');
@@ -367,6 +413,7 @@ function App({ currentUser, onLogout }){
   const [pmts,setPmts] = useState([]);
   const [pendingCredits,setPendingCredits] = useState([]);
   const [invoiceSettings,setInvoiceSettings] = useState({ invoice_prefix:'INV', receipt_prefix:'RCT', next_invoice_seq:1, next_receipt_seq:1, leading_zeros:3, include_date:true, date_format:'YYYYMM', allow_delete_invoice:false });
+  const [paymentMethods,setPaymentMethods] = useState([]);
 
   useEffect(() => { boot(); }, []);
   // Default branch on first load: prefer SSGT (HQ), else first active branch.
@@ -403,18 +450,21 @@ function App({ currentUser, onLogout }){
   // ── Invoice loaders ────────────────────────────────────────────────
   async function loadInvoiceData(){
     try{
-      const [invRows, lineRows, payRows, pcRows, settRows] = await Promise.all([
-        selectRows('invoices','*','&order=created_at.desc'),
-        selectRows('invoice_lines','*','&order=invoice_id.asc,sort_order.asc'),
-        selectRows('payments','*','&order=invoice_id.asc,created_at.asc'),
-        selectRows('pending_credits','*','&order=created_at.desc'),
+      const [invRows, lineRows, payRows, pcRows, settRows, pmRows] = await Promise.all([
+        selectAllRows('invoices','*','&order=created_at.desc'),
+        selectAllRows('invoice_lines','*','&order=invoice_id.asc,sort_order.asc'),
+        selectAllRows('payments','*','&order=invoice_id.asc,created_at.asc'),
+        selectAllRows('pending_credits','*','&order=created_at.desc'),
         selectRows('invoice_settings','*').catch(()=>[]),
+        selectRows('payment_methods','*','&order=sort_order.asc').catch(()=>[]),
       ]);
       setInvoices(invRows||[]);
       setInvoiceLines(lineRows||[]);
       setPmts(payRows||[]);
       setPendingCredits(pcRows||[]);
       if(settRows?.[0]) setInvoiceSettings(settRows[0]);
+      PM_LIST = (pmRows&&pmRows.length)?pmRows:null;
+      setPaymentMethods(pmRows||[]);
     }catch(e){ console.warn('Invoice tables not found — run migrations first.',e); }
   }
 
@@ -458,6 +508,36 @@ function App({ currentUser, onLogout }){
       await patchRows('invoice_settings',{id:1},patch);
       await loadInvoiceData();
     }catch(err){ handleErr(err); alert(err.message||'Failed to save settings'); }
+  }
+
+  // ── Payment-method CRUD (global config, Settings → Payment Methods) ─
+  async function addPaymentMethod({ code, label }){
+    try{
+      const c=(code||'').trim().toLowerCase().replace(/[^a-z0-9_]+/g,'_').replace(/^_+|_+$/g,'');
+      if(!c){ alert('Code is required'); return; }
+      if(allMethods().some(m=>m.code===c)){ alert(`Code "${c}" already exists`); return; }
+      const maxSort = Math.max(0,...paymentMethods.map(m=>m.sort_order??0));
+      await insertRows('payment_methods',{ code:c, label:(label||'').trim()||c, is_active:true, sort_order:maxSort+1 });
+      await loadInvoiceData();
+    }catch(err){ handleErr(err); alert(err.message||'Failed to add payment method'); }
+  }
+  async function updatePaymentMethod(id, patch){
+    try{ await patchRows('payment_methods',{id},patch); await loadInvoiceData(); }
+    catch(err){ handleErr(err); alert(err.message||'Failed to update payment method'); }
+  }
+  async function movePaymentMethod(id, dir){
+    // Swap sort_order with the neighbour in the given direction (-1 up, +1 down)
+    const sorted = paymentMethods.slice().sort((a,b)=>(a.sort_order??0)-(b.sort_order??0));
+    const i = sorted.findIndex(m=>m.id===id);
+    const j = i + dir;
+    if(i<0 || j<0 || j>=sorted.length) return;
+    try{
+      await Promise.all([
+        patchRows('payment_methods',{id:sorted[i].id},{sort_order:sorted[j].sort_order??j}),
+        patchRows('payment_methods',{id:sorted[j].id},{sort_order:sorted[i].sort_order??i}),
+      ]);
+      await loadInvoiceData();
+    }catch(err){ handleErr(err); alert(err.message||'Failed to reorder'); }
   }
 
   // ── Invoice CRUD ───────────────────────────────────────────────────
@@ -3663,7 +3743,7 @@ function App({ currentUser, onLogout }){
         packageById={packageById} studentById={studentById}
         products={products}
         membersByGroup={membersByGroup}
-        invoiceSettings={invoiceSettings} onSaveSettings={saveInvoiceSettings}
+        invoiceSettings={invoiceSettings} paymentMethods={paymentMethods} onSaveSettings={saveInvoiceSettings}
         formatInvoiceNumber={formatInvoiceNumber} formatReceiptNumber={formatReceiptNumber}
         onVoid={voidInvoice} onDelete={invoiceSettings.allow_delete_invoice ? deleteInvoice : null} onRefund={refundInvoice} onEditVoidReason={updateVoidReason} onUpdateStatus={updateInvoiceStatus}
         onRecordPayment={recordPayment} onConfirmCredit={confirmCredit}
@@ -3754,7 +3834,7 @@ function App({ currentUser, onLogout }){
       {/* ── Settings: left-column nav + content ── */}
       {!loading && view==='settings' && isSysadmin && <div className="side-shell">
         <nav className="side-nav">
-          {[['summary','Summary'],['branches','Branches'],['pools','Pools & Hours'],['instructors','Instructors'],['lessonTypes','Lesson Types'],['programme','Programme'],['terms','Terms'],['billingTerms','Billing Terms'],['products','Products'],['invoiceSettings','Invoice Numbering'],['users','Users']].map(([k,l])=>
+          {[['summary','Summary'],['branches','Branches'],['pools','Pools & Hours'],['instructors','Instructors'],['lessonTypes','Lesson Types'],['programme','Programme'],['terms','Terms'],['billingTerms','Billing Terms'],['products','Products'],['paymentMethods','Payment Methods'],['invoiceSettings','Invoice Numbering'],['users','Users']].map(([k,l])=>
             <button key={k} className={`side-nav-btn${adminSection===k?' active':''}`} onClick={()=>setAdminSection(k)}>{l}</button>
           )}
         </nav>
@@ -3800,6 +3880,12 @@ function App({ currentUser, onLogout }){
             setPassword={setAppUserPassword}
             patchUser={patchAppUser}
             deleteUser={deleteAppUser}
+          />}
+          {adminSection==='paymentMethods' && <PaymentMethodsPanel
+            methods={paymentMethods}
+            onAdd={addPaymentMethod}
+            onUpdate={updatePaymentMethod}
+            onMove={movePaymentMethod}
           />}
           {adminSection==='invoiceSettings' && <div className="card">
             <div style={{fontWeight:800,fontSize:18,marginBottom:4}}>Invoice Numbering &amp; Permissions</div>
@@ -7978,12 +8064,28 @@ function ReceiptsView({ pmts, invoices, branches, externalSearchQ }){
   const searchQ = externalSearchQ !== undefined ? externalSearchQ : localSearchQ;
   const setSearchQ = setLocalSearchQ;
   const [branchFilter, setBranchFilter] = useState(null);
+  const [methodFilter, setMethodFilter] = useState('all');   // 'all' | code | '__others'
+  const [monthFilter, setMonthFilter] = useState('all');     // 'all' | 'YYYY-MM' (payment date)
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 100;
   const invoiceById = {};
   (invoices || []).forEach(inv => { invoiceById[inv.id] = inv; });
+  const knownCodes = new Set(allMethods().map(m=>m.code));
+  const monthOptions = useMemo(()=>{
+    const s=new Set();
+    (pmts||[]).forEach(p=>{ if(p.payment_date) s.add(String(p.payment_date).slice(0,7)); });
+    return [...s].sort().reverse();
+  },[pmts]);
   const sorted = (pmts || []).slice().sort((a,b) => (b.payment_date||'').localeCompare(a.payment_date||''));
   const filtered = sorted.filter(p => {
     const inv = invoiceById[p.invoice_id] || {};
     if(branchFilter && inv.branch_id !== branchFilter) return false;
+    if(monthFilter!=='all' && String(p.payment_date||'').slice(0,7)!==monthFilter) return false;
+    if(methodFilter!=='all'){
+      const mc=(p.payment_method||'').toLowerCase();
+      if(methodFilter==='__others'){ if(knownCodes.has(mc)) return false; }
+      else if(mc!==methodFilter) return false;
+    }
     if(!searchQ.trim()) return true;
     const q = searchQ.toLowerCase();
     return (
@@ -7994,6 +8096,10 @@ function ReceiptsView({ pmts, invoices, branches, externalSearchQ }){
     );
   });
   const total = filtered.reduce((s,p)=>s+Number(p.amount||0),0);
+  const pageCount = Math.max(1, Math.ceil(filtered.length/PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const paged = filtered.slice((safePage-1)*PAGE_SIZE, safePage*PAGE_SIZE);
+  useEffect(()=>{ setPage(1); },[branchFilter,methodFilter,monthFilter,searchQ]);
   function fmtDate(d){ if(!d) return '—'; try{ return new Date(d).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}); } catch(_){ return d; } }
   return <>
     <div className="card" style={{marginBottom:12}}>
@@ -8006,6 +8112,15 @@ function ReceiptsView({ pmts, invoices, branches, externalSearchQ }){
       <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
         {externalSearchQ === undefined && <input className="input" style={{flex:1,maxWidth:320}} placeholder="Search receipt #, invoice #, account, method…" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />}
         <BranchFilterPills branches={branches} value={branchFilter} onChange={setBranchFilter} />
+        <select className="select" value={methodFilter} onChange={e=>setMethodFilter(e.target.value)} style={{fontSize:12,padding:'4px 8px',maxWidth:160}}>
+          <option value="all">💳 All methods</option>
+          {allMethods().map(m=><option key={m.code} value={m.code}>{m.label}</option>)}
+          <option value="__others">Others / unknown</option>
+        </select>
+        <select className="select" value={monthFilter} onChange={e=>setMonthFilter(e.target.value)} style={{fontSize:12,padding:'4px 8px',maxWidth:140}}>
+          <option value="all">📅 All months</option>
+          {monthOptions.map(m=><option key={m} value={m}>{m}</option>)}
+        </select>
         <span className="small subtle">{filtered.length} / {(pmts||[]).length}</span>
       </div>
     </div>
@@ -8022,7 +8137,7 @@ function ReceiptsView({ pmts, invoices, branches, externalSearchQ }){
         </tr></thead>
         <tbody>
           {filtered.length === 0 && <tr><td colSpan={7} className="empty">No receipts found.</td></tr>}
-          {filtered.map(p => {
+          {paged.map(p => {
             const inv = invoiceById[p.invoice_id] || {};
             const isRef = p.kind==='refund' || Number(p.amount)<0;
             return <tr key={p.id}>
@@ -8030,7 +8145,7 @@ function ReceiptsView({ pmts, invoices, branches, externalSearchQ }){
               <td style={{fontFamily:'monospace',fontSize:12}}>{p.receipt_number||'—'}</td>
               <td style={{fontFamily:'monospace',fontSize:12}}>{inv.invoice_number||'—'}</td>
               <td style={{fontWeight:600}}>{inv.account_name||'—'}</td>
-              <td className="small subtle">{methodLabel(p.payment_method)}{isRef?' · Refund':''}</td>
+              <td><MethodPill code={p.payment_method} small/>{isRef?<span className="small subtle"> · Refund</span>:null}</td>
               <td style={{textAlign:'right',fontWeight:700,color:isRef?'#DC2626':'var(--green-tx)'}}>{isRef?'−':''}RM{Math.abs(Number(p.amount)).toFixed(2)}</td>
               <td style={{textAlign:'center'}}>
                 <button className="btn btn-ghost small" title="Print receipt" onClick={()=>printReceipt(p, inv)}>🖨</button>
@@ -8041,6 +8156,17 @@ function ReceiptsView({ pmts, invoices, branches, externalSearchQ }){
         </table>
       </div>
     </div>
+    {pageCount>1&&<div style={{display:'flex',gap:4,justifyContent:'center',alignItems:'center',marginTop:14,flexWrap:'wrap'}}>
+      <button className="btn btn-ghost small" disabled={safePage<=1} onClick={()=>setPage(safePage-1)}>‹ Prev</button>
+      {Array.from({length:pageCount},(_,i)=>i+1)
+        .filter(n=>n===1||n===pageCount||Math.abs(n-safePage)<=2)
+        .reduce((acc,n,idx,arr)=>{ if(idx>0&&n-arr[idx-1]>1) acc.push('…'); acc.push(n); return acc; },[])
+        .map((n,i)=> n==='…'
+          ? <span key={'gap'+i} className="small subtle" style={{padding:'0 4px'}}>…</span>
+          : <button key={n} className={`btn small ${n===safePage?'btn-primary':'btn-ghost'}`} style={{minWidth:34}} onClick={()=>setPage(n)}>{n}</button>)}
+      <button className="btn btn-ghost small" disabled={safePage>=pageCount} onClick={()=>setPage(safePage+1)}>Next ›</button>
+      <span className="small subtle" style={{marginLeft:8}}>Page {safePage} of {pageCount} · {filtered.length} receipts</span>
+    </div>}
   </>;
 }
 function StudentsView({ students, lessonTypes, lessonTypeById, packages, packageById, groupById, familyGroups, membersByGroup, scheduleByStudent, sessions, jumpToWeek, creditByKey, purchasesByStudent, subscriptions, addCreditPurchase, deleteCreditPurchase, addSubscription, cancelSubscription, adjustBalanceTo, addStudent, updateStudent, deleteStudent, externalSearchQ }){
@@ -9232,12 +9358,16 @@ function replFromLabel(raw){ return decodeReplacementFrom(raw).label; }
 
 function invoiceStatusLabel(s){ return({draft:'Draft',sent:'Sent',partial:'Part Paid',paid:'Paid',void:'Void',refunded:'Refunded'})[s]||s; }
 function invoiceStatusColor(s){ return({draft:'#94A3B8',sent:'#3B82F6',partial:'#F59E0B',paid:'#10B981',void:'#EF4444',refunded:'#8B5CF6'})[s]||'#94A3B8'; }
-function methodLabel(m){ return({cash:'Cash',bank_transfer:'Bank Transfer',duitnow:'DuitNow',card:'Card',cheque:'Cheque',other:'Other'})[m]||m; }
+function methodLabel(m){
+  const d = methodDef(m);
+  if(d) return d.label;
+  return({cash:'Cash',bank_transfer:'Bank Transfer',duitnow:'DuitNow',card:'Card',cheque:'Cheque',other:'Other'})[m]||m;
+}
 
 // Helper: resolve swimmer names for a group line
 
 
-function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, lessonTypeById, packageById, studentById, products, membersByGroup, invoiceSettings, onSaveSettings, formatInvoiceNumber, formatReceiptNumber, onVoid, onDelete, onRefund, onEditVoidReason, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine, externalSearchQ }){
+function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, lessonTypeById, packageById, studentById, products, membersByGroup, invoiceSettings, paymentMethods, onSaveSettings, formatInvoiceNumber, formatReceiptNumber, onVoid, onDelete, onRefund, onEditVoidReason, onUpdateStatus, onRecordPayment, onConfirmCredit, onReverseCredit, onAddLine, onUpdateLine, onDeleteLine, externalSearchQ }){
   const [statusFilter,setStatusFilter]=useState('all');
   const [localSearchQ, setLocalSearchQ] = useState('');
   const searchQ = externalSearchQ !== undefined ? externalSearchQ : localSearchQ;
@@ -9245,7 +9375,49 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
   const [expandedId,setExpandedId]=useState(null);
   const [selectedIds,setSelectedIds]=useState(new Set());
   const [branchFilter,setBranchFilter]=useState(null);
+  const [methodFilter,setMethodFilter]=useState('all');   // 'all' | code | '__others'
+  const [monthFilter,setMonthFilter]=useState('all');     // 'all' | 'YYYY-MM' (issue date)
+  const [itemFilter,setItemFilter]=useState('all');       // 'all' | 'lt:<name>' | 'prod:<desc>' | '__others'
+  const [page,setPage]=useState(1);
+  const PAGE_SIZE=50;
   const today=todayStr();
+
+  // Payments grouped by invoice — used for the method filter and the row pills
+  const pmtsByInvoice = useMemo(()=>{
+    const m={};
+    (pmts||[]).forEach(p=>{ (m[p.invoice_id]=m[p.invoice_id]||[]).push(p); });
+    return m;
+  },[pmts]);
+
+  // Lines grouped by invoice — used for the item filter
+  const linesByInvoice = useMemo(()=>{
+    const m={};
+    (invoiceLines||[]).forEach(l=>{ (m[l.invoice_id]=m[l.invoice_id]||[]).push(l); });
+    return m;
+  },[invoiceLines]);
+
+  // Filter options derived from actual data
+  const monthOptions = useMemo(()=>{
+    const s=new Set();
+    invoices.forEach(i=>{ const d=i.issue_date||i.created_at; if(d) s.add(String(d).slice(0,7)); });
+    return [...s].sort().reverse();
+  },[invoices]);
+  const knownMethodCodes = useMemo(()=>new Set(allMethods().map(m=>m.code)),[paymentMethods]);
+  const itemOptions = useMemo(()=>{
+    const lts=new Set(), prods=new Set();
+    (invoiceLines||[]).forEach(l=>{
+      if(l.lesson_type_name) lts.add(l.lesson_type_name);
+      else if(l.line_type==='product'&&l.description) prods.add(l.description);
+    });
+    return { lessonTypes:[...lts].sort(), products:[...prods].sort() };
+  },[invoiceLines]);
+
+  function lineMatchesItem(l, filter){
+    if(filter.startsWith('lt:'))   return l.lesson_type_name===filter.slice(3);
+    if(filter.startsWith('prod:')) return l.line_type==='product'&&l.description===filter.slice(5);
+    if(filter==='__others')        return !l.lesson_type_name && l.line_type!=='product';
+    return true;
+  }
 
   function isOverdue(inv){ return inv.due_date && inv.due_date < today && inv.status !== 'paid' && inv.status !== 'void' && inv.status !== 'refunded'; }
 
@@ -9260,12 +9432,29 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
     if(branchFilter) list = list.filter(i => i.branch_id === branchFilter);
     if(statusFilter==='overdue') list = list.filter(i=>isOverdue(i));
     else if(statusFilter !== 'all') list = list.filter(i=>i.status===statusFilter);
+    if(monthFilter!=='all') list = list.filter(i=>String(i.issue_date||i.created_at||'').slice(0,7)===monthFilter);
+    if(methodFilter!=='all'){
+      list = list.filter(i=>{
+        const ps = pmtsByInvoice[i.id]||[];
+        if(methodFilter==='__others') return ps.some(p=>!knownMethodCodes.has((p.payment_method||'').toLowerCase()));
+        return ps.some(p=>(p.payment_method||'').toLowerCase()===methodFilter);
+      });
+    }
+    if(itemFilter!=='all'){
+      list = list.filter(i=>(linesByInvoice[i.id]||[]).some(l=>lineMatchesItem(l,itemFilter)));
+    }
     if(searchQ.trim()){
       const q=searchQ.toLowerCase();
       list=list.filter(i=>(i.invoice_number||'').toLowerCase().includes(q)||(i.account_name||'').toLowerCase().includes(q));
     }
     return list.sort((a,b)=>(b.created_at||'').localeCompare(a.created_at||''));
-  },[invoices,statusFilter,searchQ,branchFilter]);
+  },[invoices,statusFilter,searchQ,branchFilter,methodFilter,monthFilter,itemFilter,pmtsByInvoice,linesByInvoice,knownMethodCodes]);
+
+  // Pagination — filters run first, then the current page is sliced out.
+  const pageCount = Math.max(1, Math.ceil(filtered.length/PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const paged = useMemo(()=>filtered.slice((safePage-1)*PAGE_SIZE, safePage*PAGE_SIZE),[filtered,safePage]);
+  useEffect(()=>{ setPage(1); },[statusFilter,branchFilter,searchQ,methodFilter,monthFilter,itemFilter]);
 
   function toggleSelect(id){ const s=new Set(selectedIds); s.has(id)?s.delete(id):s.add(id); setSelectedIds(s); }
   function toggleAll(){ setSelectedIds(selectedIds.size===filtered.length?new Set():new Set(filtered.map(i=>i.id))); }
@@ -9303,6 +9492,29 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
         </label>
         <span className="small subtle">{filtered.length} / {invoices.length}</span>
       </div>
+      <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginTop:8}}>
+        <select className="select" value={methodFilter} onChange={e=>setMethodFilter(e.target.value)} style={{fontSize:12,padding:'4px 8px',maxWidth:170}}>
+          <option value="all">💳 All methods</option>
+          {allMethods().map(m=><option key={m.code} value={m.code}>{m.label}</option>)}
+          <option value="__others">Others / unknown</option>
+        </select>
+        <select className="select" value={monthFilter} onChange={e=>setMonthFilter(e.target.value)} style={{fontSize:12,padding:'4px 8px',maxWidth:150}}>
+          <option value="all">📅 All months</option>
+          {monthOptions.map(m=><option key={m} value={m}>{m}</option>)}
+        </select>
+        <select className="select" value={itemFilter} onChange={e=>setItemFilter(e.target.value)} style={{fontSize:12,padding:'4px 8px',maxWidth:220}}>
+          <option value="all">🏷 All items</option>
+          {itemOptions.lessonTypes.length>0 && <optgroup label="Lesson Types">
+            {itemOptions.lessonTypes.map(n=><option key={'lt:'+n} value={'lt:'+n}>{n}</option>)}
+          </optgroup>}
+          {itemOptions.products.length>0 && <optgroup label="Products">
+            {itemOptions.products.map(n=><option key={'prod:'+n} value={'prod:'+n}>{n}</option>)}
+          </optgroup>}
+          <option value="__others">Others (custom lines)</option>
+        </select>
+        {(methodFilter!=='all'||monthFilter!=='all'||itemFilter!=='all')&&
+          <button className="btn btn-ghost small" onClick={()=>{setMethodFilter('all');setMonthFilter('all');setItemFilter('all');}}>✕ Clear filters</button>}
+      </div>
       {selCount>0&&<div className="inv-bulk-bar">
         <span className="small" style={{fontWeight:700}}>{selCount} selected</span>
         {selDraft>0&&<button className="btn btn-ghost small" onClick={bulkMarkSent}>Mark Sent ({selDraft})</button>}
@@ -9314,13 +9526,14 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
     {filtered.length===0&&<div className="card empty" style={{padding:32}}>No invoices match the current filter.</div>}
 
     <div style={{display:'flex',flexDirection:'column',gap:4}}>
-      {filtered.map(inv=>{
+      {paged.map(inv=>{
         const overdue=isOverdue(inv);
         const isExpanded=expandedId===inv.id;
         const isSelected=selectedIds.has(inv.id);
-        const invLines=invoiceLines.filter(l=>l.invoice_id===inv.id);
-        const invPmts=pmts.filter(p=>p.invoice_id===inv.id);
+        const invLines=linesByInvoice[inv.id]||[];
+        const invPmts=pmtsByInvoice[inv.id]||[];
         const invPcs=pendingCredits.filter(pc=>pc.invoice_id===inv.id);
+        const methodsUsed=[...new Set(invPmts.map(p=>(p.payment_method||'').toLowerCase()).filter(Boolean))];
         const total=Number(inv.total_amount)||0;
         const paid=Number(inv.amount_paid)||0;
         const outstanding=Math.max(0,total-paid);
@@ -9336,6 +9549,7 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
             <span className="small subtle" style={{fontSize:10.5,whiteSpace:'nowrap',flexShrink:0}}>{inv.issue_date||'—'}{inv.due_date?` → ${inv.due_date}`:''}</span>
             <span style={{fontWeight:700,fontSize:12,minWidth:80,textAlign:'right',flexShrink:0}}>RM {total.toFixed(2)}</span>
             {paid>0&&<span className="small subtle" style={{fontSize:10,minWidth:90,textAlign:'right',flexShrink:0,color:outstanding>0?'var(--amber-tx)':'var(--green-tx)'}}>{outstanding>0?`Owed ${outstanding.toFixed(2)}`:`Paid`}</span>}
+            {methodsUsed.length>0&&<span style={{display:'flex',gap:3,flexShrink:0}}>{methodsUsed.map(mc=><MethodPill key={mc} code={mc} small/>)}</span>}
             <span style={{flexShrink:0,color:'var(--text-3)',fontSize:10,width:14,textAlign:'center'}}>{isExpanded?'▲':'▼'}</span>
           </div>
           {isExpanded&&<InvoiceDetailPanel
@@ -9354,6 +9568,17 @@ function InvoicesView({ branches, invoices, invoiceLines, pmts, pendingCredits, 
         </div>;
       })}
     </div>
+    {pageCount>1&&<div style={{display:'flex',gap:4,justifyContent:'center',alignItems:'center',marginTop:14,flexWrap:'wrap'}}>
+      <button className="btn btn-ghost small" disabled={safePage<=1} onClick={()=>setPage(safePage-1)}>‹ Prev</button>
+      {Array.from({length:pageCount},(_,i)=>i+1)
+        .filter(n=>n===1||n===pageCount||Math.abs(n-safePage)<=2)
+        .reduce((acc,n,idx,arr)=>{ if(idx>0&&n-arr[idx-1]>1) acc.push('…'); acc.push(n); return acc; },[])
+        .map((n,i)=> n==='…'
+          ? <span key={'gap'+i} className="small subtle" style={{padding:'0 4px'}}>…</span>
+          : <button key={n} className={`btn small ${n===safePage?'btn-primary':'btn-ghost'}`} style={{minWidth:34}} onClick={()=>setPage(n)}>{n}</button>)}
+      <button className="btn btn-ghost small" disabled={safePage>=pageCount} onClick={()=>setPage(safePage+1)}>Next ›</button>
+      <span className="small subtle" style={{marginLeft:8}}>Page {safePage} of {pageCount} · {filtered.length} invoices</span>
+    </div>}
   </>;
 }
 
@@ -9532,7 +9757,7 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
           <tbody>{pmts.map(p=>{ const isRef=p.kind==='refund'||Number(p.amount)<0; return <tr key={p.id}>
             <td>{p.payment_date||'—'}</td>
             <td style={{fontFamily:'monospace',fontSize:11}}>{p.receipt_number||'—'}</td>
-            <td>{methodLabel(p.payment_method)}{isRef?' · Refund':''}</td>
+            <td><MethodPill code={p.payment_method} small/>{isRef?<span className="small subtle"> · Refund</span>:null}</td>
             <td style={{textAlign:'right',fontWeight:700,color:isRef?'#DC2626':'var(--green-tx)'}}>{isRef?'−':''}RM {Math.abs(Number(p.amount)).toFixed(2)}</td>
             <td><button className="btn btn-ghost small" title="Print receipt" onClick={()=>printReceipt(p,invoice)}>🖨 Receipt</button></td>
           </tr>; })}</tbody>
@@ -9558,7 +9783,7 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
       <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
         <div className="field"><label>Refund Amount (RM)</label><input className="input" type="number" step="0.01" min="0.01" value={refAmt} onChange={e=>setRefAmt(e.target.value)} /></div>
         <div className="field"><label>Date</label><input className="input" type="date" value={refDate} onChange={e=>setRefDate(e.target.value)} /></div>
-        <div className="field"><label>Method</label><select className="select" value={refMethod} onChange={e=>setRefMethod(e.target.value)}><option value="cash">Cash</option><option value="bank_transfer">Bank Transfer</option><option value="duitnow">DuitNow</option><option value="card">Card</option><option value="cheque">Cheque</option><option value="other">Other</option></select></div>
+        <div className="field"><label>Method</label><select className="select" value={refMethod} onChange={e=>setRefMethod(e.target.value)}>{activeMethods().map(m=><option key={m.code} value={m.code}>{m.label}</option>)}</select></div>
       </div>
       <div className="field" style={{marginTop:8}}><label>Reason (optional)</label><input className="input" value={refReason} onChange={e=>setRefReason(e.target.value)} placeholder="e.g. Parent withdrew, class cancelled" /></div>
       <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:10}}>
@@ -9574,7 +9799,7 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
         <div className="field"><label>Amount (RM)</label><input className="input" type="number" step="0.01" min="0.01" value={payAmt} onChange={e=>setPayAmt(e.target.value)} /></div>
         <div className="field"><label>Date</label><input className="input" type="date" value={payDate} onChange={e=>setPayDate(e.target.value)} /></div>
         <div className="field"><label>Method</label><select className="select" value={payMethod} onChange={e=>setPayMethod(e.target.value)}>
-          {[['cash','Cash'],['bank_transfer','Bank Transfer'],['duitnow','DuitNow'],['card','Card'],['cheque','Cheque'],['other','Other']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+          {activeMethods().map(m=><option key={m.code} value={m.code}>{m.label}</option>)}
         </select></div>
         <div className="field"><label>Reference #</label><input className="input" value={payRef} onChange={e=>setPayRef(e.target.value)} placeholder="e.g. TXN-12345" /></div>
         <div className="field"><label>Notes</label><input className="input" value={payNotes} onChange={e=>setPayNotes(e.target.value)} /></div>
@@ -9584,6 +9809,80 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
         <button className="btn btn-ghost small" onClick={()=>setShowPayForm(false)}>Cancel</button>
       </div>
     </div>}
+  </div>;
+}
+
+// Small coloured pill for a payment method — used on invoice rows, receipts and filters.
+function MethodPill({ code, small }){
+  if(!code) return null;
+  const d = methodDef(code);
+  const label = d ? d.label : code;
+  return <span className={`pm-pill pm-${methodColor(code)}${small?' pm-sm':''}`}>{label}</span>;
+}
+
+// Settings → Payment Methods: global list powering every payment dropdown and pill.
+// Methods are never deleted (historical payments must keep resolving) — only deactivated.
+function PaymentMethodsPanel({ methods, onAdd, onUpdate, onMove }){
+  const [newLabel,setNewLabel]=useState('');
+  const [newCode,setNewCode]=useState('');
+  const [editingId,setEditingId]=useState(null);
+  const [editLabel,setEditLabel]=useState('');
+  const usingDefaults = !methods || methods.length===0;
+  const sorted = (methods||[]).slice().sort((a,b)=>(a.sort_order??0)-(b.sort_order??0));
+  function startEdit(m){ setEditingId(m.id); setEditLabel(m.label||''); }
+  async function saveEdit(){ if(editingId){ await onUpdate(editingId,{label:editLabel.trim()||undefined}); setEditingId(null);} }
+  function suggestCode(label){ return (label||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,''); }
+  return <div className="card">
+    <div style={{fontWeight:800,fontSize:18,marginBottom:4}}>💳 Payment Methods</div>
+    <div className="small subtle" style={{marginBottom:14}}>
+      These methods appear in every payment dropdown (invoice payments, refunds, shop checkout) and as coloured pills across invoices, receipts and reports.
+      Deactivate a method to remove it from dropdowns — past payments keep their label. Methods cannot be deleted.
+    </div>
+    {usingDefaults && <div className="card" style={{background:'var(--amber-bg,#FEF3C7)',border:'1px solid var(--amber-bd,#FDE68A)',padding:'10px 14px',marginBottom:14,fontSize:12.5}}>
+      ⚠ The <code>payment_methods</code> table has no rows yet (or the migration hasn't been run). The app is falling back to the built-in defaults below. Run the migration to customise.
+      <div style={{marginTop:6,display:'flex',gap:6,flexWrap:'wrap'}}>{PM_DEFAULTS.map(m=><MethodPill key={m.code} code={m.code}/>)}</div>
+    </div>}
+    {!usingDefaults && <div className="table-wrap" style={{marginBottom:16}}>
+      <table><thead><tr>
+        <th style={{width:44}}></th>
+        <th>Label</th>
+        <th style={{width:150}}>Code</th>
+        <th style={{width:90}}>Preview</th>
+        <th style={{width:90,textAlign:'center'}}>Active</th>
+        <th style={{width:110}}></th>
+      </tr></thead><tbody>
+        {sorted.map((m,idx)=><tr key={m.id} style={{opacity:m.is_active===false?0.5:1}}>
+          <td style={{whiteSpace:'nowrap'}}>
+            <button className="btn btn-ghost small" title="Move up" disabled={idx===0} onClick={()=>onMove(m.id,-1)} style={{padding:'2px 6px'}}>↑</button>
+            <button className="btn btn-ghost small" title="Move down" disabled={idx===sorted.length-1} onClick={()=>onMove(m.id,1)} style={{padding:'2px 6px'}}>↓</button>
+          </td>
+          <td>
+            {editingId===m.id
+              ? <input className="input" value={editLabel} onChange={e=>setEditLabel(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')saveEdit(); if(e.key==='Escape')setEditingId(null);}} autoFocus style={{maxWidth:220}}/>
+              : <span style={{fontWeight:600}}>{m.label}</span>}
+          </td>
+          <td style={{fontFamily:'monospace',fontSize:12}}>{m.code}</td>
+          <td><MethodPill code={m.code}/></td>
+          <td style={{textAlign:'center'}}>
+            <input type="checkbox" checked={m.is_active!==false} onChange={e=>onUpdate(m.id,{is_active:e.target.checked})}/>
+          </td>
+          <td style={{textAlign:'right'}}>
+            {editingId===m.id
+              ? <><button className="btn btn-primary small" onClick={saveEdit}>Save</button> <button className="btn btn-ghost small" onClick={()=>setEditingId(null)}>✕</button></>
+              : <button className="btn btn-ghost small" onClick={()=>startEdit(m)}>Rename</button>}
+          </td>
+        </tr>)}
+      </tbody></table>
+    </div>}
+    <div style={{display:'flex',gap:8,alignItems:'flex-end',flexWrap:'wrap'}}>
+      <div className="field" style={{margin:0}}><label>New method label</label>
+        <input className="input" placeholder="e.g. TNG BlueTap" value={newLabel} onChange={e=>{setNewLabel(e.target.value); if(!newCode||newCode===suggestCode(newLabel)) setNewCode(suggestCode(e.target.value));}} style={{minWidth:200}}/>
+      </div>
+      <div className="field" style={{margin:0}}><label>Code (stored on payments)</label>
+        <input className="input" placeholder="tng_bluetap" value={newCode} onChange={e=>setNewCode(e.target.value)} style={{minWidth:160,fontFamily:'monospace'}}/>
+      </div>
+      <button className="btn btn-primary" disabled={!newLabel.trim()||usingDefaults} onClick={async()=>{ await onAdd({code:newCode||suggestCode(newLabel), label:newLabel}); setNewLabel(''); setNewCode(''); }}>+ Add Method</button>
+    </div>
   </div>;
 }
 
@@ -11617,7 +11916,7 @@ function ShopSale({ accounts, products, branches, currentBranchId, onCreateSale,
             <input type="checkbox" checked={paidNow} onChange={e=>setPaidNow(e.target.checked)} /> Payment received now (receipt)
           </label>
           {paidNow && <div style={{display:'flex',gap:6}}>
-            <select className="select" value={method} onChange={e=>setMethod(e.target.value)} style={{flex:1}}><option value="cash">Cash</option><option value="bank_transfer">Bank Transfer</option><option value="duitnow">DuitNow</option><option value="card">Card</option><option value="cheque">Cheque</option><option value="other">Other</option></select>
+            <select className="select" value={method} onChange={e=>setMethod(e.target.value)} style={{flex:1}}>{activeMethods().map(m=><option key={m.code} value={m.code}>{m.label}</option>)}</select>
             <input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)} style={{flex:1}} />
           </div>}
 
