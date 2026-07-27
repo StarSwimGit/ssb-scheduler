@@ -861,6 +861,17 @@
     .inv-row:hover{background:var(--surface-2)}
     /* Status chips — light semantic colours */
     .inv-status-chip{display:inline-block;padding:1px 6px;border-radius:5px;font-size:9.5px;font-weight:700;border:1px solid transparent;line-height:1.5}
+    /* Payment-method pills — colour keyed by method code (see methodColor in app.js) */
+    .pm-pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:10px;font-weight:700;border:1px solid transparent;line-height:1.6;white-space:nowrap}
+    .pm-pill.pm-sm{font-size:9px;padding:0 6px}
+    .pm-pill.pm-green {background:#DCFCE7;color:#166534;border-color:#86EFAC}
+    .pm-pill.pm-blue  {background:#DBEAFE;color:#1D4ED8;border-color:#93C5FD}
+    .pm-pill.pm-pink  {background:#FCE7F3;color:#BE185D;border-color:#F9A8D4}
+    .pm-pill.pm-purple{background:#EDE9FE;color:#6D28D9;border-color:#C4B5FD}
+    .pm-pill.pm-amber {background:#FEF3C7;color:#92400E;border-color:#FCD34D}
+    .pm-pill.pm-teal  {background:#CCFBF1;color:#0F766E;border-color:#5EEAD4}
+    .pm-pill.pm-coral {background:#FFE4E6;color:#BE123C;border-color:#FDA4AF}
+    .pm-pill.pm-slate {background:#F1F5F9;color:#475569;border-color:#CBD5E1}
     .inv-status-chip.s-draft{background:#F1F5F9;color:#475569;border-color:#CBD5E1}
     .inv-status-chip.s-sent{background:#DBEAFE;color:#1D4ED8;border-color:#93C5FD}
     .inv-status-chip.s-partial{background:#FEF3C7;color:#92400E;border-color:#FCD34D}
