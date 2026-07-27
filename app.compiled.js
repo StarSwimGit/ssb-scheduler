@@ -117,6 +117,75 @@ async function rest(path, opts = {}) {
 async function selectRows(table, select = '*', extra = '') {
   return rest(`${table}?select=${select}${extra}`);
 }
+// Fetch EVERY row of a table in 1000-row chunks. PostgREST silently caps un-ranged
+// requests at 1000 rows — invoices/payments outgrow that, so all financial tables
+// must load through this helper or records quietly vanish from the UI and reports.
+async function selectAllRows(table, select = '*', extra = '') {
+  const CHUNK = 1000;
+  let out = [];
+  let offset = 0;
+  for (;;) {
+    const rows = await rest(`${table}?select=${select}${extra}&limit=${CHUNK}&offset=${offset}`);
+    out = out.concat(rows || []);
+    if (!rows || rows.length < CHUNK) break;
+    offset += CHUNK;
+    if (offset > 200000) break; // safety valve
+  }
+  return out;
+}
+
+// ── Payment-method registry ─────────────────────────────────────────
+// Built-in defaults keep the app working before the payment_methods table
+// exists (pre-migration) and give legacy codes stable labels/colours forever.
+// After loadInvoiceData() fetches the table, PM_LIST holds the configured
+// methods; helpers below prefer it and fall back to the defaults.
+const PM_DEFAULTS = [{
+  code: 'cash',
+  label: 'Cash',
+  color: 'green'
+}, {
+  code: 'bank_transfer',
+  label: 'Bank Transfer',
+  color: 'blue'
+}, {
+  code: 'duitnow',
+  label: 'DuitNow',
+  color: 'pink'
+}, {
+  code: 'card',
+  label: 'Card',
+  color: 'purple'
+}, {
+  code: 'cheque',
+  label: 'Cheque',
+  color: 'amber'
+}, {
+  code: 'other',
+  label: 'Other',
+  color: 'slate'
+}];
+let PM_LIST = null; // set after payment_methods table loads
+function activeMethods() {
+  const src = PM_LIST && PM_LIST.length ? PM_LIST.filter(m => m.is_active !== false) : PM_DEFAULTS;
+  return src.slice().sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+}
+function allMethods() {
+  return PM_LIST && PM_LIST.length ? PM_LIST : PM_DEFAULTS;
+}
+function methodDef(code) {
+  const c = (code || '').toLowerCase();
+  return allMethods().find(m => m.code === c) || PM_DEFAULTS.find(m => m.code === c) || null;
+}
+const PM_COLORS = ['green', 'blue', 'pink', 'purple', 'amber', 'teal', 'coral', 'slate'];
+function methodColor(code) {
+  const d = methodDef(code);
+  if (d && d.color) return d.color;
+  // stable hash for unconfigured codes
+  let h = 0;
+  const s = String(code || 'other');
+  for (let i = 0; i < s.length; i++) h = h * 31 + s.charCodeAt(i) >>> 0;
+  return PM_COLORS[h % PM_COLORS.length];
+}
 async function insertRows(table, payload, select = '*') {
   return rest(`${table}?select=${select}`, {
     method: 'POST',
@@ -657,6 +726,7 @@ function App({
     date_format: 'YYYYMM',
     allow_delete_invoice: false
   });
+  const [paymentMethods, setPaymentMethods] = useState([]);
   useEffect(() => {
     boot();
   }, []);
@@ -702,12 +772,14 @@ function App({
   // ── Invoice loaders ────────────────────────────────────────────────
   async function loadInvoiceData() {
     try {
-      const [invRows, lineRows, payRows, pcRows, settRows] = await Promise.all([selectRows('invoices', '*', '&order=created_at.desc'), selectRows('invoice_lines', '*', '&order=invoice_id.asc,sort_order.asc'), selectRows('payments', '*', '&order=invoice_id.asc,created_at.asc'), selectRows('pending_credits', '*', '&order=created_at.desc'), selectRows('invoice_settings', '*').catch(() => [])]);
+      const [invRows, lineRows, payRows, pcRows, settRows, pmRows] = await Promise.all([selectAllRows('invoices', '*', '&order=created_at.desc'), selectAllRows('invoice_lines', '*', '&order=invoice_id.asc,sort_order.asc'), selectAllRows('payments', '*', '&order=invoice_id.asc,created_at.asc'), selectAllRows('pending_credits', '*', '&order=created_at.desc'), selectRows('invoice_settings', '*').catch(() => []), selectRows('payment_methods', '*', '&order=sort_order.asc').catch(() => [])]);
       setInvoices(invRows || []);
       setInvoiceLines(lineRows || []);
       setPmts(payRows || []);
       setPendingCredits(pcRows || []);
       if (settRows?.[0]) setInvoiceSettings(settRows[0]);
+      PM_LIST = pmRows && pmRows.length ? pmRows : null;
+      setPaymentMethods(pmRows || []);
     } catch (e) {
       console.warn('Invoice tables not found — run migrations first.', e);
     }
@@ -759,6 +831,68 @@ function App({
     } catch (err) {
       handleErr(err);
       alert(err.message || 'Failed to save settings');
+    }
+  }
+
+  // ── Payment-method CRUD (global config, Settings → Payment Methods) ─
+  async function addPaymentMethod({
+    code,
+    label
+  }) {
+    try {
+      const c = (code || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+      if (!c) {
+        alert('Code is required');
+        return;
+      }
+      if (allMethods().some(m => m.code === c)) {
+        alert(`Code "${c}" already exists`);
+        return;
+      }
+      const maxSort = Math.max(0, ...paymentMethods.map(m => m.sort_order ?? 0));
+      await insertRows('payment_methods', {
+        code: c,
+        label: (label || '').trim() || c,
+        is_active: true,
+        sort_order: maxSort + 1
+      });
+      await loadInvoiceData();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to add payment method');
+    }
+  }
+  async function updatePaymentMethod(id, patch) {
+    try {
+      await patchRows('payment_methods', {
+        id
+      }, patch);
+      await loadInvoiceData();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to update payment method');
+    }
+  }
+  async function movePaymentMethod(id, dir) {
+    // Swap sort_order with the neighbour in the given direction (-1 up, +1 down)
+    const sorted = paymentMethods.slice().sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    const i = sorted.findIndex(m => m.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= sorted.length) return;
+    try {
+      await Promise.all([patchRows('payment_methods', {
+        id: sorted[i].id
+      }, {
+        sort_order: sorted[j].sort_order ?? j
+      }), patchRows('payment_methods', {
+        id: sorted[j].id
+      }, {
+        sort_order: sorted[i].sort_order ?? i
+      })]);
+      await loadInvoiceData();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to reorder');
     }
   }
 
@@ -5543,6 +5677,7 @@ function App({
     products: products,
     membersByGroup: membersByGroup,
     invoiceSettings: invoiceSettings,
+    paymentMethods: paymentMethods,
     onSaveSettings: saveInvoiceSettings,
     formatInvoiceNumber: formatInvoiceNumber,
     formatReceiptNumber: formatReceiptNumber,
@@ -5679,7 +5814,7 @@ function App({
     className: "side-shell"
   }, /*#__PURE__*/React.createElement("nav", {
     className: "side-nav"
-  }, [['summary', 'Summary'], ['branches', 'Branches'], ['pools', 'Pools & Hours'], ['instructors', 'Instructors'], ['lessonTypes', 'Lesson Types'], ['programme', 'Programme'], ['terms', 'Terms'], ['billingTerms', 'Billing Terms'], ['products', 'Products'], ['invoiceSettings', 'Invoice Numbering'], ['users', 'Users']].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
+  }, [['summary', 'Summary'], ['branches', 'Branches'], ['pools', 'Pools & Hours'], ['instructors', 'Instructors'], ['lessonTypes', 'Lesson Types'], ['programme', 'Programme'], ['terms', 'Terms'], ['billingTerms', 'Billing Terms'], ['products', 'Products'], ['paymentMethods', 'Payment Methods'], ['invoiceSettings', 'Invoice Numbering'], ['users', 'Users']].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
     key: k,
     className: `side-nav-btn${adminSection === k ? ' active' : ''}`,
     onClick: () => setAdminSection(k)
@@ -5723,6 +5858,11 @@ function App({
     setPassword: setAppUserPassword,
     patchUser: patchAppUser,
     deleteUser: deleteAppUser
+  }), adminSection === 'paymentMethods' && /*#__PURE__*/React.createElement(PaymentMethodsPanel, {
+    methods: paymentMethods,
+    onAdd: addPaymentMethod,
+    onUpdate: updatePaymentMethod,
+    onMove: movePaymentMethod
   }), adminSection === 'invoiceSettings' && /*#__PURE__*/React.createElement("div", {
     className: "card"
   }, /*#__PURE__*/React.createElement("div", {
@@ -14285,19 +14425,44 @@ function ReceiptsView({
   const searchQ = externalSearchQ !== undefined ? externalSearchQ : localSearchQ;
   const setSearchQ = setLocalSearchQ;
   const [branchFilter, setBranchFilter] = useState(null);
+  const [methodFilter, setMethodFilter] = useState('all'); // 'all' | code | '__others'
+  const [monthFilter, setMonthFilter] = useState('all'); // 'all' | 'YYYY-MM' (payment date)
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 100;
   const invoiceById = {};
   (invoices || []).forEach(inv => {
     invoiceById[inv.id] = inv;
   });
+  const knownCodes = new Set(allMethods().map(m => m.code));
+  const monthOptions = useMemo(() => {
+    const s = new Set();
+    (pmts || []).forEach(p => {
+      if (p.payment_date) s.add(String(p.payment_date).slice(0, 7));
+    });
+    return [...s].sort().reverse();
+  }, [pmts]);
   const sorted = (pmts || []).slice().sort((a, b) => (b.payment_date || '').localeCompare(a.payment_date || ''));
   const filtered = sorted.filter(p => {
     const inv = invoiceById[p.invoice_id] || {};
     if (branchFilter && inv.branch_id !== branchFilter) return false;
+    if (monthFilter !== 'all' && String(p.payment_date || '').slice(0, 7) !== monthFilter) return false;
+    if (methodFilter !== 'all') {
+      const mc = (p.payment_method || '').toLowerCase();
+      if (methodFilter === '__others') {
+        if (knownCodes.has(mc)) return false;
+      } else if (mc !== methodFilter) return false;
+    }
     if (!searchQ.trim()) return true;
     const q = searchQ.toLowerCase();
     return (p.receipt_number || '').toLowerCase().includes(q) || (inv.invoice_number || '').toLowerCase().includes(q) || (inv.account_name || '').toLowerCase().includes(q) || (p.payment_method || '').toLowerCase().includes(q);
   });
   const total = filtered.reduce((s, p) => s + Number(p.amount || 0), 0);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const paged = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  useEffect(() => {
+    setPage(1);
+  }, [branchFilter, methodFilter, monthFilter, searchQ]);
   function fmtDate(d) {
     if (!d) return '—';
     try {
@@ -14362,7 +14527,37 @@ function ReceiptsView({
     branches: branches,
     value: branchFilter,
     onChange: setBranchFilter
-  }), /*#__PURE__*/React.createElement("span", {
+  }), /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    value: methodFilter,
+    onChange: e => setMethodFilter(e.target.value),
+    style: {
+      fontSize: 12,
+      padding: '4px 8px',
+      maxWidth: 160
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "all"
+  }, "💳 All methods"), allMethods().map(m => /*#__PURE__*/React.createElement("option", {
+    key: m.code,
+    value: m.code
+  }, m.label)), /*#__PURE__*/React.createElement("option", {
+    value: "__others"
+  }, "Others / unknown")), /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    value: monthFilter,
+    onChange: e => setMonthFilter(e.target.value),
+    style: {
+      fontSize: 12,
+      padding: '4px 8px',
+      maxWidth: 140
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "all"
+  }, "📅 All months"), monthOptions.map(m => /*#__PURE__*/React.createElement("option", {
+    key: m,
+    value: m
+  }, m))), /*#__PURE__*/React.createElement("span", {
     className: "small subtle"
   }, filtered.length, " / ", (pmts || []).length))), /*#__PURE__*/React.createElement("div", {
     className: "card",
@@ -14405,7 +14600,7 @@ function ReceiptsView({
   }))), /*#__PURE__*/React.createElement("tbody", null, filtered.length === 0 && /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
     colSpan: 7,
     className: "empty"
-  }, "No receipts found.")), filtered.map(p => {
+  }, "No receipts found.")), paged.map(p => {
     const inv = invoiceById[p.invoice_id] || {};
     const isRef = p.kind === 'refund' || Number(p.amount) < 0;
     return /*#__PURE__*/React.createElement("tr", {
@@ -14424,9 +14619,12 @@ function ReceiptsView({
       style: {
         fontWeight: 600
       }
-    }, inv.account_name || '—'), /*#__PURE__*/React.createElement("td", {
+    }, inv.account_name || '—'), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement(MethodPill, {
+      code: p.payment_method,
+      small: true
+    }), isRef ? /*#__PURE__*/React.createElement("span", {
       className: "small subtle"
-    }, methodLabel(p.payment_method), isRef ? ' · Refund' : ''), /*#__PURE__*/React.createElement("td", {
+    }, " · Refund") : null), /*#__PURE__*/React.createElement("td", {
       style: {
         textAlign: 'right',
         fontWeight: 700,
@@ -14441,7 +14639,48 @@ function ReceiptsView({
       title: "Print receipt",
       onClick: () => printReceipt(p, inv)
     }, "🖨")));
-  }))))));
+  }))))), pageCount > 1 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 4,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginTop: 14,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    disabled: safePage <= 1,
+    onClick: () => setPage(safePage - 1)
+  }, "‹ Prev"), Array.from({
+    length: pageCount
+  }, (_, i) => i + 1).filter(n => n === 1 || n === pageCount || Math.abs(n - safePage) <= 2).reduce((acc, n, idx, arr) => {
+    if (idx > 0 && n - arr[idx - 1] > 1) acc.push('…');
+    acc.push(n);
+    return acc;
+  }, []).map((n, i) => n === '…' ? /*#__PURE__*/React.createElement("span", {
+    key: 'gap' + i,
+    className: "small subtle",
+    style: {
+      padding: '0 4px'
+    }
+  }, "…") : /*#__PURE__*/React.createElement("button", {
+    key: n,
+    className: `btn small ${n === safePage ? 'btn-primary' : 'btn-ghost'}`,
+    style: {
+      minWidth: 34
+    },
+    onClick: () => setPage(n)
+  }, n)), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    disabled: safePage >= pageCount,
+    onClick: () => setPage(safePage + 1)
+  }, "Next ›"), /*#__PURE__*/React.createElement("span", {
+    className: "small subtle",
+    style: {
+      marginLeft: 8
+    }
+  }, "Page ", safePage, " of ", pageCount, " · ", filtered.length, " receipts")));
 }
 function StudentsView({
   students,
@@ -16774,6 +17013,8 @@ function invoiceStatusColor(s) {
   }[s] || '#94A3B8';
 }
 function methodLabel(m) {
+  const d = methodDef(m);
+  if (d) return d.label;
   return {
     cash: 'Cash',
     bank_transfer: 'Bank Transfer',
@@ -16798,6 +17039,7 @@ function InvoicesView({
   products,
   membersByGroup,
   invoiceSettings,
+  paymentMethods,
   onSaveSettings,
   formatInvoiceNumber,
   formatReceiptNumber,
@@ -16821,7 +17063,58 @@ function InvoicesView({
   const [expandedId, setExpandedId] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [branchFilter, setBranchFilter] = useState(null);
+  const [methodFilter, setMethodFilter] = useState('all'); // 'all' | code | '__others'
+  const [monthFilter, setMonthFilter] = useState('all'); // 'all' | 'YYYY-MM' (issue date)
+  const [itemFilter, setItemFilter] = useState('all'); // 'all' | 'lt:<name>' | 'prod:<desc>' | '__others'
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 50;
   const today = todayStr();
+
+  // Payments grouped by invoice — used for the method filter and the row pills
+  const pmtsByInvoice = useMemo(() => {
+    const m = {};
+    (pmts || []).forEach(p => {
+      (m[p.invoice_id] = m[p.invoice_id] || []).push(p);
+    });
+    return m;
+  }, [pmts]);
+
+  // Lines grouped by invoice — used for the item filter
+  const linesByInvoice = useMemo(() => {
+    const m = {};
+    (invoiceLines || []).forEach(l => {
+      (m[l.invoice_id] = m[l.invoice_id] || []).push(l);
+    });
+    return m;
+  }, [invoiceLines]);
+
+  // Filter options derived from actual data
+  const monthOptions = useMemo(() => {
+    const s = new Set();
+    invoices.forEach(i => {
+      const d = i.issue_date || i.created_at;
+      if (d) s.add(String(d).slice(0, 7));
+    });
+    return [...s].sort().reverse();
+  }, [invoices]);
+  const knownMethodCodes = useMemo(() => new Set(allMethods().map(m => m.code)), [paymentMethods]);
+  const itemOptions = useMemo(() => {
+    const lts = new Set(),
+      prods = new Set();
+    (invoiceLines || []).forEach(l => {
+      if (l.lesson_type_name) lts.add(l.lesson_type_name);else if (l.line_type === 'product' && l.description) prods.add(l.description);
+    });
+    return {
+      lessonTypes: [...lts].sort(),
+      products: [...prods].sort()
+    };
+  }, [invoiceLines]);
+  function lineMatchesItem(l, filter) {
+    if (filter.startsWith('lt:')) return l.lesson_type_name === filter.slice(3);
+    if (filter.startsWith('prod:')) return l.line_type === 'product' && l.description === filter.slice(5);
+    if (filter === '__others') return !l.lesson_type_name && l.line_type !== 'product';
+    return true;
+  }
   function isOverdue(inv) {
     return inv.due_date && inv.due_date < today && inv.status !== 'paid' && inv.status !== 'void' && inv.status !== 'refunded';
   }
@@ -16846,12 +17139,31 @@ function InvoicesView({
     let list = invoices.slice();
     if (branchFilter) list = list.filter(i => i.branch_id === branchFilter);
     if (statusFilter === 'overdue') list = list.filter(i => isOverdue(i));else if (statusFilter !== 'all') list = list.filter(i => i.status === statusFilter);
+    if (monthFilter !== 'all') list = list.filter(i => String(i.issue_date || i.created_at || '').slice(0, 7) === monthFilter);
+    if (methodFilter !== 'all') {
+      list = list.filter(i => {
+        const ps = pmtsByInvoice[i.id] || [];
+        if (methodFilter === '__others') return ps.some(p => !knownMethodCodes.has((p.payment_method || '').toLowerCase()));
+        return ps.some(p => (p.payment_method || '').toLowerCase() === methodFilter);
+      });
+    }
+    if (itemFilter !== 'all') {
+      list = list.filter(i => (linesByInvoice[i.id] || []).some(l => lineMatchesItem(l, itemFilter)));
+    }
     if (searchQ.trim()) {
       const q = searchQ.toLowerCase();
       list = list.filter(i => (i.invoice_number || '').toLowerCase().includes(q) || (i.account_name || '').toLowerCase().includes(q));
     }
     return list.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
-  }, [invoices, statusFilter, searchQ, branchFilter]);
+  }, [invoices, statusFilter, searchQ, branchFilter, methodFilter, monthFilter, itemFilter, pmtsByInvoice, linesByInvoice, knownMethodCodes]);
+
+  // Pagination — filters run first, then the current page is sliced out.
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const paged = useMemo(() => filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE), [filtered, safePage]);
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter, branchFilter, searchQ, methodFilter, monthFilter, itemFilter]);
   function toggleSelect(id) {
     const s = new Set(selectedIds);
     s.has(id) ? s.delete(id) : s.add(id);
@@ -16947,7 +17259,75 @@ function InvoicesView({
     onChange: toggleAll
   }), " Select all"), /*#__PURE__*/React.createElement("span", {
     className: "small subtle"
-  }, filtered.length, " / ", invoices.length)), selCount > 0 && /*#__PURE__*/React.createElement("div", {
+  }, filtered.length, " / ", invoices.length)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      alignItems: 'center',
+      flexWrap: 'wrap',
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    value: methodFilter,
+    onChange: e => setMethodFilter(e.target.value),
+    style: {
+      fontSize: 12,
+      padding: '4px 8px',
+      maxWidth: 170
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "all"
+  }, "💳 All methods"), allMethods().map(m => /*#__PURE__*/React.createElement("option", {
+    key: m.code,
+    value: m.code
+  }, m.label)), /*#__PURE__*/React.createElement("option", {
+    value: "__others"
+  }, "Others / unknown")), /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    value: monthFilter,
+    onChange: e => setMonthFilter(e.target.value),
+    style: {
+      fontSize: 12,
+      padding: '4px 8px',
+      maxWidth: 150
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "all"
+  }, "📅 All months"), monthOptions.map(m => /*#__PURE__*/React.createElement("option", {
+    key: m,
+    value: m
+  }, m))), /*#__PURE__*/React.createElement("select", {
+    className: "select",
+    value: itemFilter,
+    onChange: e => setItemFilter(e.target.value),
+    style: {
+      fontSize: 12,
+      padding: '4px 8px',
+      maxWidth: 220
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "all"
+  }, "🏷 All items"), itemOptions.lessonTypes.length > 0 && /*#__PURE__*/React.createElement("optgroup", {
+    label: "Lesson Types"
+  }, itemOptions.lessonTypes.map(n => /*#__PURE__*/React.createElement("option", {
+    key: 'lt:' + n,
+    value: 'lt:' + n
+  }, n))), itemOptions.products.length > 0 && /*#__PURE__*/React.createElement("optgroup", {
+    label: "Products"
+  }, itemOptions.products.map(n => /*#__PURE__*/React.createElement("option", {
+    key: 'prod:' + n,
+    value: 'prod:' + n
+  }, n))), /*#__PURE__*/React.createElement("option", {
+    value: "__others"
+  }, "Others (custom lines)")), (methodFilter !== 'all' || monthFilter !== 'all' || itemFilter !== 'all') && /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => {
+      setMethodFilter('all');
+      setMonthFilter('all');
+      setItemFilter('all');
+    }
+  }, "✕ Clear filters")), selCount > 0 && /*#__PURE__*/React.createElement("div", {
     className: "inv-bulk-bar"
   }, /*#__PURE__*/React.createElement("span", {
     className: "small",
@@ -16974,13 +17354,14 @@ function InvoicesView({
       flexDirection: 'column',
       gap: 4
     }
-  }, filtered.map(inv => {
+  }, paged.map(inv => {
     const overdue = isOverdue(inv);
     const isExpanded = expandedId === inv.id;
     const isSelected = selectedIds.has(inv.id);
-    const invLines = invoiceLines.filter(l => l.invoice_id === inv.id);
-    const invPmts = pmts.filter(p => p.invoice_id === inv.id);
+    const invLines = linesByInvoice[inv.id] || [];
+    const invPmts = pmtsByInvoice[inv.id] || [];
     const invPcs = pendingCredits.filter(pc => pc.invoice_id === inv.id);
+    const methodsUsed = [...new Set(invPmts.map(p => (p.payment_method || '').toLowerCase()).filter(Boolean))];
     const total = Number(inv.total_amount) || 0;
     const paid = Number(inv.amount_paid) || 0;
     const outstanding = Math.max(0, total - paid);
@@ -17047,7 +17428,17 @@ function InvoicesView({
         flexShrink: 0,
         color: outstanding > 0 ? 'var(--amber-tx)' : 'var(--green-tx)'
       }
-    }, outstanding > 0 ? `Owed ${outstanding.toFixed(2)}` : `Paid`), /*#__PURE__*/React.createElement("span", {
+    }, outstanding > 0 ? `Owed ${outstanding.toFixed(2)}` : `Paid`), methodsUsed.length > 0 && /*#__PURE__*/React.createElement("span", {
+      style: {
+        display: 'flex',
+        gap: 3,
+        flexShrink: 0
+      }
+    }, methodsUsed.map(mc => /*#__PURE__*/React.createElement(MethodPill, {
+      key: mc,
+      code: mc,
+      small: true
+    }))), /*#__PURE__*/React.createElement("span", {
       style: {
         flexShrink: 0,
         color: 'var(--text-3)',
@@ -17081,7 +17472,48 @@ function InvoicesView({
       onUpdateLine: onUpdateLine,
       onDeleteLine: onDeleteLine
     }));
-  })));
+  })), pageCount > 1 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 4,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginTop: 14,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    disabled: safePage <= 1,
+    onClick: () => setPage(safePage - 1)
+  }, "‹ Prev"), Array.from({
+    length: pageCount
+  }, (_, i) => i + 1).filter(n => n === 1 || n === pageCount || Math.abs(n - safePage) <= 2).reduce((acc, n, idx, arr) => {
+    if (idx > 0 && n - arr[idx - 1] > 1) acc.push('…');
+    acc.push(n);
+    return acc;
+  }, []).map((n, i) => n === '…' ? /*#__PURE__*/React.createElement("span", {
+    key: 'gap' + i,
+    className: "small subtle",
+    style: {
+      padding: '0 4px'
+    }
+  }, "…") : /*#__PURE__*/React.createElement("button", {
+    key: n,
+    className: `btn small ${n === safePage ? 'btn-primary' : 'btn-ghost'}`,
+    style: {
+      minWidth: 34
+    },
+    onClick: () => setPage(n)
+  }, n)), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    disabled: safePage >= pageCount,
+    onClick: () => setPage(safePage + 1)
+  }, "Next ›"), /*#__PURE__*/React.createElement("span", {
+    className: "small subtle",
+    style: {
+      marginLeft: 8
+    }
+  }, "Page ", safePage, " of ", pageCount, " · ", filtered.length, " invoices")));
 }
 function InvoiceDetailPanel({
   invoice,
@@ -17542,7 +17974,12 @@ function InvoiceDetailPanel({
         fontFamily: 'monospace',
         fontSize: 11
       }
-    }, p.receipt_number || '—'), /*#__PURE__*/React.createElement("td", null, methodLabel(p.payment_method), isRef ? ' · Refund' : ''), /*#__PURE__*/React.createElement("td", {
+    }, p.receipt_number || '—'), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement(MethodPill, {
+      code: p.payment_method,
+      small: true
+    }), isRef ? /*#__PURE__*/React.createElement("span", {
+      className: "small subtle"
+    }, " · Refund") : null), /*#__PURE__*/React.createElement("td", {
       style: {
         textAlign: 'right',
         fontWeight: 700,
@@ -17654,19 +18091,10 @@ function InvoiceDetailPanel({
     className: "select",
     value: refMethod,
     onChange: e => setRefMethod(e.target.value)
-  }, /*#__PURE__*/React.createElement("option", {
-    value: "cash"
-  }, "Cash"), /*#__PURE__*/React.createElement("option", {
-    value: "bank_transfer"
-  }, "Bank Transfer"), /*#__PURE__*/React.createElement("option", {
-    value: "duitnow"
-  }, "DuitNow"), /*#__PURE__*/React.createElement("option", {
-    value: "card"
-  }, "Card"), /*#__PURE__*/React.createElement("option", {
-    value: "cheque"
-  }, "Cheque"), /*#__PURE__*/React.createElement("option", {
-    value: "other"
-  }, "Other")))), /*#__PURE__*/React.createElement("div", {
+  }, activeMethods().map(m => /*#__PURE__*/React.createElement("option", {
+    key: m.code,
+    value: m.code
+  }, m.label))))), /*#__PURE__*/React.createElement("div", {
     className: "field",
     style: {
       marginTop: 8
@@ -17734,10 +18162,10 @@ function InvoiceDetailPanel({
     className: "select",
     value: payMethod,
     onChange: e => setPayMethod(e.target.value)
-  }, [['cash', 'Cash'], ['bank_transfer', 'Bank Transfer'], ['duitnow', 'DuitNow'], ['card', 'Card'], ['cheque', 'Cheque'], ['other', 'Other']].map(([v, l]) => /*#__PURE__*/React.createElement("option", {
-    key: v,
-    value: v
-  }, l)))), /*#__PURE__*/React.createElement("div", {
+  }, activeMethods().map(m => /*#__PURE__*/React.createElement("option", {
+    key: m.code,
+    value: m.code
+  }, m.label)))), /*#__PURE__*/React.createElement("div", {
     className: "field"
   }, /*#__PURE__*/React.createElement("label", null, "Reference #"), /*#__PURE__*/React.createElement("input", {
     className: "input",
@@ -17764,6 +18192,228 @@ function InvoiceDetailPanel({
     className: "btn btn-ghost small",
     onClick: () => setShowPayForm(false)
   }, "Cancel"))));
+}
+
+// Small coloured pill for a payment method — used on invoice rows, receipts and filters.
+function MethodPill({
+  code,
+  small
+}) {
+  if (!code) return null;
+  const d = methodDef(code);
+  const label = d ? d.label : code;
+  return /*#__PURE__*/React.createElement("span", {
+    className: `pm-pill pm-${methodColor(code)}${small ? ' pm-sm' : ''}`
+  }, label);
+}
+
+// Settings → Payment Methods: global list powering every payment dropdown and pill.
+// Methods are never deleted (historical payments must keep resolving) — only deactivated.
+function PaymentMethodsPanel({
+  methods,
+  onAdd,
+  onUpdate,
+  onMove
+}) {
+  const [newLabel, setNewLabel] = useState('');
+  const [newCode, setNewCode] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [editLabel, setEditLabel] = useState('');
+  const usingDefaults = !methods || methods.length === 0;
+  const sorted = (methods || []).slice().sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  function startEdit(m) {
+    setEditingId(m.id);
+    setEditLabel(m.label || '');
+  }
+  async function saveEdit() {
+    if (editingId) {
+      await onUpdate(editingId, {
+        label: editLabel.trim() || undefined
+      });
+      setEditingId(null);
+    }
+  }
+  function suggestCode(label) {
+    return (label || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 800,
+      fontSize: 18,
+      marginBottom: 4
+    }
+  }, "💳 Payment Methods"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginBottom: 14
+    }
+  }, "These methods appear in every payment dropdown (invoice payments, refunds, shop checkout) and as coloured pills across invoices, receipts and reports. Deactivate a method to remove it from dropdowns — past payments keep their label. Methods cannot be deleted."), usingDefaults && /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      background: 'var(--amber-bg,#FEF3C7)',
+      border: '1px solid var(--amber-bd,#FDE68A)',
+      padding: '10px 14px',
+      marginBottom: 14,
+      fontSize: 12.5
+    }
+  }, "⚠ The ", /*#__PURE__*/React.createElement("code", null, "payment_methods"), " table has no rows yet (or the migration hasn't been run). The app is falling back to the built-in defaults below. Run the migration to customise.", /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 6,
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap'
+    }
+  }, PM_DEFAULTS.map(m => /*#__PURE__*/React.createElement(MethodPill, {
+    key: m.code,
+    code: m.code
+  })))), !usingDefaults && /*#__PURE__*/React.createElement("div", {
+    className: "table-wrap",
+    style: {
+      marginBottom: 16
+    }
+  }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 44
+    }
+  }), /*#__PURE__*/React.createElement("th", null, "Label"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 150
+    }
+  }, "Code"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 90
+    }
+  }, "Preview"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 90,
+      textAlign: 'center'
+    }
+  }, "Active"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      width: 110
+    }
+  }))), /*#__PURE__*/React.createElement("tbody", null, sorted.map((m, idx) => /*#__PURE__*/React.createElement("tr", {
+    key: m.id,
+    style: {
+      opacity: m.is_active === false ? 0.5 : 1
+    }
+  }, /*#__PURE__*/React.createElement("td", {
+    style: {
+      whiteSpace: 'nowrap'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    title: "Move up",
+    disabled: idx === 0,
+    onClick: () => onMove(m.id, -1),
+    style: {
+      padding: '2px 6px'
+    }
+  }, "↑"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    title: "Move down",
+    disabled: idx === sorted.length - 1,
+    onClick: () => onMove(m.id, 1),
+    style: {
+      padding: '2px 6px'
+    }
+  }, "↓")), /*#__PURE__*/React.createElement("td", null, editingId === m.id ? /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: editLabel,
+    onChange: e => setEditLabel(e.target.value),
+    onKeyDown: e => {
+      if (e.key === 'Enter') saveEdit();
+      if (e.key === 'Escape') setEditingId(null);
+    },
+    autoFocus: true,
+    style: {
+      maxWidth: 220
+    }
+  }) : /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontWeight: 600
+    }
+  }, m.label)), /*#__PURE__*/React.createElement("td", {
+    style: {
+      fontFamily: 'monospace',
+      fontSize: 12
+    }
+  }, m.code), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement(MethodPill, {
+    code: m.code
+  })), /*#__PURE__*/React.createElement("td", {
+    style: {
+      textAlign: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: m.is_active !== false,
+    onChange: e => onUpdate(m.id, {
+      is_active: e.target.checked
+    })
+  })), /*#__PURE__*/React.createElement("td", {
+    style: {
+      textAlign: 'right'
+    }
+  }, editingId === m.id ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary small",
+    onClick: saveEdit
+  }, "Save"), " ", /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => setEditingId(null)
+  }, "✕")) : /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => startEdit(m)
+  }, "Rename"))))))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      alignItems: 'flex-end',
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "New method label"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    placeholder: "e.g. TNG BlueTap",
+    value: newLabel,
+    onChange: e => {
+      setNewLabel(e.target.value);
+      if (!newCode || newCode === suggestCode(newLabel)) setNewCode(suggestCode(e.target.value));
+    },
+    style: {
+      minWidth: 200
+    }
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field",
+    style: {
+      margin: 0
+    }
+  }, /*#__PURE__*/React.createElement("label", null, "Code (stored on payments)"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    placeholder: "tng_bluetap",
+    value: newCode,
+    onChange: e => setNewCode(e.target.value),
+    style: {
+      minWidth: 160,
+      fontFamily: 'monospace'
+    }
+  })), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary",
+    disabled: !newLabel.trim() || usingDefaults,
+    onClick: async () => {
+      await onAdd({
+        code: newCode || suggestCode(newLabel),
+        label: newLabel
+      });
+      setNewLabel('');
+      setNewCode('');
+    }
+  }, "+ Add Method")));
 }
 function InvoiceSettingsPanel({
   settings,
@@ -23648,19 +24298,10 @@ function ShopSale({
     style: {
       flex: 1
     }
-  }, /*#__PURE__*/React.createElement("option", {
-    value: "cash"
-  }, "Cash"), /*#__PURE__*/React.createElement("option", {
-    value: "bank_transfer"
-  }, "Bank Transfer"), /*#__PURE__*/React.createElement("option", {
-    value: "duitnow"
-  }, "DuitNow"), /*#__PURE__*/React.createElement("option", {
-    value: "card"
-  }, "Card"), /*#__PURE__*/React.createElement("option", {
-    value: "cheque"
-  }, "Cheque"), /*#__PURE__*/React.createElement("option", {
-    value: "other"
-  }, "Other")), /*#__PURE__*/React.createElement("input", {
+  }, activeMethods().map(m => /*#__PURE__*/React.createElement("option", {
+    key: m.code,
+    value: m.code
+  }, m.label))), /*#__PURE__*/React.createElement("input", {
     className: "input",
     type: "date",
     value: date,
