@@ -17112,7 +17112,7 @@ function InvoicesView({
   function lineMatchesItem(l, filter) {
     if (filter.startsWith('lt:')) return l.lesson_type_name === filter.slice(3);
     if (filter.startsWith('prod:')) return l.line_type === 'product' && l.description === filter.slice(5);
-    if (filter === '__others') return !l.lesson_type_name && l.line_type !== 'product';
+    if (filter === '__others') return !l.lesson_type_name && l.line_type !== 'product' && l.line_type !== 'adjustment';
     return true;
   }
   function isOverdue(inv) {
@@ -17592,6 +17592,45 @@ function InvoiceDetailPanel({
   const [itemPrice, setItemPrice] = useState('');
   const [itemBusy, setItemBusy] = useState(false);
   const itemTotal = Math.max(1, Number(itemQty) || 1) * (Number(itemPrice) || 0);
+  // Deduction / discount line — stored as a NEGATIVE 'adjustment' line.
+  // Amount is entered positive (less error-prone) and negated on save.
+  const [showDeductForm, setShowDeductForm] = useState(false);
+  const [deductDesc, setDeductDesc] = useState('');
+  const [deductAmt, setDeductAmt] = useState('');
+  const [deductBusy, setDeductBusy] = useState(false);
+  const DEDUCT_REASONS = ['Pro-rata — late start', 'Goodwill adjustment', 'Sibling discount', 'Promo discount'];
+  async function submitDeduct() {
+    const desc = deductDesc.trim();
+    const amt = Math.abs(Number(deductAmt) || 0);
+    if (!desc) {
+      alert('Enter a reason for the deduction — it appears on the invoice.');
+      return;
+    }
+    if (!amt) {
+      alert('Enter a deduction amount.');
+      return;
+    }
+    const curTotal = Number(invoice.total_amount) || 0;
+    if (amt > curTotal) {
+      alert(`Deduction (RM ${amt.toFixed(2)}) exceeds the current invoice total (RM ${curTotal.toFixed(2)}). The total cannot go below zero.`);
+      return;
+    }
+    setDeductBusy(true);
+    try {
+      await onAddLine({
+        description: desc,
+        amount: -amt,
+        lineType: 'adjustment'
+      });
+      setShowDeductForm(false);
+      setDeductDesc('');
+      setDeductAmt('');
+    } catch (err) {
+      alert(err.message || 'Failed to add deduction');
+    } finally {
+      setDeductBusy(false);
+    }
+  }
   async function submitItem() {
     const desc = itemDesc.trim();
     const unit = Number(itemPrice) || 0;
@@ -17811,18 +17850,21 @@ function InvoiceDetailPanel({
     }
   }, "Amount"))), /*#__PURE__*/React.createElement("tbody", null, lines.map(l => {
     const swimmers = getSwimmerNames(l, membersByGroup);
+    const isAdjustment = l.line_type === 'adjustment';
     const isProduct = l.line_type === 'product' || l.line_type === 'other' || l.line_type === 'custom';
     const ltName = l.lesson_type_name || l.description || '—';
     const qty = Number(l.quantity) || 1;
     const unit = qty > 0 ? Number(l.amount || 0) / qty : Number(l.amount || 0);
-    const pkgName = isProduct ? qty > 1 ? `Qty ${qty} × RM${unit.toFixed(2)}` : 'Product / goods' : l.package_name || (l.line_type === 'group_bundle' ? 'Group Bundle' : 'Individual');
+    const amt = Number(l.amount) || 0;
+    const pkgName = isAdjustment ? 'Deduction' : isProduct ? qty > 1 ? `Qty ${qty} × RM${unit.toFixed(2)}` : 'Product / goods' : l.package_name || (l.line_type === 'group_bundle' ? 'Group Bundle' : 'Individual');
     return /*#__PURE__*/React.createElement("tr", {
       key: l.id
     }, /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("div", {
       style: {
-        fontWeight: 600
+        fontWeight: 600,
+        color: isAdjustment ? '#DC2626' : undefined
       }
-    }, isProduct ? '🛍 ' : '', ltName), /*#__PURE__*/React.createElement("div", {
+    }, isAdjustment ? '💸 ' : isProduct ? '🛍 ' : '', ltName), /*#__PURE__*/React.createElement("div", {
       className: "small subtle"
     }, pkgName)), /*#__PURE__*/React.createElement("td", {
       className: "small subtle"
@@ -17830,11 +17872,12 @@ function InvoiceDetailPanel({
       style: {
         textAlign: 'right',
         fontWeight: 600,
-        whiteSpace: 'nowrap'
+        whiteSpace: 'nowrap',
+        color: amt < 0 ? '#DC2626' : undefined
       }
-    }, "RM ", Number(l.amount).toFixed(2), canEditLines && isProduct && /*#__PURE__*/React.createElement("button", {
+    }, amt < 0 ? `−RM ${Math.abs(amt).toFixed(2)}` : `RM ${amt.toFixed(2)}`, canEditLines && (isProduct || isAdjustment) && /*#__PURE__*/React.createElement("button", {
       className: "btn btn-ghost small",
-      title: "Remove item",
+      title: isAdjustment ? 'Remove deduction' : 'Remove item',
       style: {
         marginLeft: 6,
         color: '#DC2626',
@@ -17854,7 +17897,86 @@ function InvoiceDetailPanel({
       fontWeight: 800,
       fontSize: 15
     }
-  }, "RM ", Number(invoice.total_amount || 0).toFixed(2))))), canEditLines && (showItemForm ? /*#__PURE__*/React.createElement("div", {
+  }, "RM ", Number(invoice.total_amount || 0).toFixed(2))))), canEditLines && showDeductForm && /*#__PURE__*/React.createElement("div", {
+    className: "inv-pay-form",
+    style: {
+      marginTop: 8,
+      borderColor: '#FCA5A5'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 700,
+      marginBottom: 6,
+      color: '#B91C1C'
+    }
+  }, "− Add deduction ", /*#__PURE__*/React.createElement("span", {
+    className: "small subtle",
+    style: {
+      fontWeight: 400
+    }
+  }, "(discount / pro-rata / goodwill — shows on the invoice)")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap',
+      marginBottom: 8
+    }
+  }, DEDUCT_REASONS.map(r => /*#__PURE__*/React.createElement("button", {
+    key: r,
+    className: "btn btn-ghost small",
+    style: {
+      fontSize: 11,
+      borderColor: deductDesc === r ? '#DC2626' : undefined,
+      color: deductDesc === r ? '#DC2626' : undefined
+    },
+    onClick: () => setDeductDesc(r)
+  }, r))), /*#__PURE__*/React.createElement("div", {
+    className: "form-grid",
+    style: {
+      gridTemplateColumns: '2fr 130px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", null, "Reason (appears on invoice)"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: deductDesc,
+    onChange: e => setDeductDesc(e.target.value),
+    placeholder: "e.g. Pro-rata — late start, month 2 of 4"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", null, "Amount (RM)"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "number",
+    min: "0",
+    step: "0.01",
+    value: deductAmt,
+    onChange: e => setDeductAmt(e.target.value),
+    placeholder: "0.00"
+  }))), Number(deductAmt) > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "small",
+    style: {
+      color: '#B91C1C',
+      marginTop: 4
+    }
+  }, "Will add: ", /*#__PURE__*/React.createElement("b", null, "−RM ", Math.abs(Number(deductAmt) || 0).toFixed(2)), " → new total RM ", Math.max(0, (Number(invoice.total_amount) || 0) - Math.abs(Number(deductAmt) || 0)).toFixed(2)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      justifyContent: 'flex-end',
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => {
+      setShowDeductForm(false);
+      setDeductDesc('');
+      setDeductAmt('');
+    }
+  }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-danger small",
+    onClick: submitDeduct,
+    disabled: deductBusy || !deductDesc.trim() || !(Number(deductAmt) > 0)
+  }, deductBusy ? 'Adding…' : 'Add deduction'))), canEditLines && (showItemForm ? /*#__PURE__*/React.createElement("div", {
     className: "inv-pay-form",
     style: {
       marginTop: 8
@@ -17944,13 +18066,23 @@ function InvoiceDetailPanel({
     className: "btn btn-primary small",
     onClick: submitItem,
     disabled: itemBusy || !itemDesc.trim() || !(Number(itemPrice) > 0)
-  }, itemBusy ? 'Adding…' : 'Add to invoice'))) : /*#__PURE__*/React.createElement("button", {
+  }, itemBusy ? 'Adding…' : 'Add to invoice'))) : !showDeductForm && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => setShowItemForm(true)
+  }, "+ Add item (product / goods)"), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
     style: {
-      marginTop: 8
+      color: '#B91C1C',
+      borderColor: '#FCA5A5'
     },
-    onClick: () => setShowItemForm(true)
-  }, "+ Add item (product / goods)"))), pmts.length > 0 && /*#__PURE__*/React.createElement("div", {
+    onClick: () => setShowDeductForm(true)
+  }, "− Add deduction (discount)")))), pmts.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 10
     }
@@ -18678,13 +18810,19 @@ function printInvoice(invoice, lines, membersByGroup) {
   const isPaid = outstanding <= 0 && invoice.status !== 'void';
   const logoUrl = window.location.origin + '/logo.png';
   const linesHtml = billable.map(l => {
+    const isAdjustment = l.line_type === 'adjustment';
+    const amt = Number(l.amount) || 0;
+    const amtHtml = amt < 0 ? `<span style="color:#DC2626">&minus;RM ${Math.abs(amt).toFixed(2)}</span>` : `RM ${amt.toFixed(2)}`;
+    if (isAdjustment) {
+      return `<tr><td class="td-desc" style="color:#DC2626">${l.description || 'Deduction'}</td><td class="td-type" style="color:#DC2626">Deduction</td><td class="td-amt">${amtHtml}</td></tr>`;
+    }
     const swimmers = getSwimmerNames(l, membersByGroup);
     // Description = Lesson Type · Package (never the group name)
     const ltName = l.lesson_type_name || l.description || '';
     const pkgName = l.package_name || (l.line_type === 'group_bundle' ? 'Group Bundle' : 'Individual');
     const descText = [ltName, pkgName].filter(Boolean).join(' · ');
     const descHtml = swimmers.length ? `${descText}<div style="font-size:7pt;color:#777;margin-top:2pt;line-height:1.5">${swimmers.join(' &middot; ')}</div>` : descText;
-    return `<tr><td class="td-desc">${descHtml}</td><td class="td-type">${pkgName}</td><td class="td-amt">RM ${Number(l.amount).toFixed(2)}</td></tr>`;
+    return `<tr><td class="td-desc">${descHtml}</td><td class="td-type">${pkgName}</td><td class="td-amt">${amtHtml}</td></tr>`;
   }).join('');
   const branchRow = (() => {
     try {
@@ -18824,12 +18962,18 @@ function printInvoiceAndReceipt(invoice, lines, pmt, membersByGroup) {
   const paidAmt = Number(invoice.amount_paid) || 0;
   const total = Number(invoice.total_amount) || 0;
   const linesHtml = billable.map(l => {
+    const isAdjustment = l.line_type === 'adjustment';
+    const amt = Number(l.amount) || 0;
+    const amtHtml = amt < 0 ? `<span style="color:#DC2626">&minus;RM ${Math.abs(amt).toFixed(2)}</span>` : `RM ${amt.toFixed(2)}`;
+    if (isAdjustment) {
+      return `<tr><td class="td-d" style="color:#DC2626">${l.description || 'Deduction'}</td><td class="td-t" style="color:#DC2626">Deduction</td><td class="td-a">${amtHtml}</td></tr>`;
+    }
     const swimmers = getSwimmerNames(l, membersByGroup);
     const ltName = l.lesson_type_name || l.description || '';
     const pkgName = l.package_name || (l.line_type === 'group_bundle' ? 'Group Bundle' : 'Individual');
     const descText = [ltName, pkgName].filter(Boolean).join(' · ');
     const descHtml = swimmers.length ? `${descText}<div style="font-size:6.5pt;color:#666;margin-top:1pt">${swimmers.join(' &middot; ')}</div>` : descText;
-    return `<tr><td class="td-d">${descHtml}</td><td class="td-t">${pkgName}</td><td class="td-a">RM ${Number(l.amount).toFixed(2)}</td></tr>`;
+    return `<tr><td class="td-d">${descHtml}</td><td class="td-t">${pkgName}</td><td class="td-a">${amtHtml}</td></tr>`;
   }).join('');
   const co = `<img class="logo" src="${logoUrl}" onerror="this.style.display='none'"><div class="co">Star Swim Sdn Bhd (1602674-U)<br>No.137 Jalan Sultan Abdul Jalil, 30000 Ipoh<br>TIN: C59796139050</div>`;
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invoice & Receipt</title>
