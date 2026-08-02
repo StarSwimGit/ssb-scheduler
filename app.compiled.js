@@ -1046,15 +1046,20 @@ function App({
     if (paymentId) {
       const invLines = invoiceLines.filter(l => l.invoice_id === invoiceId && l.is_billable);
       const creditRows = [];
+      // NOTE: PostgREST bulk inserts require every object in the array to have
+      // IDENTICAL keys (else PGRST102 "All object keys must match"). Family rows
+      // and per-student rows must therefore both carry family_group_id AND
+      // student_id, with explicit nulls for whichever doesn't apply.
       invLines.forEach(l => {
         if (l.family_group_id) {
           creditRows.push({
             invoice_id: invoiceId,
             payment_id: paymentId,
             family_group_id: l.family_group_id,
-            lesson_type_id: l.lesson_type_id,
-            package_id: l.package_id,
-            description: l.description,
+            student_id: null,
+            lesson_type_id: l.lesson_type_id ?? null,
+            package_id: l.package_id ?? null,
+            description: l.description ?? null,
             credits_per_swimmer: l.credits_per_swimmer || 4,
             status: 'pending'
           });
@@ -1063,10 +1068,11 @@ function App({
             creditRows.push({
               invoice_id: invoiceId,
               payment_id: paymentId,
+              family_group_id: null,
               student_id: sid,
-              lesson_type_id: l.lesson_type_id,
-              package_id: l.package_id,
-              description: l.description,
+              lesson_type_id: l.lesson_type_id ?? null,
+              package_id: l.package_id ?? null,
+              description: l.description ?? null,
               credits_per_swimmer: l.credits_per_swimmer || 4,
               status: 'pending'
             });
