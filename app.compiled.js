@@ -727,6 +727,9 @@ function App({
     allow_delete_invoice: false
   });
   const [paymentMethods, setPaymentMethods] = useState([]);
+  const [websiteSettings, setWebsiteSettings] = useState(null); // public_schedule_settings row
+  const [publicPricing, setPublicPricing] = useState([]); // public_pricing rows
+
   useEffect(() => {
     boot();
   }, []);
@@ -772,7 +775,7 @@ function App({
   // ── Invoice loaders ────────────────────────────────────────────────
   async function loadInvoiceData() {
     try {
-      const [invRows, lineRows, payRows, pcRows, settRows, pmRows] = await Promise.all([selectAllRows('invoices', '*', '&order=created_at.desc'), selectAllRows('invoice_lines', '*', '&order=invoice_id.asc,sort_order.asc'), selectAllRows('payments', '*', '&order=invoice_id.asc,created_at.asc'), selectAllRows('pending_credits', '*', '&order=created_at.desc'), selectRows('invoice_settings', '*').catch(() => []), selectRows('payment_methods', '*', '&order=sort_order.asc').catch(() => [])]);
+      const [invRows, lineRows, payRows, pcRows, settRows, pmRows, wsRows, ppRows] = await Promise.all([selectAllRows('invoices', '*', '&order=created_at.desc'), selectAllRows('invoice_lines', '*', '&order=invoice_id.asc,sort_order.asc'), selectAllRows('payments', '*', '&order=invoice_id.asc,created_at.asc'), selectAllRows('pending_credits', '*', '&order=created_at.desc'), selectRows('invoice_settings', '*').catch(() => []), selectRows('payment_methods', '*', '&order=sort_order.asc').catch(() => []), selectRows('public_schedule_settings', '*').catch(() => []), selectRows('public_pricing', '*', '&order=category.asc,sort_order.asc').catch(() => [])]);
       setInvoices(invRows || []);
       setInvoiceLines(lineRows || []);
       setPmts(payRows || []);
@@ -780,6 +783,8 @@ function App({
       if (settRows?.[0]) setInvoiceSettings(settRows[0]);
       PM_LIST = pmRows && pmRows.length ? pmRows : null;
       setPaymentMethods(pmRows || []);
+      setWebsiteSettings(wsRows?.[0] || null);
+      setPublicPricing(ppRows || []);
     } catch (e) {
       console.warn('Invoice tables not found — run migrations first.', e);
     }
@@ -888,6 +893,81 @@ function App({
         id: sorted[j].id
       }, {
         sort_order: sorted[i].sort_order ?? i
+      })]);
+      await loadInvoiceData();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to reorder');
+    }
+  }
+
+  // ── Website (public site) settings CRUD ─────────────────────────────
+  async function saveWebsiteSettings(patch) {
+    try {
+      await patchRows('public_schedule_settings', {
+        id: 1
+      }, {
+        ...patch,
+        updated_at: new Date().toISOString()
+      });
+      await loadInvoiceData();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to save — has the website migration been run?');
+    }
+  }
+  async function addPricingCard(card) {
+    try {
+      const maxSort = Math.max(0, ...publicPricing.filter(p => p.category === card.category).map(p => p.sort_order ?? 0));
+      await insertRows('public_pricing', {
+        ...card,
+        sort_order: maxSort + 1
+      });
+      await loadInvoiceData();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to add pricing card');
+    }
+  }
+  async function updatePricingCard(id, patch) {
+    try {
+      await patchRows('public_pricing', {
+        id
+      }, patch);
+      await loadInvoiceData();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to update pricing card');
+    }
+  }
+  async function deletePricingCard(id) {
+    if (!confirm('Delete this pricing card? (Marketing content only — no financial records affected.)')) return;
+    try {
+      await deleteRows('public_pricing', {
+        id
+      });
+      await loadInvoiceData();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to delete pricing card');
+    }
+  }
+  async function movePricingCard(id, dir) {
+    const card = publicPricing.find(p => p.id === id);
+    if (!card) return;
+    const peers = publicPricing.filter(p => p.category === card.category).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    const i = peers.findIndex(p => p.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= peers.length) return;
+    try {
+      await Promise.all([patchRows('public_pricing', {
+        id: peers[i].id
+      }, {
+        sort_order: peers[j].sort_order ?? j
+      }), patchRows('public_pricing', {
+        id: peers[j].id
+      }, {
+        sort_order: peers[i].sort_order ?? i
       })]);
       await loadInvoiceData();
     } catch (err) {
@@ -5820,7 +5900,7 @@ function App({
     className: "side-shell"
   }, /*#__PURE__*/React.createElement("nav", {
     className: "side-nav"
-  }, [['summary', 'Summary'], ['branches', 'Branches'], ['pools', 'Pools & Hours'], ['instructors', 'Instructors'], ['lessonTypes', 'Lesson Types'], ['programme', 'Programme'], ['terms', 'Terms'], ['billingTerms', 'Billing Terms'], ['products', 'Products'], ['paymentMethods', 'Payment Methods'], ['invoiceSettings', 'Invoice Numbering'], ['users', 'Users']].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
+  }, [['summary', 'Summary'], ['branches', 'Branches'], ['pools', 'Pools & Hours'], ['instructors', 'Instructors'], ['lessonTypes', 'Lesson Types'], ['programme', 'Programme'], ['terms', 'Terms'], ['billingTerms', 'Billing Terms'], ['products', 'Products'], ['paymentMethods', 'Payment Methods'], ['invoiceSettings', 'Invoice Numbering'], ['website', 'Website'], ['users', 'Users']].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
     key: k,
     className: `side-nav-btn${adminSection === k ? ' active' : ''}`,
     onClick: () => setAdminSection(k)
@@ -5869,6 +5949,16 @@ function App({
     onAdd: addPaymentMethod,
     onUpdate: updatePaymentMethod,
     onMove: movePaymentMethod
+  }), adminSection === 'website' && /*#__PURE__*/React.createElement(WebsitePanel, {
+    settings: websiteSettings,
+    lessonTypes: options.lessonTypes || [],
+    branches: options.branches || [],
+    pricing: publicPricing,
+    onSaveSettings: saveWebsiteSettings,
+    onAddCard: addPricingCard,
+    onUpdateCard: updatePricingCard,
+    onDeleteCard: deletePricingCard,
+    onMoveCard: movePricingCard
   }), adminSection === 'invoiceSettings' && /*#__PURE__*/React.createElement("div", {
     className: "card"
   }, /*#__PURE__*/React.createElement("div", {
@@ -18330,6 +18420,443 @@ function InvoiceDetailPanel({
     className: "btn btn-ghost small",
     onClick: () => setShowPayForm(false)
   }, "Cancel"))));
+}
+
+// Settings → Website: controls what the public marketing site displays.
+// Two halves: (1) Schedule Preview switchboard — which lesson types /
+// branches surface in the sanitised public_schedule_preview view;
+// (2) Pricing cards — marketing-owned, decoupled from internal packages.
+function WebsitePanel({
+  settings,
+  lessonTypes,
+  branches,
+  pricing,
+  onSaveSettings,
+  onAddCard,
+  onUpdateCard,
+  onDeleteCard,
+  onMoveCard
+}) {
+  const migrated = settings != null;
+  const visLt = new Set(settings?.visible_lesson_type_ids || []);
+  const visBr = new Set(settings?.visible_branch_ids || []);
+  function toggleLt(id) {
+    const next = new Set(visLt);
+    next.has(id) ? next.delete(id) : next.add(id);
+    onSaveSettings({
+      visible_lesson_type_ids: [...next]
+    });
+  }
+  function toggleBr(id) {
+    const next = new Set(visBr);
+    next.has(id) ? next.delete(id) : next.add(id);
+    onSaveSettings({
+      visible_branch_ids: [...next]
+    });
+  }
+  // ── pricing editor state ──
+  const emptyCard = {
+    category: 'Toddlers',
+    title: '',
+    subtitle: '',
+    price: '',
+    unit: '/month',
+    features: '',
+    badge: '',
+    is_published: false
+  };
+  const [editing, setEditing] = useState(null); // null | 'new' | card id
+  const [draft, setDraft] = useState(emptyCard);
+  function startNew() {
+    setEditing('new');
+    setDraft(emptyCard);
+  }
+  function startEdit(c) {
+    setEditing(c.id);
+    setDraft({
+      category: c.category || '',
+      title: c.title || '',
+      subtitle: c.subtitle || '',
+      price: String(c.price ?? ''),
+      unit: c.unit || '',
+      features: (c.features || []).join('\n'),
+      badge: c.badge || '',
+      is_published: c.is_published !== false
+    });
+  }
+  async function saveDraft() {
+    const payload = {
+      category: (draft.category || 'General').trim() || 'General',
+      title: draft.title.trim(),
+      subtitle: draft.subtitle.trim() || null,
+      price: Number(draft.price) || 0,
+      unit: draft.unit.trim() || null,
+      features: draft.features.split('\n').map(s => s.trim()).filter(Boolean),
+      badge: draft.badge.trim() || null,
+      is_published: !!draft.is_published
+    };
+    if (!payload.title) {
+      alert('Card title is required');
+      return;
+    }
+    if (editing === 'new') await onAddCard(payload);else await onUpdateCard(editing, payload);
+    setEditing(null);
+  }
+  const cats = [...new Set(pricing.map(p => p.category || 'General'))];
+  // Toddlers + LTS Children lead, per marketing priority
+  cats.sort((a, b) => {
+    const pri = c => c === 'Toddlers' ? 0 : c === 'LTS Children' ? 1 : 2;
+    return pri(a) - pri(b) || a.localeCompare(b);
+  });
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 16
+    }
+  }, !migrated && /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      background: '#FEF3C7',
+      border: '1px solid #FDE68A',
+      padding: '10px 14px',
+      fontSize: 12.5
+    }
+  }, "⚠ Website tables not found — run ", /*#__PURE__*/React.createElement("code", null, "supabase_public_website_migration.sql"), " first. Controls below will save once the migration is in."), /*#__PURE__*/React.createElement("div", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 800,
+      fontSize: 18,
+      marginBottom: 4
+    }
+  }, "🗓 Public Schedule Preview"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginBottom: 12
+    }
+  }, "Shows this week's timetable on the website as a Mon–Sun grid with availability chips (Available / Limited / Full). Public visitors see ", /*#__PURE__*/React.createElement("b", null, "lesson type, branch, day, time and availability only"), " — never student or instructor names. Sessions with zero swimmers show as fully available, so you can seed slots you want to promote."), /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      fontWeight: 700,
+      marginBottom: 14,
+      cursor: 'pointer'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: settings?.enabled === true,
+    disabled: !migrated,
+    onChange: e => onSaveSettings({
+      enabled: e.target.checked
+    })
+  }), "Show schedule preview on the website"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: '1fr 1fr',
+      gap: 16
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "field-label",
+    style: {
+      marginBottom: 6
+    }
+  }, "Visible lesson types ", /*#__PURE__*/React.createElement("span", {
+    className: "subtle"
+  }, "(explicit opt-in)")), (lessonTypes || []).filter(t => t.is_active !== false).map(t => /*#__PURE__*/React.createElement("label", {
+    key: t.id,
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      padding: '3px 0',
+      cursor: 'pointer',
+      fontSize: 13
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: visLt.has(t.id),
+    disabled: !migrated,
+    onChange: () => toggleLt(t.id)
+  }), t.name)), (lessonTypes || []).length === 0 && /*#__PURE__*/React.createElement("div", {
+    className: "small subtle"
+  }, "No lesson types configured.")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "field-label",
+    style: {
+      marginBottom: 6
+    }
+  }, "Visible branches ", /*#__PURE__*/React.createElement("span", {
+    className: "subtle"
+  }, "(none ticked = all)")), (branches || []).map(b => /*#__PURE__*/React.createElement("label", {
+    key: b.id,
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      padding: '3px 0',
+      cursor: 'pointer',
+      fontSize: 13
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: visBr.has(b.id),
+    disabled: !migrated,
+    onChange: () => toggleBr(b.id)
+  }), b.name, b.code ? ` (${b.code})` : ''))))), /*#__PURE__*/React.createElement("div", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 4
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 800,
+      fontSize: 18
+    }
+  }, "💰 Public Pricing Cards"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary small",
+    style: {
+      marginLeft: 'auto'
+    },
+    disabled: !migrated,
+    onClick: startNew
+  }, "+ New card")), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle",
+    style: {
+      marginBottom: 12
+    }
+  }, "Marketing prices — deliberately separate from internal packages, so billing changes never leak to the website by accident. Only ", /*#__PURE__*/React.createElement("b", null, "published"), " cards appear publicly. Categories become tabs; Toddlers and LTS Children always lead."), editing != null && /*#__PURE__*/React.createElement("div", {
+    className: "inv-pay-form",
+    style: {
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 700,
+      marginBottom: 8
+    }
+  }, editing === 'new' ? 'New pricing card' : 'Edit pricing card'), /*#__PURE__*/React.createElement("div", {
+    className: "form-grid",
+    style: {
+      gridTemplateColumns: '1fr 1fr 110px 110px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", null, "Title"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: draft.title,
+    onChange: e => setDraft({
+      ...draft,
+      title: e.target.value
+    }),
+    placeholder: "e.g. Group Lessons"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", null, "Category (tab)"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    list: "pp-cats",
+    value: draft.category,
+    onChange: e => setDraft({
+      ...draft,
+      category: e.target.value
+    }),
+    placeholder: "Toddlers"
+  }), /*#__PURE__*/React.createElement("datalist", {
+    id: "pp-cats"
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "Toddlers"
+  }), /*#__PURE__*/React.createElement("option", {
+    value: "LTS Children"
+  }), /*#__PURE__*/React.createElement("option", {
+    value: "Private"
+  }), /*#__PURE__*/React.createElement("option", {
+    value: "Adults"
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", null, "Price (RM)"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "number",
+    min: "0",
+    step: "1",
+    value: draft.price,
+    onChange: e => setDraft({
+      ...draft,
+      price: e.target.value
+    }),
+    placeholder: "180"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", null, "Unit"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: draft.unit,
+    onChange: e => setDraft({
+      ...draft,
+      unit: e.target.value
+    }),
+    placeholder: "/month"
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "form-grid",
+    style: {
+      gridTemplateColumns: '2fr 1fr'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", null, "Subtitle"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: draft.subtitle,
+    onChange: e => setDraft({
+      ...draft,
+      subtitle: e.target.value
+    }),
+    placeholder: "e.g. 4 lessons per month · max 4 per coach"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", null, "Badge (optional)"), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    value: draft.badge,
+    onChange: e => setDraft({
+      ...draft,
+      badge: e.target.value
+    }),
+    placeholder: "Most Popular"
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "field"
+  }, /*#__PURE__*/React.createElement("label", null, "Features — one per line"), /*#__PURE__*/React.createElement("textarea", {
+    className: "textarea",
+    style: {
+      minHeight: 80
+    },
+    value: draft.features,
+    onChange: e => setDraft({
+      ...draft,
+      features: e.target.value
+    }),
+    placeholder: '50-minute lessons\nCertified coaches\nProgress tracking with badges'
+  })), /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      cursor: 'pointer',
+      fontSize: 13,
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: draft.is_published,
+    onChange: e => setDraft({
+      ...draft,
+      is_published: e.target.checked
+    })
+  }), "Published (visible on the website)"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      justifyContent: 'flex-end'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    onClick: () => setEditing(null)
+  }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary small",
+    onClick: saveDraft
+  }, editing === 'new' ? 'Add card' : 'Save changes'))), cats.length === 0 && /*#__PURE__*/React.createElement("div", {
+    className: "small subtle"
+  }, "No pricing cards yet."), cats.map(cat => {
+    const rows = pricing.filter(p => (p.category || 'General') === cat).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    return /*#__PURE__*/React.createElement("div", {
+      key: cat,
+      style: {
+        marginBottom: 14
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: 700,
+        fontSize: 13,
+        margin: '6px 0',
+        color: 'var(--text-2)'
+      }
+    }, cat), /*#__PURE__*/React.createElement("div", {
+      className: "table-wrap"
+    }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("tbody", null, rows.map((c, idx) => /*#__PURE__*/React.createElement("tr", {
+      key: c.id,
+      style: {
+        opacity: c.is_published ? 1 : 0.5
+      }
+    }, /*#__PURE__*/React.createElement("td", {
+      style: {
+        whiteSpace: 'nowrap',
+        width: 70
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      disabled: idx === 0,
+      onClick: () => onMoveCard(c.id, -1),
+      style: {
+        padding: '2px 6px'
+      }
+    }, "↑"), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      disabled: idx === rows.length - 1,
+      onClick: () => onMoveCard(c.id, 1),
+      style: {
+        padding: '2px 6px'
+      }
+    }, "↓")), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontWeight: 700
+      }
+    }, c.title), c.badge && /*#__PURE__*/React.createElement("span", {
+      className: "pm-pill pm-amber",
+      style: {
+        marginLeft: 6
+      }
+    }, c.badge), c.subtitle && /*#__PURE__*/React.createElement("div", {
+      className: "small subtle"
+    }, c.subtitle)), /*#__PURE__*/React.createElement("td", {
+      style: {
+        whiteSpace: 'nowrap',
+        fontWeight: 700
+      }
+    }, "RM ", Number(c.price).toFixed(0), /*#__PURE__*/React.createElement("span", {
+      className: "small subtle"
+    }, c.unit || '')), /*#__PURE__*/React.createElement("td", {
+      className: "small subtle",
+      style: {
+        maxWidth: 260
+      }
+    }, (c.features || []).join(' · ')), /*#__PURE__*/React.createElement("td", {
+      style: {
+        whiteSpace: 'nowrap',
+        textAlign: 'right'
+      }
+    }, /*#__PURE__*/React.createElement("label", {
+      className: "small",
+      style: {
+        marginRight: 8,
+        cursor: 'pointer'
+      }
+    }, /*#__PURE__*/React.createElement("input", {
+      type: "checkbox",
+      checked: c.is_published === true,
+      onChange: e => onUpdateCard(c.id, {
+        is_published: e.target.checked
+      })
+    }), " live"), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      onClick: () => startEdit(c)
+    }, "Edit"), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      style: {
+        color: '#DC2626'
+      },
+      onClick: () => onDeleteCard(c.id)
+    }, "🗑"))))))));
+  })));
 }
 
 // Small coloured pill for a payment method — used on invoice rows, receipts and filters.
