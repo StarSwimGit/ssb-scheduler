@@ -411,6 +411,57 @@
     footer{background:var(--navy);color:#BAE6FD;padding:28px 0;font-size:13px}
     .ft{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
     .ft a:hover{color:#fff}
+
+    /* ── Public Schedule Preview (#schedule) ─────────────────────────── */
+    .sched-filters{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:22px 0 6px}
+    .sched-pill{border:1.5px solid var(--border);background:#fff;color:var(--text-2);border-radius:999px;padding:6px 16px;font-size:13px;font-weight:700;cursor:pointer;transition:all .15s ease;font-family:inherit}
+    .sched-pill:hover{border-color:var(--primary);color:var(--primary)}
+    .sched-pill.on{background:var(--primary);border-color:var(--primary);color:#fff}
+    .sched-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-top:20px}
+    .sched-day{background:#fff;border:1px solid var(--border);border-radius:14px;padding:10px 8px;min-height:120px}
+    .sched-day-h{font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--navy);text-align:center;padding-bottom:8px;border-bottom:2px solid var(--border);margin-bottom:8px}
+    .sched-slot{border-radius:10px;padding:7px 8px;margin-bottom:6px;background:#F8FBFF;border:1px solid var(--border)}
+    .sched-slot.is-full{opacity:.62}
+    .sched-time{font-size:12px;font-weight:800;color:var(--navy);line-height:1.2}
+    .sched-lt{font-size:11px;font-weight:600;color:var(--text-2);margin-top:1px}
+    .sched-br{font-size:10px;color:var(--text-2);opacity:.75}
+    .sched-chip{display:inline-block;margin-top:5px;font-size:9.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;border-radius:999px;padding:2px 8px}
+    .sched-chip.available{background:#DCFCE7;color:#166534}
+    .sched-chip.limited{background:#FEF3C7;color:#92400E}
+    .sched-chip.full{background:#E2E8F0;color:#475569}
+    .sched-empty{font-size:11px;color:var(--text-2);opacity:.5;text-align:center;padding:14px 0}
+    .sched-legend{display:flex;gap:14px;justify-content:center;margin-top:18px;flex-wrap:wrap}
+    .sched-note{text-align:center;font-size:12.5px;color:var(--text-2);margin-top:14px}
+    @media (max-width:980px){
+      .sched-grid{grid-template-columns:1fr;gap:8px}
+      .sched-day{min-height:auto}
+      .sched-day:has(.sched-empty){display:none}
+      .sched-day-h{text-align:left;padding-left:4px}
+    }
+    /* ── Pricing (#pricing) ──────────────────────────────────────────── */
+    .price-tabs{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:24px 0 4px}
+    .price-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:20px;margin-top:24px;max-width:900px;margin-left:auto;margin-right:auto}
+    .price-card{position:relative;background:#fff;border:1px solid var(--border);border-radius:20px;padding:28px 24px 22px;display:flex;flex-direction:column;box-shadow:0 14px 34px -22px rgba(31,102,148,.3);transition:transform .18s ease,box-shadow .18s ease}
+    .price-card:hover{transform:translateY(-4px);box-shadow:0 24px 48px -22px rgba(31,102,148,.42)}
+    .price-badge{position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:linear-gradient(90deg,#ffc93d,#f2a017);color:#7C3E00;font-size:10.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:4px 14px;border-radius:999px;box-shadow:0 6px 14px -6px rgba(242,160,23,.7);white-space:nowrap}
+    .price-card.has-badge{border-color:#FCD34D}
+    .price-title{font-size:16.5px;font-weight:800;color:var(--navy)}
+    .price-sub{font-size:12px;color:var(--text-2);margin-top:3px;min-height:16px}
+    .price-amount{margin:16px 0 4px;color:var(--navy)}
+    .price-amount .cur{font-size:15px;font-weight:700;vertical-align:top;position:relative;top:8px}
+    .price-amount .val{font-size:42px;font-weight:900;letter-spacing:-.03em}
+    .price-amount .unit{font-size:13px;font-weight:600;color:var(--text-2)}
+    .price-feats{list-style:none;margin:12px 0 18px;padding:0;flex:1}
+    .price-feats li{font-size:13px;color:var(--text-2);padding:5px 0;display:flex;gap:9px;align-items:flex-start;line-height:1.45}
+    .price-feats li::before{content:"";flex-shrink:0;width:16px;height:16px;margin-top:1px;border-radius:50%;background:#DCFCE7 url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="m4.5 8.5 2.5 2.5 4.5-5" stroke="%23166534" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>') center/12px no-repeat}
+    .price-ctas{display:flex;gap:8px}
+    .price-cta{flex:1;text-align:center;text-decoration:none;font-size:13px;font-weight:800;padding:10px 8px;border-radius:10px;transition:transform .15s ease,box-shadow .15s ease;font-family:inherit}
+    .price-cta.main{color:#fff;background:linear-gradient(180deg,#38aee6,#1580c9);box-shadow:0 10px 20px -10px rgba(24,147,212,.75)}
+    .price-cta.main:hover{transform:translateY(-1px)}
+    .price-cta.wa{color:#128C3E;border:1.5px solid #86EFAC;background:#F0FDF4}
+    .price-cta.wa:hover{background:#DCFCE7}
+    .price-note{text-align:center;font-size:12.5px;color:var(--text-2);margin-top:18px}
+
   </style>
 </head>
 <body>
@@ -477,6 +528,8 @@
     <a class="hd-brand" href="#top"><img src="./logo.png" alt="Star Swim logo" /> Star Swim</a>
     <nav class="hd-nav">
       <a class="hd-link" href="#programmes">Programmes</a>
+      <a class="hd-link" href="#schedule" id="nav-schedule" style="display:none">Schedule</a>
+      <a class="hd-link" href="#pricing" id="nav-pricing" style="display:none">Pricing</a>
       <a class="hd-link" href="#pathways">Accreditations</a>
       <a class="hd-link" href="#why">Why Us</a>
       <a class="hd-link" href="#how">Getting Started</a>
@@ -627,6 +680,36 @@
         <!-- Character illustration — centred, standing over the diagonal seam -->
         <img class="join-character" src="./join-character.png" alt="" aria-hidden="true"/>
       </div>
+    </div>
+  </section>
+
+  <!-- ── Public Schedule Preview — data-driven, hidden until enabled ── -->
+  <section class="alt" id="schedule" style="padding-top:36px;display:none">
+    <div class="wrap">
+      <div class="kicker">This week at Star Swim</div>
+      <h2 class="sec-title">Live class <em>availability</em></h2>
+      <p class="sec-sub">A real look at our week — see which days and times suit your family before you register. Green means places are open.</p>
+      <div class="sched-filters" id="sched-lt-filters"></div>
+      <div class="sched-filters" id="sched-br-filters" style="margin-top:0"></div>
+      <div class="sched-grid" id="sched-grid"></div>
+      <div class="sched-legend">
+        <span class="sched-chip available">Available</span>
+        <span class="sched-chip limited">Few places left</span>
+        <span class="sched-chip full">Full</span>
+      </div>
+      <div class="sched-note">Times shown are this week&rsquo;s classes. Availability changes daily — <a href="./intake.html" style="color:var(--primary);font-weight:700">register interest</a> and we&rsquo;ll fit your swimmer to the right slot.</div>
+    </div>
+  </section>
+
+  <!-- ── Pricing — data-driven, hidden until cards are published ── -->
+  <section class="alt" id="pricing" style="padding-top:36px;display:none">
+    <div class="wrap">
+      <div class="kicker">Pricing</div>
+      <h2 class="sec-title">Simple, honest <em>pricing</em></h2>
+      <p class="sec-sub">No registration fees hidden in the fine print. Pick the programme that fits — we&rsquo;ll help you choose the right level at assessment.</p>
+      <div class="price-tabs" id="price-tabs"></div>
+      <div class="price-grid" id="price-grid"></div>
+      <div class="price-note">Prices shown are per swimmer. Sibling discounts and term passes available — ask us on WhatsApp.</div>
     </div>
   </section>
 
@@ -1362,5 +1445,126 @@ document.querySelectorAll('.faq details').forEach(function(d){
   });
 })();
 </script>
+
+  <!-- ── Public data: schedule preview + pricing (reads sanitised projections only) ── -->
+  <script src="./config.js"></script>
+  <script>
+  (function(){
+    var CFG = window.APP_CONFIG || {};
+    if(!CFG.supabaseUrl || !CFG.supabaseAnonKey) return;
+    function fetchRows(path){
+      return fetch(CFG.supabaseUrl + '/rest/v1/' + path, {
+        headers: { apikey: CFG.supabaseAnonKey, Authorization: 'Bearer ' + CFG.supabaseAnonKey }
+      }).then(function(r){ return r.ok ? r.json() : []; }).catch(function(){ return []; });
+    }
+    function h(tag, cls, text){ var el=document.createElement(tag); if(cls)el.className=cls; if(text!=null)el.textContent=text; return el; }
+    function t12(hm){ // "19:00" → "7:00 PM"
+      var p=hm.split(':'), H=+p[0], M=p[1];
+      var ap=H>=12?'PM':'AM'; H=H%12; if(H===0)H=12;
+      return H+':'+M+' '+ap;
+    }
+    var DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+    // ── Schedule ──
+    fetchRows('public_schedule_preview?select=*').then(function(rows){
+      if(!rows || !rows.length) return; // disabled or nothing visible → section stays hidden
+      var sec=document.getElementById('schedule'); if(!sec) return;
+      sec.style.display=''; var nl=document.getElementById('nav-schedule'); if(nl)nl.style.display='';
+      var ltSel=null, brSel=null;
+      var lts=[]; var brs=[];
+      rows.forEach(function(r){
+        if(r.lesson_type && lts.indexOf(r.lesson_type)<0) lts.push(r.lesson_type);
+        if(r.branch && brs.indexOf(r.branch)<0) brs.push(r.branch);
+      });
+      function pills(containerId, items, getSel, setSel){
+        var box=document.getElementById(containerId); box.innerHTML='';
+        if(items.length<2) return; // filter pointless with 0/1 option
+        var all=h('button','sched-pill'+(getSel()==null?' on':''),'All');
+        all.onclick=function(){ setSel(null); render(); };
+        box.appendChild(all);
+        items.forEach(function(name){
+          var b=h('button','sched-pill'+(getSel()===name?' on':''),name);
+          b.onclick=function(){ setSel(getSel()===name?null:name); render(); };
+          box.appendChild(b);
+        });
+      }
+      function render(){
+        pills('sched-lt-filters', lts, function(){return ltSel;}, function(v){ltSel=v;});
+        pills('sched-br-filters', brs, function(){return brSel;}, function(v){brSel=v;});
+        var grid=document.getElementById('sched-grid'); grid.innerHTML='';
+        for(var d=1; d<=7; d++){
+          var col=h('div','sched-day');
+          col.appendChild(h('div','sched-day-h',DAYS[d-1]));
+          var daySlots=rows.filter(function(r){
+            return r.weekday===d
+              && (ltSel==null || r.lesson_type===ltSel)
+              && (brSel==null || r.branch===brSel);
+          });
+          if(!daySlots.length){ col.appendChild(h('div','sched-empty','—')); }
+          daySlots.forEach(function(r){
+            var s=h('div','sched-slot'+(r.status==='full'?' is-full':''));
+            s.appendChild(h('div','sched-time',t12(r.start_time)+' – '+t12(r.end_time)));
+            s.appendChild(h('div','sched-lt',r.lesson_type||''));
+            if(r.branch && brs.length>1) s.appendChild(h('div','sched-br',r.branch));
+            var chipTxt=r.status==='full'?'Full':r.status==='limited'?'Few left':'Available';
+            s.appendChild(h('span','sched-chip '+r.status,chipTxt));
+            col.appendChild(s);
+          });
+          grid.appendChild(col);
+        }
+      }
+      render();
+    });
+
+    // ── Pricing ──
+    fetchRows('public_pricing?select=*&is_published=eq.true&order=sort_order.asc').then(function(cards){
+      if(!cards || !cards.length) return;
+      var sec=document.getElementById('pricing'); if(!sec) return;
+      sec.style.display=''; var nl=document.getElementById('nav-pricing'); if(nl)nl.style.display='';
+      var cats=[]; cards.forEach(function(c){ var k=c.category||'General'; if(cats.indexOf(k)<0)cats.push(k); });
+      cats.sort(function(a,b){
+        function pri(c){ return c==='Toddlers'?0 : c==='LTS Children'?1 : 2; }
+        return pri(a)-pri(b) || a.localeCompare(b);
+      });
+      var cur=cats[0];
+      function renderTabs(){
+        var box=document.getElementById('price-tabs'); box.innerHTML='';
+        if(cats.length<2) return;
+        cats.forEach(function(c){
+          var b=h('button','sched-pill'+(cur===c?' on':''),c);
+          b.onclick=function(){ cur=c; renderTabs(); renderCards(); };
+          box.appendChild(b);
+        });
+      }
+      function renderCards(){
+        var grid=document.getElementById('price-grid'); grid.innerHTML='';
+        cards.filter(function(c){ return (c.category||'General')===cur; }).forEach(function(c){
+          var card=h('div','price-card'+(c.badge?' has-badge':''));
+          if(c.badge) card.appendChild(h('div','price-badge',c.badge));
+          card.appendChild(h('div','price-title',c.title));
+          card.appendChild(h('div','price-sub',c.subtitle||''));
+          var amt=h('div','price-amount');
+          amt.appendChild(h('span','cur','RM '));
+          amt.appendChild(h('span','val',String(Math.round(Number(c.price)||0))));
+          if(c.unit) amt.appendChild(h('span','unit',' '+c.unit));
+          card.appendChild(amt);
+          var ul=h('ul','price-feats');
+          (c.features||[]).forEach(function(f){ ul.appendChild(h('li',null,f)); });
+          card.appendChild(ul);
+          var ctas=h('div','price-ctas');
+          var reg=h('a','price-cta main','Register');
+          reg.href='./intake.html';
+          var wa=h('a','price-cta wa','WhatsApp');
+          wa.href='https://wa.me/60122539655?text='+encodeURIComponent('Hi Star Swim! I\u2019d like to ask about '+c.title+' ('+(c.category||'')+').');
+          wa.target='_blank'; wa.rel='noopener';
+          ctas.appendChild(reg); ctas.appendChild(wa);
+          card.appendChild(ctas);
+          grid.appendChild(card);
+        });
+      }
+      renderTabs(); renderCards();
+    });
+  })();
+  </script>
 </body>
 </html>
