@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Weekly Schedule — Star Swim</title>
+  <meta name="description" content="This week's live class availability at Star Swim — see which days and times have places open before you register."/>
+  <link rel="icon" href="./logo.png"/>
+  <style>
+    :root{
+      --primary:#0EA5E9; --primary-2:#0284C7; --bg:#EEF7FD;
+      --navy:#0C4A6E; --deep:#075985; --text:#0F172A; --text-2:#475569; --border:#DBEAFE;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    html{scroll-behavior:smooth}
+    body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;color:var(--text);background:var(--bg);line-height:1.6}
+    a{color:inherit;text-decoration:none}
+    .wrap{max-width:1080px;margin:0 auto;padding:0 22px}
+    header{background:#fff;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:50}
+    .hd{display:flex;align-items:center;justify-content:space-between;height:64px}
+    .hd-brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:17px;letter-spacing:-.3px}
+    .hd-brand img{height:36px}
+    .hd-right{display:flex;align-items:center;gap:14px;font-size:14px;font-weight:600;color:var(--text-2)}
+    .hd-right a:hover{color:var(--primary)}
+    .btn-solid{background:var(--primary);color:#fff;padding:6px 14px;font-size:13px;border-radius:8px;font-weight:700}
+    .btn-solid:hover{background:var(--primary-2);color:#fff}
+    main{padding:44px 0 70px}
+    .kicker{display:inline-flex;align-items:center;gap:7px;background:#DBEFFB;color:var(--primary-2);font-size:11.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;border-radius:999px;padding:6px 16px}
+    .kicker::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--primary)}
+    .page-head{text-align:center;margin-bottom:8px}
+    h1{font-size:clamp(24px,3.6vw,34px);font-weight:900;letter-spacing:-.6px;color:var(--navy);margin:12px 0 8px}
+    h1 em{font-style:normal;color:var(--primary)}
+    .sub{max-width:560px;margin:0 auto;color:var(--text-2);font-size:14.5px;text-align:center}
+    /* Filters */
+    .sched-filters{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:24px 0 4px}
+    .sched-pill{border:1.5px solid var(--border);background:#fff;color:var(--text-2);border-radius:999px;padding:7px 16px;font-size:13px;font-weight:700;cursor:pointer;transition:all .15s ease;font-family:inherit}
+    .sched-pill:hover{border-color:var(--primary);color:var(--primary)}
+    .sched-pill.on{background:var(--primary);border-color:var(--primary);color:#fff}
+    /* Grid */
+    .sched-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-top:22px}
+    .sched-day{background:#fff;border:1px solid var(--border);border-radius:14px;padding:10px 8px;min-height:120px}
+    .sched-day-h{font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--navy);text-align:center;padding-bottom:8px;border-bottom:2px solid var(--border);margin-bottom:8px}
+    .sched-slot{border-radius:10px;padding:8px 9px;margin-bottom:6px;background:#F8FBFF;border:1px solid var(--border)}
+    .sched-slot.is-full{opacity:.62}
+    .sched-time{font-size:12.5px;font-weight:800;color:var(--navy);line-height:1.25}
+    .sched-lt{font-size:11.5px;font-weight:600;color:var(--text-2);margin-top:1px}
+    .sched-br{font-size:10.5px;color:var(--text-2);opacity:.75}
+    .sched-chip{display:inline-block;margin-top:5px;font-size:9.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;border-radius:999px;padding:2px 8px}
+    .sched-chip.available{background:#DCFCE7;color:#166534}
+    .sched-chip.limited{background:#FEF3C7;color:#92400E}
+    .sched-chip.full{background:#E2E8F0;color:#475569}
+    .sched-empty{font-size:11px;color:var(--text-2);opacity:.5;text-align:center;padding:14px 0}
+    .sched-legend{display:flex;gap:14px;justify-content:center;margin-top:20px;flex-wrap:wrap}
+    .sched-note{text-align:center;font-size:12.5px;color:var(--text-2);margin-top:16px}
+    .sched-note a{color:var(--primary);font-weight:700}
+    /* Empty / disabled state */
+    .sched-off{max-width:520px;margin:50px auto;background:#fff;border:1px solid var(--border);border-radius:18px;padding:36px 28px;text-align:center;display:none}
+    .sched-off h2{font-size:19px;font-weight:800;color:var(--navy);margin-bottom:8px}
+    .sched-off p{font-size:13.5px;color:var(--text-2);margin-bottom:18px}
+    .cta{display:inline-flex;align-items:center;gap:9px;background:linear-gradient(180deg,#38aee6,#1580c9);color:#fff;font-weight:800;font-size:14px;padding:12px 26px;border-radius:999px;box-shadow:0 12px 24px -10px rgba(24,147,212,.75)}
+    footer{border-top:1px solid var(--border);background:#fff;padding:18px 0;font-size:12px;color:var(--text-2)}
+    .ft{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+    @media (max-width:980px){
+      .sched-grid{grid-template-columns:1fr;gap:8px}
+      .sched-day{min-height:auto}
+      .sched-day.is-empty{display:none}
+      .sched-day-h{text-align:left;padding-left:4px}
+    }
+    @media (max-width:560px){
+      main{padding:30px 0 54px}
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="wrap hd">
+    <a class="hd-brand" href="./index.html"><img src="./logo.png" alt="Star Swim logo"/> Star Swim</a>
+    <div class="hd-right">
+      <a href="./index.html">← Back to site</a>
+      <a class="btn-solid" href="./intake.html">Register</a>
+    </div>
+  </div>
+</header>
+<main>
+  <div class="wrap">
+    <div class="page-head">
+      <span class="kicker">This week at Star Swim</span>
+      <h1>Live class <em>availability</em></h1>
+      <p class="sub">A real look at our week — see which days and times suit your family before you register. Green means places are open.</p>
+    </div>
+    <div class="sched-filters" id="sched-lt-filters"></div>
+    <div class="sched-filters" id="sched-br-filters" style="margin-top:0"></div>
+    <div class="sched-grid" id="sched-grid" style="display:none"></div>
+    <div class="sched-legend" id="sched-legend" style="display:none">
+      <span class="sched-chip available">Available</span>
+      <span class="sched-chip limited">Few places left</span>
+      <span class="sched-chip full">Full</span>
+    </div>
+    <div class="sched-note" id="sched-note" style="display:none">Times shown are this week&rsquo;s classes. Availability changes daily — <a href="./intake.html">register interest</a> and we&rsquo;ll fit your swimmer to the right slot.</div>
+    <div class="sched-off" id="sched-off">
+      <h2>Timetable coming soon</h2>
+      <p>Our weekly schedule preview isn&rsquo;t live at the moment. Message us on WhatsApp for current class times, or register interest and we&rsquo;ll match your swimmer to a slot.</p>
+      <a class="cta" href="./intake.html">Register Interest →</a>
+    </div>
+  </div>
+</main>
+<footer>
+  <div class="wrap ft">
+    <span>© Star Swim Sdn Bhd (1602674-U) · Ipoh, Perak</span>
+    <span><a href="https://wa.me/60122539655" style="color:var(--primary);font-weight:700">WhatsApp +60 12-253 9655</a></span>
+  </div>
+</footer>
+<script src="./config.js"></script>
+<script>
+(function(){
+  var CFG = window.APP_CONFIG || {};
+  function offState(){ document.getElementById('sched-off').style.display='block'; }
+  if(!CFG.supabaseUrl || !CFG.supabaseAnonKey){ offState(); return; }
+  fetch(CFG.supabaseUrl + '/rest/v1/public_schedule_preview?select=*', {
+    headers: { apikey: CFG.supabaseAnonKey, Authorization: 'Bearer ' + CFG.supabaseAnonKey }
+  }).then(function(r){ return r.ok ? r.json() : []; }).catch(function(){ return []; })
+  .then(function(rows){
+    if(!rows || !rows.length){ offState(); return; }
+    ['sched-grid','sched-legend','sched-note'].forEach(function(id){ document.getElementById(id).style.display=''; });
+    var DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    function h(tag,cls,text){ var el=document.createElement(tag); if(cls)el.className=cls; if(text!=null)el.textContent=text; return el; }
+    function t12(hm){ var p=hm.split(':'),H=+p[0],M=p[1],ap=H>=12?'PM':'AM'; H=H%12; if(H===0)H=12; return H+':'+M+' '+ap; }
+    var ltSel=null, brSel=null, lts=[], brs=[];
+    rows.forEach(function(r){
+      if(r.lesson_type && lts.indexOf(r.lesson_type)<0) lts.push(r.lesson_type);
+      if(r.branch && brs.indexOf(r.branch)<0) brs.push(r.branch);
+    });
+    function pills(id, items, get, set){
+      var box=document.getElementById(id); box.innerHTML='';
+      if(items.length<2) return;
+      var all=h('button','sched-pill'+(get()==null?' on':''),'All');
+      all.onclick=function(){ set(null); render(); };
+      box.appendChild(all);
+      items.forEach(function(name){
+        var b=h('button','sched-pill'+(get()===name?' on':''),name);
+        b.onclick=function(){ set(get()===name?null:name); render(); };
+        box.appendChild(b);
+      });
+    }
+    function render(){
+      pills('sched-lt-filters',lts,function(){return ltSel;},function(v){ltSel=v;});
+      pills('sched-br-filters',brs,function(){return brSel;},function(v){brSel=v;});
+      var grid=document.getElementById('sched-grid'); grid.innerHTML='';
+      for(var d=1; d<=7; d++){
+        var daySlots=rows.filter(function(r){
+          return r.weekday===d && (ltSel==null||r.lesson_type===ltSel) && (brSel==null||r.branch===brSel);
+        });
+        var col=h('div','sched-day'+(daySlots.length?'':' is-empty'));
+        col.appendChild(h('div','sched-day-h',DAYS[d-1]));
+        if(!daySlots.length){ col.appendChild(h('div','sched-empty','—')); }
+        daySlots.forEach(function(r){
+          var s=h('div','sched-slot'+(r.status==='full'?' is-full':''));
+          s.appendChild(h('div','sched-time',t12(r.start_time)+' – '+t12(r.end_time)));
+          s.appendChild(h('div','sched-lt',r.lesson_type||''));
+          if(r.branch && brs.length>1) s.appendChild(h('div','sched-br',r.branch));
+          var chip=r.status==='full'?'Full':r.status==='limited'?'Few left':'Available';
+          s.appendChild(h('span','sched-chip '+r.status,chip));
+          col.appendChild(s);
+        });
+        grid.appendChild(col);
+      }
+    }
+    render();
+  });
+})();
+</script>
+</body>
+</html>
