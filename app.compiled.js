@@ -637,6 +637,7 @@ function App({
   const [adminPayees, setAdminPayees] = useState([]);
   const [adminVouchers, setAdminVouchers] = useState([]);
   const [adminEmployees, setAdminEmployees] = useState([]);
+  const [adminCrewLoadFailed, setAdminCrewLoadFailed] = useState(false);
   const [promos, setPromos] = useState([]);
   const [programmeModal, setProgrammeModal] = useState(null);
   const [programmeDate, setProgrammeDate] = useState(todayStr()); // own week cursor (independent of Schedule)
@@ -1605,8 +1606,12 @@ function App({
   }
   // ── Admin & Procurement loaders ──
   async function loadAdminAll() {
+    let empLoadFailed = false;
     try {
-      const [cats, cos, cts, pys, vs, eps, prs] = await Promise.all([selectRows('admin_categories', '*', '&order=name.asc').catch(() => []), selectRows('admin_companies', '*', '&order=name.asc').catch(() => []), selectRows('admin_contacts', '*', '&order=name.asc').catch(() => []), selectRows('admin_payees', '*', '&order=name.asc').catch(() => []), selectAllRows('admin_payment_vouchers', '*', '&order=serial_no.desc').catch(() => []), selectRows('admin_employees', '*', '&order=full_name.asc').catch(() => []), selectRows('promos', '*', '&order=starts_at.desc').catch(() => [])]);
+      const [cats, cos, cts, pys, vs, eps, prs] = await Promise.all([selectRows('admin_categories', '*', '&order=name.asc').catch(() => []), selectRows('admin_companies', '*', '&order=name.asc').catch(() => []), selectRows('admin_contacts', '*', '&order=name.asc').catch(() => []), selectRows('admin_payees', '*', '&order=name.asc').catch(() => []), selectAllRows('admin_payment_vouchers', '*', '&order=serial_no.desc').catch(() => []), selectRows('admin_employees', '*', '&order=full_name.asc').catch(() => {
+        empLoadFailed = true;
+        return [];
+      }), selectRows('promos', '*', '&order=starts_at.desc').catch(() => [])]);
       setAdminCategories(cats || []);
       setAdminCompanies(cos || []);
       setAdminContacts(cts || []);
@@ -1614,7 +1619,10 @@ function App({
       setAdminVouchers(vs || []);
       setAdminEmployees(eps || []);
       setPromos(prs || []);
-    } catch (_) {}
+      setAdminCrewLoadFailed(empLoadFailed);
+    } catch (_) {
+      setAdminCrewLoadFailed(true);
+    }
   }
   async function loadStudents() {
     try {
@@ -4246,6 +4254,59 @@ function App({
       alert(err.message || 'Failed to save employee');
     }
   }
+  // Import employees parsed from CSV/Excel. Matches existing rows by emp_no
+  // (preferred) or case-insensitive full_name; matched rows are updated,
+  // the rest inserted. Every insert row carries the FULL key set (nulls for
+  // blanks) — PostgREST bulk inserts reject arrays with mismatched keys.
+  async function adminImportEmployees(rows) {
+    const FIELDS = ['full_name', 'emp_no', 'ic_no', 'position', 'department', 'employment_type', 'start_date', 'status', 'phone', 'email', 'emergency_name', 'emergency_phone', 'bank_name', 'bank_account', 'notes'];
+    const byEmpNo = {},
+      byName = {};
+    (adminEmployees || []).forEach(e => {
+      if (e.emp_no) byEmpNo[String(e.emp_no).trim().toLowerCase()] = e;
+      if (e.full_name) byName[String(e.full_name).trim().toLowerCase()] = e;
+    });
+    const inserts = [],
+      updates = [];
+    rows.forEach(r => {
+      const rec = {};
+      FIELDS.forEach(f => {
+        const v = r[f];
+        rec[f] = v == null || String(v).trim() === '' ? null : String(v).trim();
+      });
+      if (!rec.full_name) return;
+      if (!rec.status) rec.status = 'Active';
+      if (!rec.employment_type) rec.employment_type = 'Full-time';
+      const hit = rec.emp_no && byEmpNo[rec.emp_no.toLowerCase()] || byName[rec.full_name.toLowerCase()];
+      if (hit) updates.push({
+        id: hit.id,
+        patch: rec
+      });else inserts.push(rec);
+    });
+    let inserted = 0,
+      updated = 0;
+    try {
+      if (inserts.length) {
+        await insertRows('admin_employees', inserts);
+        inserted = inserts.length;
+      }
+      for (const u of updates) {
+        await patchRows('admin_employees', {
+          id: u.id
+        }, u.patch);
+        updated++;
+      }
+      await loadAdminAll();
+      return {
+        inserted,
+        updated,
+        skipped: rows.length - inserts.length - updates.length
+      };
+    } catch (err) {
+      handleErr(err);
+      throw err;
+    }
+  }
   async function adminDeleteEmployee(id) {
     if (!confirm('Delete this employee?')) return;
     try {
@@ -5648,6 +5709,8 @@ function App({
     setVoucherStatus: adminSetVoucherStatus,
     onRefresh: loadAdminAll
   }), !loading && side === 'system' && view === 'adminCrew' && canSystem && /*#__PURE__*/React.createElement(AdminCrewView, {
+    loadFailed: adminCrewLoadFailed,
+    importEmployees: adminImportEmployees,
     employees: adminEmployees,
     saveEmployee: adminSaveEmployee,
     deleteEmployee: adminDeleteEmployee,
@@ -22256,12 +22319,191 @@ function AdminCrewView({
   employees,
   saveEmployee,
   deleteEmployee,
-  onRefresh
+  onRefresh,
+  loadFailed,
+  importEmployees
 }) {
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [modal, setModal] = useState(null); // {kind:'edit', data?}
+  const [modal, setModal] = useState(null); // {kind:'edit', data?} | {kind:'importPreview', rows, fileName}
+  const [importBusy, setImportBusy] = useState(false);
+  const fileRef = React.useRef(null);
 
+  // Canonical column set — export headers, template headers and import
+  // parsing all share this list so export → edit → import round-trips.
+  const CREW_FIELDS = ['full_name', 'emp_no', 'ic_no', 'position', 'department', 'employment_type', 'start_date', 'status', 'phone', 'email', 'emergency_name', 'emergency_phone', 'bank_name', 'bank_account', 'notes'];
+  function exportRows() {
+    return (employees || []).map(e => {
+      const r = {};
+      CREW_FIELDS.forEach(f => {
+        r[f] = e[f] ?? '';
+      });
+      return r;
+    });
+  }
+  function stamp() {
+    return new Date().toISOString().slice(0, 10);
+  }
+  function exportCSV() {
+    const rows = exportRows();
+    const esc = v => {
+      const s = String(v ?? '');
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const csv = [CREW_FIELDS.join(',')].concat(rows.map(r => CREW_FIELDS.map(f => esc(r[f])).join(','))).join('\n');
+    const blob = new Blob(['\ufeff' + csv], {
+      type: 'text/csv;charset=utf-8'
+    });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `crew_export_${stamp()}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+  function exportXLSX() {
+    if (typeof XLSX === 'undefined') {
+      alert('Excel library not loaded — use CSV export.');
+      return;
+    }
+    const ws = XLSX.utils.json_to_sheet(exportRows(), {
+      header: CREW_FIELDS
+    });
+    ws['!cols'] = CREW_FIELDS.map(f => ({
+      wch: Math.max(12, f.length + 2)
+    }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Crew');
+    XLSX.writeFile(wb, `crew_export_${stamp()}.xlsx`);
+  }
+  function downloadTemplate() {
+    if (typeof XLSX === 'undefined') {
+      alert('Excel library not loaded.');
+      return;
+    }
+    const example = {
+      full_name: 'Aisyah Binti Rahman',
+      emp_no: 'SS-012',
+      ic_no: '900101-08-1234',
+      position: 'Swim Instructor',
+      department: 'Coaching',
+      employment_type: 'Full-time',
+      start_date: '2026-01-15',
+      status: 'Active',
+      phone: '012-345 6789',
+      email: 'aisyah@example.com',
+      emergency_name: 'Rahman Bin Ali',
+      emergency_phone: '013-222 1111',
+      bank_name: 'Maybank',
+      bank_account: '1122 3344 5566',
+      notes: 'REACT Right + LSSM Bronze'
+    };
+    const ws = XLSX.utils.json_to_sheet([example], {
+      header: CREW_FIELDS
+    });
+    ws['!cols'] = CREW_FIELDS.map(f => ({
+      wch: Math.max(14, f.length + 2)
+    }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Crew Import');
+    XLSX.writeFile(wb, 'crew_import_template.xlsx');
+  }
+  // Tolerant header mapping: "Full Name" / "full_name" / "FULLNAME" all resolve.
+  function normHeader(h) {
+    return String(h || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  }
+  const HEADER_MAP = {};
+  CREW_FIELDS.forEach(f => {
+    HEADER_MAP[normHeader(f)] = f;
+  });
+  // A few friendly aliases
+  Object.assign(HEADER_MAP, {
+    name: 'full_name',
+    employeename: 'full_name',
+    staffname: 'full_name',
+    empno: 'emp_no',
+    employeeno: 'emp_no',
+    staffno: 'emp_no',
+    ic: 'ic_no',
+    icnumber: 'ic_no',
+    nric: 'ic_no',
+    type: 'employment_type',
+    startdate: 'start_date',
+    datejoined: 'start_date',
+    tel: 'phone',
+    mobile: 'phone',
+    bank: 'bank_name',
+    account: 'bank_account',
+    accountno: 'bank_account',
+    bankaccountno: 'bank_account',
+    remark: 'notes',
+    remarks: 'notes'
+  });
+  function normDate(v) {
+    if (v == null || v === '') return null;
+    const s = String(v).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const m = s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/); // d/m/yyyy (MY convention)
+    if (m) return `${m[3]}-${String(m[2]).padStart(2, '0')}-${String(m[1]).padStart(2, '0')}`;
+    const d = new Date(s);
+    return isNaN(d) ? null : d.toISOString().slice(0, 10);
+  }
+  function handleImportFile(file) {
+    if (!file) return;
+    if (typeof XLSX === 'undefined') {
+      alert('Excel library not loaded — cannot parse files.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const wb = XLSX.read(e.target.result, {
+          type: 'array'
+        });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const raw = XLSX.utils.sheet_to_json(ws, {
+          raw: false,
+          defval: ''
+        });
+        if (!raw.length) {
+          alert('No data rows found in the file.');
+          return;
+        }
+        const rows = raw.map(r => {
+          const out = {};
+          Object.keys(r).forEach(k => {
+            const f = HEADER_MAP[normHeader(k)];
+            if (f) out[f] = r[k];
+          });
+          if (out.start_date) out.start_date = normDate(out.start_date);
+          return out;
+        }).filter(r => r.full_name && String(r.full_name).trim());
+        if (!rows.length) {
+          alert('No rows with a full_name were found. Check the file matches the template headers.');
+          return;
+        }
+        setModal({
+          kind: 'importPreview',
+          rows,
+          fileName: file.name
+        });
+      } catch (err) {
+        alert('Could not read the file: ' + (err.message || err));
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+  async function confirmImport() {
+    setImportBusy(true);
+    try {
+      const res = await importEmployees(modal.rows);
+      setModal(null);
+      alert(`Import complete — ${res.inserted} added, ${res.updated} updated${res.skipped ? `, ${res.skipped} skipped` : ''}.`);
+    } catch (err) {
+      alert(err.message || 'Import failed');
+    } finally {
+      setImportBusy(false);
+    }
+  }
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
     let rows = (employees || []).slice();
@@ -22308,12 +22550,55 @@ function AdminCrewView({
   }, /*#__PURE__*/React.createElement("div", {
     className: "small subtle"
   }, /*#__PURE__*/React.createElement("strong", null, counts.active), " active · ", /*#__PURE__*/React.createElement("strong", null, counts.inactive), " inactive"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    title: "Download all crew records as CSV",
+    onClick: exportCSV
+  }, "⬇ CSV"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    title: "Download all crew records as Excel",
+    onClick: exportXLSX
+  }, "⬇ Excel"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    title: "Download the import template (Excel)",
+    onClick: downloadTemplate
+  }, "📄 Template"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    title: "Import crew from CSV or Excel",
+    onClick: () => fileRef.current && fileRef.current.click()
+  }, "⬆ Import"), /*#__PURE__*/React.createElement("input", {
+    ref: fileRef,
+    type: "file",
+    accept: ".csv,.xlsx,.xls",
+    style: {
+      display: 'none'
+    },
+    onChange: e => {
+      handleImportFile(e.target.files[0]);
+      e.target.value = '';
+    }
+  }), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-primary small",
     onClick: () => setModal({
       kind: 'edit',
       data: {}
     })
-  }, "+ Add employee"))), /*#__PURE__*/React.createElement("div", {
+  }, "+ Add employee"))), loadFailed && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 10,
+      background: '#FEF3C7',
+      border: '1px solid #FDE68A',
+      borderRadius: 10,
+      padding: '8px 12px',
+      fontSize: 12.5,
+      color: '#92400E'
+    }
+  }, "⚠ The crew list could not be loaded from the database just now — what you see below may be incomplete. This is a connection issue, ", /*#__PURE__*/React.createElement("b", null, "not"), " data loss.", /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    style: {
+      marginLeft: 8
+    },
+    onClick: onRefresh
+  }, "↻ Retry")), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 10,
       display: 'flex',
@@ -22434,7 +22719,91 @@ function AdminCrewView({
       setModal(null);
     },
     onClose: () => setModal(null)
-  }));
+  }), modal?.kind === 'importPreview' && (() => {
+    const byEmpNo = {},
+      byName = {};
+    (employees || []).forEach(e => {
+      if (e.emp_no) byEmpNo[String(e.emp_no).trim().toLowerCase()] = true;
+      if (e.full_name) byName[String(e.full_name).trim().toLowerCase()] = true;
+    });
+    const annotated = modal.rows.map(r => {
+      const isUpdate = r.emp_no && byEmpNo[String(r.emp_no).trim().toLowerCase()] || byName[String(r.full_name).trim().toLowerCase()];
+      return {
+        ...r,
+        _action: isUpdate ? 'update' : 'new'
+      };
+    });
+    const nNew = annotated.filter(r => r._action === 'new').length;
+    const nUpd = annotated.length - nNew;
+    return /*#__PURE__*/React.createElement("div", {
+      className: "modal-backdrop",
+      onClick: () => !importBusy && setModal(null)
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "modal-card",
+      onClick: e => e.stopPropagation(),
+      style: {
+        maxWidth: 760
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: 800,
+        fontSize: 17,
+        marginBottom: 4
+      }
+    }, "⬆ Import crew — ", modal.fileName), /*#__PURE__*/React.createElement("div", {
+      className: "small subtle",
+      style: {
+        marginBottom: 10
+      }
+    }, annotated.length, " row", annotated.length === 1 ? '' : 's', " parsed: ", /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: '#166534'
+      }
+    }, nNew, " new"), " · ", /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: '#1D4ED8'
+      }
+    }, nUpd, " update", nUpd === 1 ? '' : 's'), ". Rows match existing staff by ", /*#__PURE__*/React.createElement("code", null, "emp_no"), " first, then by name (case-insensitive). Matched rows overwrite the imported columns; blanks clear the field."), /*#__PURE__*/React.createElement("div", {
+      className: "table-wrap",
+      style: {
+        maxHeight: 340,
+        overflow: 'auto'
+      }
+    }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null), /*#__PURE__*/React.createElement("th", null, "Name"), /*#__PURE__*/React.createElement("th", null, "Emp #"), /*#__PURE__*/React.createElement("th", null, "Position"), /*#__PURE__*/React.createElement("th", null, "Dept"), /*#__PURE__*/React.createElement("th", null, "Status"), /*#__PURE__*/React.createElement("th", null, "Phone"))), /*#__PURE__*/React.createElement("tbody", null, annotated.map((r, i) => /*#__PURE__*/React.createElement("tr", {
+      key: i
+    }, /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("span", {
+      className: `pm-pill ${r._action === 'new' ? 'pm-green' : 'pm-blue'} pm-sm`
+    }, r._action)), /*#__PURE__*/React.createElement("td", {
+      style: {
+        fontWeight: 600
+      }
+    }, r.full_name), /*#__PURE__*/React.createElement("td", {
+      className: "small subtle"
+    }, r.emp_no || '—'), /*#__PURE__*/React.createElement("td", {
+      className: "small subtle"
+    }, r.position || '—'), /*#__PURE__*/React.createElement("td", {
+      className: "small subtle"
+    }, r.department || '—'), /*#__PURE__*/React.createElement("td", {
+      className: "small subtle"
+    }, r.status || 'Active'), /*#__PURE__*/React.createElement("td", {
+      className: "small subtle"
+    }, r.phone || '—')))))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 8,
+        justifyContent: 'flex-end',
+        marginTop: 14
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost",
+      disabled: importBusy,
+      onClick: () => setModal(null)
+    }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-primary",
+      disabled: importBusy,
+      onClick: confirmImport
+    }, importBusy ? 'Importing…' : `Import ${annotated.length} row${annotated.length === 1 ? '' : 's'}`))));
+  })());
 }
 
 // ── Promotions module ─────────────────────────────────────────────────────
