@@ -414,6 +414,8 @@ function App({ currentUser, onLogout }){
   const [pendingCredits,setPendingCredits] = useState([]);
   const [invoiceSettings,setInvoiceSettings] = useState({ invoice_prefix:'INV', receipt_prefix:'RCT', next_invoice_seq:1, next_receipt_seq:1, leading_zeros:3, include_date:true, date_format:'YYYYMM', allow_delete_invoice:false });
   const [paymentMethods,setPaymentMethods] = useState([]);
+  const [websiteSettings,setWebsiteSettings] = useState(null);   // public_schedule_settings row
+  const [publicPricing,setPublicPricing] = useState([]);         // public_pricing rows
 
   useEffect(() => { boot(); }, []);
   // Default branch on first load: prefer SSGT (HQ), else first active branch.
@@ -450,13 +452,15 @@ function App({ currentUser, onLogout }){
   // ── Invoice loaders ────────────────────────────────────────────────
   async function loadInvoiceData(){
     try{
-      const [invRows, lineRows, payRows, pcRows, settRows, pmRows] = await Promise.all([
+      const [invRows, lineRows, payRows, pcRows, settRows, pmRows, wsRows, ppRows] = await Promise.all([
         selectAllRows('invoices','*','&order=created_at.desc'),
         selectAllRows('invoice_lines','*','&order=invoice_id.asc,sort_order.asc'),
         selectAllRows('payments','*','&order=invoice_id.asc,created_at.asc'),
         selectAllRows('pending_credits','*','&order=created_at.desc'),
         selectRows('invoice_settings','*').catch(()=>[]),
         selectRows('payment_methods','*','&order=sort_order.asc').catch(()=>[]),
+        selectRows('public_schedule_settings','*').catch(()=>[]),
+        selectRows('public_pricing','*','&order=category.asc,sort_order.asc').catch(()=>[]),
       ]);
       setInvoices(invRows||[]);
       setInvoiceLines(lineRows||[]);
@@ -465,6 +469,8 @@ function App({ currentUser, onLogout }){
       if(settRows?.[0]) setInvoiceSettings(settRows[0]);
       PM_LIST = (pmRows&&pmRows.length)?pmRows:null;
       setPaymentMethods(pmRows||[]);
+      setWebsiteSettings(wsRows?.[0]||null);
+      setPublicPricing(ppRows||[]);
     }catch(e){ console.warn('Invoice tables not found — run migrations first.',e); }
   }
 
@@ -535,6 +541,41 @@ function App({ currentUser, onLogout }){
       await Promise.all([
         patchRows('payment_methods',{id:sorted[i].id},{sort_order:sorted[j].sort_order??j}),
         patchRows('payment_methods',{id:sorted[j].id},{sort_order:sorted[i].sort_order??i}),
+      ]);
+      await loadInvoiceData();
+    }catch(err){ handleErr(err); alert(err.message||'Failed to reorder'); }
+  }
+
+  // ── Website (public site) settings CRUD ─────────────────────────────
+  async function saveWebsiteSettings(patch){
+    try{ await patchRows('public_schedule_settings',{id:1},{...patch,updated_at:new Date().toISOString()}); await loadInvoiceData(); }
+    catch(err){ handleErr(err); alert(err.message||'Failed to save — has the website migration been run?'); }
+  }
+  async function addPricingCard(card){
+    try{
+      const maxSort = Math.max(0,...publicPricing.filter(p=>p.category===card.category).map(p=>p.sort_order??0));
+      await insertRows('public_pricing',{ ...card, sort_order:maxSort+1 });
+      await loadInvoiceData();
+    }catch(err){ handleErr(err); alert(err.message||'Failed to add pricing card'); }
+  }
+  async function updatePricingCard(id, patch){
+    try{ await patchRows('public_pricing',{id},patch); await loadInvoiceData(); }
+    catch(err){ handleErr(err); alert(err.message||'Failed to update pricing card'); }
+  }
+  async function deletePricingCard(id){
+    if(!confirm('Delete this pricing card? (Marketing content only — no financial records affected.)')) return;
+    try{ await deleteRows('public_pricing',{id}); await loadInvoiceData(); }
+    catch(err){ handleErr(err); alert(err.message||'Failed to delete pricing card'); }
+  }
+  async function movePricingCard(id, dir){
+    const card = publicPricing.find(p=>p.id===id); if(!card) return;
+    const peers = publicPricing.filter(p=>p.category===card.category).sort((a,b)=>(a.sort_order??0)-(b.sort_order??0));
+    const i = peers.findIndex(p=>p.id===id); const j = i+dir;
+    if(i<0||j<0||j>=peers.length) return;
+    try{
+      await Promise.all([
+        patchRows('public_pricing',{id:peers[i].id},{sort_order:peers[j].sort_order??j}),
+        patchRows('public_pricing',{id:peers[j].id},{sort_order:peers[i].sort_order??i}),
       ]);
       await loadInvoiceData();
     }catch(err){ handleErr(err); alert(err.message||'Failed to reorder'); }
@@ -846,8 +887,8 @@ function App({ currentUser, onLogout }){
   // table exceeded 1000 rows, newly saved students were silently cut off.
   async function loadSessions(){
     const [sessionRows, instructorJoinRows, instructorCatalog] = await Promise.all([
-      rest('weekly_sessions?select=*,weekly_session_students(*)&order=week_start_date.asc,weekday.asc,start_minute.asc,created_at.asc'),
-      selectRows('session_instructors', '*'),
+      selectAllRows('weekly_sessions','*,weekly_session_students(*)','&order=week_start_date.asc,weekday.asc,start_minute.asc,created_at.asc'),
+      selectAllRows('session_instructors', '*'),
       selectRows('scheduler_instructors', '*')
     ]);
     const instructorById = {};
@@ -893,7 +934,7 @@ function App({ currentUser, onLogout }){
   // ── Programme loaders ──────────────────────────────────────────────
   async function loadProgrammeSessions(){
     try{
-      const rows = await selectRows('programme_sessions','*','&order=week_start_date.asc,weekday.asc,start_minute.asc,sort_order.asc').catch(()=>[]);
+      const rows = await selectAllRows('programme_sessions','*','&order=week_start_date.asc,weekday.asc,start_minute.asc,sort_order.asc').catch(()=>[]);
       setProgrammeSessions((rows||[]).map(r => ({
         id: r.id,
         weekStartDate: r.week_start_date || weekStartStr(todayStr()),
@@ -932,7 +973,7 @@ function App({ currentUser, onLogout }){
   }
   async function loadContactMessages(){
     try{
-      const rows = await selectRows('contact_messages','*','&order=created_at.desc').catch(()=>[]);
+      const rows = await selectAllRows('contact_messages','*','&order=created_at.desc').catch(()=>[]);
       setContactMessages(rows || []);
     } catch(_){ setContactMessages([]); }
   }
@@ -950,7 +991,7 @@ function App({ currentUser, onLogout }){
         selectRows('admin_companies','*','&order=name.asc').catch(()=>[]),
         selectRows('admin_contacts','*','&order=name.asc').catch(()=>[]),
         selectRows('admin_payees','*','&order=name.asc').catch(()=>[]),
-        selectRows('admin_payment_vouchers','*','&order=serial_no.desc').catch(()=>[]),
+        selectAllRows('admin_payment_vouchers','*','&order=serial_no.desc').catch(()=>[]),
         selectRows('admin_employees','*','&order=full_name.asc').catch(()=>[]),
         selectRows('promos','*','&order=starts_at.desc').catch(()=>[]),
       ]);
@@ -963,8 +1004,8 @@ function App({ currentUser, onLogout }){
   async function loadStudents(){
     try{
       const [rows, enrollmentRows] = await Promise.all([
-        selectRows('students', '*', '&order=name.asc'),
-        selectRows('student_enrollments', '*').catch(()=>[]) // table may not exist yet
+        selectAllRows('students', '*', '&order=name.asc'),
+        selectAllRows('student_enrollments', '*').catch(()=>[]) // table may not exist yet
       ]);
       const byStudent = {};
       (enrollmentRows || []).forEach(e => {
@@ -1010,7 +1051,7 @@ function App({ currentUser, onLogout }){
 
   async function loadGroups(){
     try{
-      const rows = await selectRows('family_groups', '*', '&order=name.asc');
+      const rows = await selectAllRows('family_groups', '*', '&order=name.asc');
       setFamilyGroups((rows || []).map(r => ({ id:r.id, name:r.name || '', packageId:r.package_id || null, groupType: r.group_type || 'discount' })));
     } catch(e){ console.warn('Family groups not available yet (run the family groups migration):', e?.message || e); setFamilyGroups([]); }
   }
@@ -1022,7 +1063,7 @@ function App({ currentUser, onLogout }){
   // memberships from the legacy students.family_group_id column.
   async function loadGroupMemberships(){
     try{
-      const rows = await selectRows('family_group_members', '*');
+      const rows = await selectAllRows('family_group_members', '*');
       setGroupMemberships((rows || []).map(r => ({ familyGroupId: r.family_group_id, studentId: r.student_id })));
     } catch(e){
       console.warn('family_group_members table not yet available (run the migration). Falling back to legacy single-FK derivation:', e?.message || e);
@@ -1033,7 +1074,7 @@ function App({ currentUser, onLogout }){
 
   async function loadCreditBalances(){
     try{
-      const rows = await selectRows('student_credit_balances', '*');
+      const rows = await selectAllRows('student_credit_balances', '*');
       setCreditBalances(rows || []);
     } catch(e){ console.warn('Credit balances not available (run the replacement+credits migration):', e?.message || e); setCreditBalances([]); }
   }
@@ -1047,7 +1088,7 @@ function App({ currentUser, onLogout }){
   //     decrement the balance accordingly
   async function loadCreditPurchases(){
     try{
-      const rows = await selectRows('credit_purchases', '*', '&order=purchase_date.desc,created_at.desc');
+      const rows = await selectAllRows('credit_purchases', '*', '&order=purchase_date.desc,created_at.desc');
       setCreditPurchases(rows || []);
     } catch(e){ console.warn('Credit purchases not available (run the ghost+credits migration):', e?.message || e); setCreditPurchases([]); }
   }
@@ -1333,7 +1374,7 @@ function App({ currentUser, onLogout }){
   // class for the week and are awaiting placement into another same-LT class.
   async function loadReplacementPending(){
     try{
-      const rows = await selectRows('replacement_pending', '*');
+      const rows = await selectAllRows('replacement_pending', '*');
       setReplacementPending(rows || []);
     } catch(e){ console.warn('Replacement pending not available (run the replacement pending migration):', e?.message || e); setReplacementPending([]); }
   }
@@ -1678,7 +1719,7 @@ function App({ currentUser, onLogout }){
 
   async function loadTcAcceptances(){
     try{
-      const rows = await selectRows('tc_acceptances', '*');
+      const rows = await selectAllRows('tc_acceptances', '*');
       setTcAcceptances(rows || []);
     } catch(e){ console.warn('T&C acceptances not available (run the student profile migration):', e?.message || e); setTcAcceptances([]); }
   }
@@ -3840,7 +3881,7 @@ function App({ currentUser, onLogout }){
       {/* ── Settings: left-column nav + content ── */}
       {!loading && view==='settings' && isSysadmin && <div className="side-shell">
         <nav className="side-nav">
-          {[['summary','Summary'],['branches','Branches'],['pools','Pools & Hours'],['instructors','Instructors'],['lessonTypes','Lesson Types'],['programme','Programme'],['terms','Terms'],['billingTerms','Billing Terms'],['products','Products'],['paymentMethods','Payment Methods'],['invoiceSettings','Invoice Numbering'],['users','Users']].map(([k,l])=>
+          {[['summary','Summary'],['branches','Branches'],['pools','Pools & Hours'],['instructors','Instructors'],['lessonTypes','Lesson Types'],['programme','Programme'],['terms','Terms'],['billingTerms','Billing Terms'],['products','Products'],['paymentMethods','Payment Methods'],['invoiceSettings','Invoice Numbering'],['website','Website'],['users','Users']].map(([k,l])=>
             <button key={k} className={`side-nav-btn${adminSection===k?' active':''}`} onClick={()=>setAdminSection(k)}>{l}</button>
           )}
         </nav>
@@ -3892,6 +3933,17 @@ function App({ currentUser, onLogout }){
             onAdd={addPaymentMethod}
             onUpdate={updatePaymentMethod}
             onMove={movePaymentMethod}
+          />}
+          {adminSection==='website' && <WebsitePanel
+            settings={websiteSettings}
+            lessonTypes={options.lessonTypes||[]}
+            branches={options.branches||[]}
+            pricing={publicPricing}
+            onSaveSettings={saveWebsiteSettings}
+            onAddCard={addPricingCard}
+            onUpdateCard={updatePricingCard}
+            onDeleteCard={deletePricingCard}
+            onMoveCard={movePricingCard}
           />}
           {adminSection==='invoiceSettings' && <div className="card">
             <div style={{fontWeight:800,fontSize:18,marginBottom:4}}>Invoice Numbering &amp; Permissions</div>
@@ -9856,6 +9908,150 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
         <button className="btn btn-ghost small" onClick={()=>setShowPayForm(false)}>Cancel</button>
       </div>
     </div>}
+  </div>;
+}
+
+// Settings → Website: controls what the public marketing site displays.
+// Two halves: (1) Schedule Preview switchboard — which lesson types /
+// branches surface in the sanitised public_schedule_preview view;
+// (2) Pricing cards — marketing-owned, decoupled from internal packages.
+function WebsitePanel({ settings, lessonTypes, branches, pricing, onSaveSettings, onAddCard, onUpdateCard, onDeleteCard, onMoveCard }){
+  const migrated = settings!=null;
+  const visLt = new Set(settings?.visible_lesson_type_ids||[]);
+  const visBr = new Set(settings?.visible_branch_ids||[]);
+  function toggleLt(id){
+    const next = new Set(visLt); next.has(id)?next.delete(id):next.add(id);
+    onSaveSettings({ visible_lesson_type_ids:[...next] });
+  }
+  function toggleBr(id){
+    const next = new Set(visBr); next.has(id)?next.delete(id):next.add(id);
+    onSaveSettings({ visible_branch_ids:[...next] });
+  }
+  // ── pricing editor state ──
+  const emptyCard = { category:'Toddlers', title:'', subtitle:'', price:'', unit:'/month', features:'', badge:'', is_published:false };
+  const [editing,setEditing] = useState(null); // null | 'new' | card id
+  const [draft,setDraft] = useState(emptyCard);
+  function startNew(){ setEditing('new'); setDraft(emptyCard); }
+  function startEdit(c){ setEditing(c.id); setDraft({ category:c.category||'', title:c.title||'', subtitle:c.subtitle||'', price:String(c.price??''), unit:c.unit||'', features:(c.features||[]).join('\n'), badge:c.badge||'', is_published:c.is_published!==false }); }
+  async function saveDraft(){
+    const payload = {
+      category:(draft.category||'General').trim()||'General',
+      title:draft.title.trim(),
+      subtitle:draft.subtitle.trim()||null,
+      price:Number(draft.price)||0,
+      unit:draft.unit.trim()||null,
+      features:draft.features.split('\n').map(s=>s.trim()).filter(Boolean),
+      badge:draft.badge.trim()||null,
+      is_published:!!draft.is_published,
+    };
+    if(!payload.title){ alert('Card title is required'); return; }
+    if(editing==='new') await onAddCard(payload); else await onUpdateCard(editing, payload);
+    setEditing(null);
+  }
+  const cats = [...new Set(pricing.map(p=>p.category||'General'))];
+  // Toddlers + LTS Children lead, per marketing priority
+  cats.sort((a,b)=>{
+    const pri = c => c==='Toddlers'?0 : c==='LTS Children'?1 : 2;
+    return pri(a)-pri(b) || a.localeCompare(b);
+  });
+  return <div style={{display:'flex',flexDirection:'column',gap:16}}>
+    {!migrated && <div className="card" style={{background:'#FEF3C7',border:'1px solid #FDE68A',padding:'10px 14px',fontSize:12.5}}>
+      ⚠ Website tables not found — run <code>supabase_public_website_migration.sql</code> first. Controls below will save once the migration is in.
+    </div>}
+
+    <div className="card">
+      <div style={{fontWeight:800,fontSize:18,marginBottom:4}}>🗓 Public Schedule Preview</div>
+      <div className="small subtle" style={{marginBottom:12}}>
+        Shows this week&apos;s timetable on the website as a Mon–Sun grid with availability chips (Available / Limited / Full).
+        Public visitors see <b>lesson type, branch, day, time and availability only</b> — never student or instructor names.
+        Sessions with zero swimmers show as fully available, so you can seed slots you want to promote.
+      </div>
+      <label style={{display:'flex',alignItems:'center',gap:8,fontWeight:700,marginBottom:14,cursor:'pointer'}}>
+        <input type="checkbox" checked={settings?.enabled===true} disabled={!migrated} onChange={e=>onSaveSettings({enabled:e.target.checked})}/>
+        Show schedule preview on the website
+      </label>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+        <div>
+          <div className="field-label" style={{marginBottom:6}}>Visible lesson types <span className="subtle">(explicit opt-in)</span></div>
+          {(lessonTypes||[]).filter(t=>t.is_active!==false).map(t=>
+            <label key={t.id} style={{display:'flex',alignItems:'center',gap:8,padding:'3px 0',cursor:'pointer',fontSize:13}}>
+              <input type="checkbox" checked={visLt.has(t.id)} disabled={!migrated} onChange={()=>toggleLt(t.id)}/>
+              {t.name}
+            </label>)}
+          {(lessonTypes||[]).length===0 && <div className="small subtle">No lesson types configured.</div>}
+        </div>
+        <div>
+          <div className="field-label" style={{marginBottom:6}}>Visible branches <span className="subtle">(none ticked = all)</span></div>
+          {(branches||[]).map(b=>
+            <label key={b.id} style={{display:'flex',alignItems:'center',gap:8,padding:'3px 0',cursor:'pointer',fontSize:13}}>
+              <input type="checkbox" checked={visBr.has(b.id)} disabled={!migrated} onChange={()=>toggleBr(b.id)}/>
+              {b.name}{b.code?` (${b.code})`:''}
+            </label>)}
+        </div>
+      </div>
+    </div>
+
+    <div className="card">
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:4}}>
+        <div style={{fontWeight:800,fontSize:18}}>💰 Public Pricing Cards</div>
+        <button className="btn btn-primary small" style={{marginLeft:'auto'}} disabled={!migrated} onClick={startNew}>+ New card</button>
+      </div>
+      <div className="small subtle" style={{marginBottom:12}}>
+        Marketing prices — deliberately separate from internal packages, so billing changes never leak to the website by accident.
+        Only <b>published</b> cards appear publicly. Categories become tabs; Toddlers and LTS Children always lead.
+      </div>
+      {editing!=null && <div className="inv-pay-form" style={{marginBottom:14}}>
+        <div style={{fontWeight:700,marginBottom:8}}>{editing==='new'?'New pricing card':'Edit pricing card'}</div>
+        <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr 110px 110px'}}>
+          <div className="field"><label>Title</label><input className="input" value={draft.title} onChange={e=>setDraft({...draft,title:e.target.value})} placeholder="e.g. Group Lessons"/></div>
+          <div className="field"><label>Category (tab)</label><input className="input" list="pp-cats" value={draft.category} onChange={e=>setDraft({...draft,category:e.target.value})} placeholder="Toddlers"/>
+            <datalist id="pp-cats"><option value="Toddlers"/><option value="LTS Children"/><option value="Private"/><option value="Adults"/></datalist></div>
+          <div className="field"><label>Price (RM)</label><input className="input" type="number" min="0" step="1" value={draft.price} onChange={e=>setDraft({...draft,price:e.target.value})} placeholder="180"/></div>
+          <div className="field"><label>Unit</label><input className="input" value={draft.unit} onChange={e=>setDraft({...draft,unit:e.target.value})} placeholder="/month"/></div>
+        </div>
+        <div className="form-grid" style={{gridTemplateColumns:'2fr 1fr'}}>
+          <div className="field"><label>Subtitle</label><input className="input" value={draft.subtitle} onChange={e=>setDraft({...draft,subtitle:e.target.value})} placeholder="e.g. 4 lessons per month · max 4 per coach"/></div>
+          <div className="field"><label>Badge (optional)</label><input className="input" value={draft.badge} onChange={e=>setDraft({...draft,badge:e.target.value})} placeholder="Most Popular"/></div>
+        </div>
+        <div className="field"><label>Features — one per line</label>
+          <textarea className="textarea" style={{minHeight:80}} value={draft.features} onChange={e=>setDraft({...draft,features:e.target.value})} placeholder={'50-minute lessons\nCertified coaches\nProgress tracking with badges'}/>
+        </div>
+        <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:13,marginBottom:8}}>
+          <input type="checkbox" checked={draft.is_published} onChange={e=>setDraft({...draft,is_published:e.target.checked})}/>
+          Published (visible on the website)
+        </label>
+        <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+          <button className="btn btn-ghost small" onClick={()=>setEditing(null)}>Cancel</button>
+          <button className="btn btn-primary small" onClick={saveDraft}>{editing==='new'?'Add card':'Save changes'}</button>
+        </div>
+      </div>}
+      {cats.length===0 && <div className="small subtle">No pricing cards yet.</div>}
+      {cats.map(cat=>{
+        const rows = pricing.filter(p=>(p.category||'General')===cat).sort((a,b)=>(a.sort_order??0)-(b.sort_order??0));
+        return <div key={cat} style={{marginBottom:14}}>
+          <div style={{fontWeight:700,fontSize:13,margin:'6px 0',color:'var(--text-2)'}}>{cat}</div>
+          <div className="table-wrap"><table><tbody>
+            {rows.map((c,idx)=><tr key={c.id} style={{opacity:c.is_published?1:0.5}}>
+              <td style={{whiteSpace:'nowrap',width:70}}>
+                <button className="btn btn-ghost small" disabled={idx===0} onClick={()=>onMoveCard(c.id,-1)} style={{padding:'2px 6px'}}>↑</button>
+                <button className="btn btn-ghost small" disabled={idx===rows.length-1} onClick={()=>onMoveCard(c.id,1)} style={{padding:'2px 6px'}}>↓</button>
+              </td>
+              <td><span style={{fontWeight:700}}>{c.title}</span>{c.badge&&<span className="pm-pill pm-amber" style={{marginLeft:6}}>{c.badge}</span>}
+                {c.subtitle&&<div className="small subtle">{c.subtitle}</div>}</td>
+              <td style={{whiteSpace:'nowrap',fontWeight:700}}>RM {Number(c.price).toFixed(0)}<span className="small subtle">{c.unit||''}</span></td>
+              <td className="small subtle" style={{maxWidth:260}}>{(c.features||[]).join(' · ')}</td>
+              <td style={{whiteSpace:'nowrap',textAlign:'right'}}>
+                <label className="small" style={{marginRight:8,cursor:'pointer'}}>
+                  <input type="checkbox" checked={c.is_published===true} onChange={e=>onUpdateCard(c.id,{is_published:e.target.checked})}/> live
+                </label>
+                <button className="btn btn-ghost small" onClick={()=>startEdit(c)}>Edit</button>
+                <button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>onDeleteCard(c.id)}>🗑</button>
+              </td>
+            </tr>)}
+          </tbody></table></div>
+        </div>;
+      })}
+    </div>
   </div>;
 }
 
