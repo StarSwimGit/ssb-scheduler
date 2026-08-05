@@ -1488,7 +1488,7 @@ function App({
   // Supabase default 1000-row limit on weekly_session_students — when the
   // table exceeded 1000 rows, newly saved students were silently cut off.
   async function loadSessions() {
-    const [sessionRows, instructorJoinRows, instructorCatalog] = await Promise.all([rest('weekly_sessions?select=*,weekly_session_students(*)&order=week_start_date.asc,weekday.asc,start_minute.asc,created_at.asc'), selectRows('session_instructors', '*'), selectRows('scheduler_instructors', '*')]);
+    const [sessionRows, instructorJoinRows, instructorCatalog] = await Promise.all([selectAllRows('weekly_sessions', '*,weekly_session_students(*)', '&order=week_start_date.asc,weekday.asc,start_minute.asc,created_at.asc'), selectAllRows('session_instructors', '*'), selectRows('scheduler_instructors', '*')]);
     const instructorById = {};
     (instructorCatalog || []).forEach(i => {
       instructorById[i.id] = i;
@@ -1541,7 +1541,7 @@ function App({
   // ── Programme loaders ──────────────────────────────────────────────
   async function loadProgrammeSessions() {
     try {
-      const rows = await selectRows('programme_sessions', '*', '&order=week_start_date.asc,weekday.asc,start_minute.asc,sort_order.asc').catch(() => []);
+      const rows = await selectAllRows('programme_sessions', '*', '&order=week_start_date.asc,weekday.asc,start_minute.asc,sort_order.asc').catch(() => []);
       setProgrammeSessions((rows || []).map(r => ({
         id: r.id,
         weekStartDate: r.week_start_date || weekStartStr(todayStr()),
@@ -1589,7 +1589,7 @@ function App({
   }
   async function loadContactMessages() {
     try {
-      const rows = await selectRows('contact_messages', '*', '&order=created_at.desc').catch(() => []);
+      const rows = await selectAllRows('contact_messages', '*', '&order=created_at.desc').catch(() => []);
       setContactMessages(rows || []);
     } catch (_) {
       setContactMessages([]);
@@ -1606,7 +1606,7 @@ function App({
   // ── Admin & Procurement loaders ──
   async function loadAdminAll() {
     try {
-      const [cats, cos, cts, pys, vs, eps, prs] = await Promise.all([selectRows('admin_categories', '*', '&order=name.asc').catch(() => []), selectRows('admin_companies', '*', '&order=name.asc').catch(() => []), selectRows('admin_contacts', '*', '&order=name.asc').catch(() => []), selectRows('admin_payees', '*', '&order=name.asc').catch(() => []), selectRows('admin_payment_vouchers', '*', '&order=serial_no.desc').catch(() => []), selectRows('admin_employees', '*', '&order=full_name.asc').catch(() => []), selectRows('promos', '*', '&order=starts_at.desc').catch(() => [])]);
+      const [cats, cos, cts, pys, vs, eps, prs] = await Promise.all([selectRows('admin_categories', '*', '&order=name.asc').catch(() => []), selectRows('admin_companies', '*', '&order=name.asc').catch(() => []), selectRows('admin_contacts', '*', '&order=name.asc').catch(() => []), selectRows('admin_payees', '*', '&order=name.asc').catch(() => []), selectAllRows('admin_payment_vouchers', '*', '&order=serial_no.desc').catch(() => []), selectRows('admin_employees', '*', '&order=full_name.asc').catch(() => []), selectRows('promos', '*', '&order=starts_at.desc').catch(() => [])]);
       setAdminCategories(cats || []);
       setAdminCompanies(cos || []);
       setAdminContacts(cts || []);
@@ -1618,7 +1618,7 @@ function App({
   }
   async function loadStudents() {
     try {
-      const [rows, enrollmentRows] = await Promise.all([selectRows('students', '*', '&order=name.asc'), selectRows('student_enrollments', '*').catch(() => []) // table may not exist yet
+      const [rows, enrollmentRows] = await Promise.all([selectAllRows('students', '*', '&order=name.asc'), selectAllRows('student_enrollments', '*').catch(() => []) // table may not exist yet
       ]);
       const byStudent = {};
       (enrollmentRows || []).forEach(e => {
@@ -1671,7 +1671,7 @@ function App({
   }
   async function loadGroups() {
     try {
-      const rows = await selectRows('family_groups', '*', '&order=name.asc');
+      const rows = await selectAllRows('family_groups', '*', '&order=name.asc');
       setFamilyGroups((rows || []).map(r => ({
         id: r.id,
         name: r.name || '',
@@ -1691,7 +1691,7 @@ function App({
   // memberships from the legacy students.family_group_id column.
   async function loadGroupMemberships() {
     try {
-      const rows = await selectRows('family_group_members', '*');
+      const rows = await selectAllRows('family_group_members', '*');
       setGroupMemberships((rows || []).map(r => ({
         familyGroupId: r.family_group_id,
         studentId: r.student_id
@@ -1704,7 +1704,7 @@ function App({
   }
   async function loadCreditBalances() {
     try {
-      const rows = await selectRows('student_credit_balances', '*');
+      const rows = await selectAllRows('student_credit_balances', '*');
       setCreditBalances(rows || []);
     } catch (e) {
       console.warn('Credit balances not available (run the replacement+credits migration):', e?.message || e);
@@ -1721,7 +1721,7 @@ function App({
   //     decrement the balance accordingly
   async function loadCreditPurchases() {
     try {
-      const rows = await selectRows('credit_purchases', '*', '&order=purchase_date.desc,created_at.desc');
+      const rows = await selectAllRows('credit_purchases', '*', '&order=purchase_date.desc,created_at.desc');
       setCreditPurchases(rows || []);
     } catch (e) {
       console.warn('Credit purchases not available (run the ghost+credits migration):', e?.message || e);
@@ -2107,7 +2107,7 @@ function App({
   // class for the week and are awaiting placement into another same-LT class.
   async function loadReplacementPending() {
     try {
-      const rows = await selectRows('replacement_pending', '*');
+      const rows = await selectAllRows('replacement_pending', '*');
       setReplacementPending(rows || []);
     } catch (e) {
       console.warn('Replacement pending not available (run the replacement pending migration):', e?.message || e);
@@ -2537,7 +2537,7 @@ function App({
   }
   async function loadTcAcceptances() {
     try {
-      const rows = await selectRows('tc_acceptances', '*');
+      const rows = await selectAllRows('tc_acceptances', '*');
       setTcAcceptances(rows || []);
     } catch (e) {
       console.warn('T&C acceptances not available (run the student profile migration):', e?.message || e);
