@@ -1476,6 +1476,15 @@ document.querySelectorAll('.faq details').forEach(function(d){
       }).then(function(r){ return r.ok ? r.json() : []; }).catch(function(){ return []; });
     }
     function h(tag, cls, text){ var el=document.createElement(tag); if(cls)el.className=cls; if(text!=null)el.textContent=text; return el; }
+    // Re-scroll to the URL hash after late layout shifts (data-revealed
+    // sections, image loads). Instant, so it reads as "landed correctly".
+    function fixAnchor(){
+      if(!location.hash) return;
+      var tgt=null; try{ tgt=document.querySelector(location.hash); }catch(_){}
+      if(!tgt || tgt.offsetParent===null) return;
+      requestAnimationFrame(function(){ tgt.scrollIntoView({behavior:'instant'}); });
+    }
+    window.addEventListener('load', fixAnchor);
     function t12(hm){ // "19:00" → "7:00 PM"
       var p=hm.split(':'), H=+p[0], M=p[1];
       var ap=H>=12?'PM':'AM'; H=H%12; if(H===0)H=12;
@@ -1488,12 +1497,10 @@ document.querySelectorAll('.faq details').forEach(function(d){
       if(!cards || !cards.length) return;
       var sec=document.getElementById('pricing'); if(!sec) return;
       sec.style.display=''; var nl=document.getElementById('nav-pricing'); if(nl)nl.style.display='';
-      // If we were navigated here as index.html#pricing (e.g. from the
-      // schedule page), the browser's own anchor jump already failed because
-      // the section was display:none at load. Complete it now that it exists.
-      if(location.hash==='#pricing'){
-        requestAnimationFrame(function(){ sec.scrollIntoView(); });
-      }
+      // Revealing this section shifts every anchor BELOW it (~700px). If the
+      // page was opened with any #hash (e.g. Why Us from the schedule page),
+      // the browser's original jump is now stale — re-complete it.
+      fixAnchor();
       // Tab order mirrors admin: lowest card sort_order decides category
       // position; legacy Toddlers/LTS priority only breaks ties.
       var minSort={}; var cats=[];
