@@ -1488,6 +1488,12 @@ document.querySelectorAll('.faq details').forEach(function(d){
       if(!cards || !cards.length) return;
       var sec=document.getElementById('pricing'); if(!sec) return;
       sec.style.display=''; var nl=document.getElementById('nav-pricing'); if(nl)nl.style.display='';
+      // If we were navigated here as index.html#pricing (e.g. from the
+      // schedule page), the browser's own anchor jump already failed because
+      // the section was display:none at load. Complete it now that it exists.
+      if(location.hash==='#pricing'){
+        requestAnimationFrame(function(){ sec.scrollIntoView(); });
+      }
       // Tab order mirrors admin: lowest card sort_order decides category
       // position; legacy Toddlers/LTS priority only breaks ties.
       var minSort={}; var cats=[];
