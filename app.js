@@ -581,6 +581,35 @@ function App({ currentUser, onLogout }){
       await loadInvoiceData();
     }catch(err){ handleErr(err); alert(err.message||'Failed to reorder'); }
   }
+  // Category order is derived from the cards: a category's position is the
+  // LOWEST sort_order among its cards. Legacy tie-break (Toddlers, LTS
+  // Children first) keeps existing sites stable until the first manual move.
+  function orderedPricingCats(list){
+    const minSort={};
+    (list||[]).forEach(p=>{ const k=p.category||'General'; const s=Number(p.sort_order)||0; if(!(k in minSort)||s<minSort[k]) minSort[k]=s; });
+    const pri = c => c==='Toddlers'?0 : c==='LTS Children'?1 : 2;
+    return Object.keys(minSort).sort((a,b)=> (minSort[a]-minSort[b]) || (pri(a)-pri(b)) || a.localeCompare(b));
+  }
+  async function movePricingCategory(cat, dir){
+    const cats = orderedPricingCats(publicPricing);
+    const i = cats.indexOf(cat); const j = i+dir;
+    if(i<0||j<0||j>=cats.length) return;
+    [cats[i],cats[j]] = [cats[j],cats[i]];
+    // Renumber every card 1..N following the new category order, preserving
+    // within-category order — blocks become contiguous, minima distinct.
+    const seq=[];
+    cats.forEach(c=>{
+      publicPricing
+        .filter(p=>(p.category||'General')===c)
+        .sort((a,b)=>((a.sort_order??0)-(b.sort_order??0)) || String(a.id).localeCompare(String(b.id)))
+        .forEach(p=>seq.push(p));
+    });
+    try{
+      const patches = seq.map((p,idx)=>({p, so:idx+1})).filter(x=>x.p.sort_order!==x.so);
+      await Promise.all(patches.map(x=>patchRows('public_pricing',{id:x.p.id},{sort_order:x.so})));
+      await loadInvoiceData();
+    }catch(err){ handleErr(err); alert(err.message||'Failed to reorder categories'); }
+  }
 
   // ── Invoice CRUD ───────────────────────────────────────────────────
   async function createInvoice({ accountName, accountEmail, accountPhone, lines, notes, dueDate, branchId }){
@@ -3978,6 +4007,7 @@ function App({ currentUser, onLogout }){
             onUpdateCard={updatePricingCard}
             onDeleteCard={deletePricingCard}
             onMoveCard={movePricingCard}
+            onMoveCategory={movePricingCategory}
           />}
           {adminSection==='invoiceSettings' && <div className="card">
             <div style={{fontWeight:800,fontSize:18,marginBottom:4}}>Invoice Numbering &amp; Permissions</div>
@@ -9949,7 +9979,7 @@ function InvoiceDetailPanel({ invoice, lines, pmts, pendingCredits, isOverdue, m
 // Two halves: (1) Schedule Preview switchboard — which lesson types /
 // branches surface in the sanitised public_schedule_preview view;
 // (2) Pricing cards — marketing-owned, decoupled from internal packages.
-function WebsitePanel({ settings, lessonTypes, branches, pricing, onSaveSettings, onAddCard, onUpdateCard, onDeleteCard, onMoveCard }){
+function WebsitePanel({ settings, lessonTypes, branches, pricing, onSaveSettings, onAddCard, onUpdateCard, onDeleteCard, onMoveCard, onMoveCategory }){
   const migrated = settings!=null;
   const visLt = new Set(settings?.visible_lesson_type_ids||[]);
   const visBr = new Set(settings?.visible_branch_ids||[]);
@@ -9982,12 +10012,12 @@ function WebsitePanel({ settings, lessonTypes, branches, pricing, onSaveSettings
     if(editing==='new') await onAddCard(payload); else await onUpdateCard(editing, payload);
     setEditing(null);
   }
-  const cats = [...new Set(pricing.map(p=>p.category||'General'))];
-  // Toddlers + LTS Children lead, per marketing priority
-  cats.sort((a,b)=>{
-    const pri = c => c==='Toddlers'?0 : c==='LTS Children'?1 : 2;
-    return pri(a)-pri(b) || a.localeCompare(b);
-  });
+  // Category order mirrors the website: lowest card sort_order first,
+  // legacy Toddlers/LTS tie-break until the first manual reorder.
+  const catMin={};
+  pricing.forEach(p=>{ const k=p.category||'General'; const s=Number(p.sort_order)||0; if(!(k in catMin)||s<catMin[k]) catMin[k]=s; });
+  const catPri = c => c==='Toddlers'?0 : c==='LTS Children'?1 : 2;
+  const cats = Object.keys(catMin).sort((a,b)=> (catMin[a]-catMin[b]) || (catPri(a)-catPri(b)) || a.localeCompare(b));
   return <div style={{display:'flex',flexDirection:'column',gap:16}}>
     {!migrated && <div className="card" style={{background:'#FEF3C7',border:'1px solid #FDE68A',padding:'10px 14px',fontSize:12.5}}>
       ⚠ Website tables not found — run <code>supabase_public_website_migration.sql</code> first. Controls below will save once the migration is in.
@@ -10060,10 +10090,15 @@ function WebsitePanel({ settings, lessonTypes, branches, pricing, onSaveSettings
         </div>
       </div>}
       {cats.length===0 && <div className="small subtle">No pricing cards yet.</div>}
-      {cats.map(cat=>{
+      {cats.map((cat,ci)=>{
         const rows = pricing.filter(p=>(p.category||'General')===cat).sort((a,b)=>(a.sort_order??0)-(b.sort_order??0));
         return <div key={cat} style={{marginBottom:14}}>
-          <div style={{fontWeight:700,fontSize:13,margin:'6px 0',color:'var(--text-2)'}}>{cat}</div>
+          <div style={{display:'flex',alignItems:'center',gap:6,margin:'6px 0'}}>
+            <button className="btn btn-ghost small" title="Move category earlier on the website" disabled={ci===0} onClick={()=>onMoveCategory(cat,-1)} style={{padding:'1px 6px'}}>↑</button>
+            <button className="btn btn-ghost small" title="Move category later on the website" disabled={ci===cats.length-1} onClick={()=>onMoveCategory(cat,1)} style={{padding:'1px 6px'}}>↓</button>
+            <span style={{fontWeight:700,fontSize:13,color:'var(--text-2)'}}>{cat}</span>
+            <span className="small subtle">tab {ci+1} of {cats.length}</span>
+          </div>
           <div className="table-wrap"><table><tbody>
             {rows.map((c,idx)=><tr key={c.id} style={{opacity:c.is_published?1:0.5}}>
               <td style={{whiteSpace:'nowrap',width:70}}>

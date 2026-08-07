@@ -976,6 +976,47 @@ function App({
       alert(err.message || 'Failed to reorder');
     }
   }
+  // Category order is derived from the cards: a category's position is the
+  // LOWEST sort_order among its cards. Legacy tie-break (Toddlers, LTS
+  // Children first) keeps existing sites stable until the first manual move.
+  function orderedPricingCats(list) {
+    const minSort = {};
+    (list || []).forEach(p => {
+      const k = p.category || 'General';
+      const s = Number(p.sort_order) || 0;
+      if (!(k in minSort) || s < minSort[k]) minSort[k] = s;
+    });
+    const pri = c => c === 'Toddlers' ? 0 : c === 'LTS Children' ? 1 : 2;
+    return Object.keys(minSort).sort((a, b) => minSort[a] - minSort[b] || pri(a) - pri(b) || a.localeCompare(b));
+  }
+  async function movePricingCategory(cat, dir) {
+    const cats = orderedPricingCats(publicPricing);
+    const i = cats.indexOf(cat);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= cats.length) return;
+    [cats[i], cats[j]] = [cats[j], cats[i]];
+    // Renumber every card 1..N following the new category order, preserving
+    // within-category order — blocks become contiguous, minima distinct.
+    const seq = [];
+    cats.forEach(c => {
+      publicPricing.filter(p => (p.category || 'General') === c).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || String(a.id).localeCompare(String(b.id))).forEach(p => seq.push(p));
+    });
+    try {
+      const patches = seq.map((p, idx) => ({
+        p,
+        so: idx + 1
+      })).filter(x => x.p.sort_order !== x.so);
+      await Promise.all(patches.map(x => patchRows('public_pricing', {
+        id: x.p.id
+      }, {
+        sort_order: x.so
+      })));
+      await loadInvoiceData();
+    } catch (err) {
+      handleErr(err);
+      alert(err.message || 'Failed to reorder categories');
+    }
+  }
 
   // ── Invoice CRUD ───────────────────────────────────────────────────
   async function createInvoice({
@@ -6021,7 +6062,8 @@ function App({
     onAddCard: addPricingCard,
     onUpdateCard: updatePricingCard,
     onDeleteCard: deletePricingCard,
-    onMoveCard: movePricingCard
+    onMoveCard: movePricingCard,
+    onMoveCategory: movePricingCategory
   }), adminSection === 'invoiceSettings' && /*#__PURE__*/React.createElement("div", {
     className: "card"
   }, /*#__PURE__*/React.createElement("div", {
@@ -18498,7 +18540,8 @@ function WebsitePanel({
   onAddCard,
   onUpdateCard,
   onDeleteCard,
-  onMoveCard
+  onMoveCard,
+  onMoveCategory
 }) {
   const migrated = settings != null;
   const visLt = new Set(settings?.visible_lesson_type_ids || []);
@@ -18565,12 +18608,16 @@ function WebsitePanel({
     if (editing === 'new') await onAddCard(payload);else await onUpdateCard(editing, payload);
     setEditing(null);
   }
-  const cats = [...new Set(pricing.map(p => p.category || 'General'))];
-  // Toddlers + LTS Children lead, per marketing priority
-  cats.sort((a, b) => {
-    const pri = c => c === 'Toddlers' ? 0 : c === 'LTS Children' ? 1 : 2;
-    return pri(a) - pri(b) || a.localeCompare(b);
+  // Category order mirrors the website: lowest card sort_order first,
+  // legacy Toddlers/LTS tie-break until the first manual reorder.
+  const catMin = {};
+  pricing.forEach(p => {
+    const k = p.category || 'General';
+    const s = Number(p.sort_order) || 0;
+    if (!(k in catMin) || s < catMin[k]) catMin[k] = s;
   });
+  const catPri = c => c === 'Toddlers' ? 0 : c === 'LTS Children' ? 1 : 2;
+  const cats = Object.keys(catMin).sort((a, b) => catMin[a] - catMin[b] || catPri(a) - catPri(b) || a.localeCompare(b));
   return /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -18829,7 +18876,7 @@ function WebsitePanel({
     onClick: saveDraft
   }, editing === 'new' ? 'Add card' : 'Save changes'))), cats.length === 0 && /*#__PURE__*/React.createElement("div", {
     className: "small subtle"
-  }, "No pricing cards yet."), cats.map(cat => {
+  }, "No pricing cards yet."), cats.map((cat, ci) => {
     const rows = pricing.filter(p => (p.category || 'General') === cat).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
     return /*#__PURE__*/React.createElement("div", {
       key: cat,
@@ -18838,12 +18885,36 @@ function WebsitePanel({
       }
     }, /*#__PURE__*/React.createElement("div", {
       style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        margin: '6px 0'
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      title: "Move category earlier on the website",
+      disabled: ci === 0,
+      onClick: () => onMoveCategory(cat, -1),
+      style: {
+        padding: '1px 6px'
+      }
+    }, "↑"), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost small",
+      title: "Move category later on the website",
+      disabled: ci === cats.length - 1,
+      onClick: () => onMoveCategory(cat, 1),
+      style: {
+        padding: '1px 6px'
+      }
+    }, "↓"), /*#__PURE__*/React.createElement("span", {
+      style: {
         fontWeight: 700,
         fontSize: 13,
-        margin: '6px 0',
         color: 'var(--text-2)'
       }
-    }, cat), /*#__PURE__*/React.createElement("div", {
+    }, cat), /*#__PURE__*/React.createElement("span", {
+      className: "small subtle"
+    }, "tab ", ci + 1, " of ", cats.length)), /*#__PURE__*/React.createElement("div", {
       className: "table-wrap"
     }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("tbody", null, rows.map((c, idx) => /*#__PURE__*/React.createElement("tr", {
       key: c.id,

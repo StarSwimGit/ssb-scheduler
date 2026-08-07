@@ -1488,10 +1488,17 @@ document.querySelectorAll('.faq details').forEach(function(d){
       if(!cards || !cards.length) return;
       var sec=document.getElementById('pricing'); if(!sec) return;
       sec.style.display=''; var nl=document.getElementById('nav-pricing'); if(nl)nl.style.display='';
-      var cats=[]; cards.forEach(function(c){ var k=c.category||'General'; if(cats.indexOf(k)<0)cats.push(k); });
+      // Tab order mirrors admin: lowest card sort_order decides category
+      // position; legacy Toddlers/LTS priority only breaks ties.
+      var minSort={}; var cats=[];
+      cards.forEach(function(c){
+        var k=c.category||'General'; var s=Number(c.sort_order)||0;
+        if(cats.indexOf(k)<0) cats.push(k);
+        if(!(k in minSort)||s<minSort[k]) minSort[k]=s;
+      });
       cats.sort(function(a,b){
         function pri(c){ return c==='Toddlers'?0 : c==='LTS Children'?1 : 2; }
-        return pri(a)-pri(b) || a.localeCompare(b);
+        return (minSort[a]-minSort[b]) || (pri(a)-pri(b)) || a.localeCompare(b);
       });
       var cur=cats[0];
       function renderTabs(){
