@@ -36,23 +36,41 @@
     .sched-pill{border:1.5px solid var(--border);background:#fff;color:var(--text-2);border-radius:999px;padding:7px 16px;font-size:13px;font-weight:700;cursor:pointer;transition:all .15s ease;font-family:inherit}
     .sched-pill:hover{border-color:var(--primary);color:var(--primary)}
     .sched-pill.on{background:var(--primary);border-color:var(--primary);color:#fff}
-    /* Grid */
-    .sched-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-top:22px}
-    .sched-day{background:#fff;border:1px solid var(--border);border-radius:14px;padding:10px 8px;min-height:120px}
-    .sched-day-h{font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--navy);text-align:center;padding-bottom:8px;border-bottom:2px solid var(--border);margin-bottom:8px}
-    .sched-slot{border-radius:10px;padding:8px 9px;margin-bottom:6px;background:#F8FBFF;border:1px solid var(--border)}
-    .sched-slot.is-full{opacity:.62}
-    .sched-time{font-size:12.5px;font-weight:800;color:var(--navy);line-height:1.25}
-    .sched-lt{font-size:11.5px;font-weight:600;color:var(--text-2);margin-top:1px}
-    .sched-br{font-size:10.5px;color:var(--text-2);opacity:.75}
-    .sched-chip{display:inline-block;margin-top:5px;font-size:9.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;border-radius:999px;padding:2px 8px}
+    /* ── Desktop: timetable matrix (rows = start times, cols = days) ── */
+    .tt-wrap{margin-top:24px;background:#fff;border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 14px 34px -24px rgba(31,102,148,.35)}
+    table.tt{width:100%;border-collapse:collapse;table-layout:fixed}
+    .tt th{background:#F4FAFE;color:var(--navy);font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;padding:11px 6px;border-bottom:2px solid var(--border)}
+    .tt th.tt-time{width:86px}
+    .tt td{border-top:1px solid #EAF3FB;padding:7px 6px;vertical-align:top;text-align:center}
+    .tt td.tt-time{font-size:12.5px;font-weight:800;color:var(--navy);white-space:nowrap;background:#FAFDFF}
+    .tt tr:hover td{background:#F8FCFF}
+    .tt tr:hover td.tt-time{background:#F1F8FD}
+    .tt-chip{display:block;margin:2px auto;max-width:150px;border-radius:8px;padding:4px 8px;font-size:11px;font-weight:700;line-height:1.3;cursor:default}
+    .tt-chip small{display:block;font-size:9.5px;font-weight:600;opacity:.8}
+    .tt-chip.available{background:#DCFCE7;color:#166534;border:1px solid #BBF7D0}
+    .tt-chip.limited{background:#FEF3C7;color:#92400E;border:1px solid #FDE68A}
+    .tt-chip.full{background:#F1F5F9;color:#64748B;border:1px solid #E2E8F0}
+    /* ── Mobile: compact per-day list ── */
+    .day-list{display:none;margin-top:20px}
+    .day-block{background:#fff;border:1px solid var(--border);border-radius:14px;margin-bottom:10px;overflow:hidden}
+    .day-h{font-size:12px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--navy);padding:10px 14px;background:#F4FAFE;border-bottom:1px solid var(--border)}
+    .day-row{display:flex;align-items:center;gap:10px;padding:9px 14px;border-top:1px solid #EFF6FC;font-size:13px}
+    .day-row:first-of-type{border-top:none}
+    .day-row.is-full{opacity:.55}
+    .dr-time{font-weight:800;color:var(--navy);white-space:nowrap;min-width:74px;font-size:12.5px}
+    .dr-lt{flex:1;color:var(--text-2);font-weight:600;min-width:0}
+    .dr-lt small{display:block;font-weight:500;opacity:.75;font-size:11px}
+    .sched-chip{display:inline-block;font-size:9.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;border-radius:999px;padding:2px 8px;white-space:nowrap}
     .sched-chip.available{background:#DCFCE7;color:#166534}
     .sched-chip.limited{background:#FEF3C7;color:#92400E}
     .sched-chip.full{background:#E2E8F0;color:#475569}
-    .sched-empty{font-size:11px;color:var(--text-2);opacity:.5;text-align:center;padding:14px 0}
     .sched-legend{display:flex;gap:14px;justify-content:center;margin-top:20px;flex-wrap:wrap}
     .sched-note{text-align:center;font-size:12.5px;color:var(--text-2);margin-top:16px}
     .sched-note a{color:var(--primary);font-weight:700}
+    @media (max-width:820px){
+      .tt-wrap{display:none}
+      .day-list{display:block}
+    }
     /* Empty / disabled state */
     .sched-off{max-width:520px;margin:50px auto;background:#fff;border:1px solid var(--border);border-radius:18px;padding:36px 28px;text-align:center;display:none}
     .sched-off h2{font-size:19px;font-weight:800;color:var(--navy);margin-bottom:8px}
@@ -90,7 +108,8 @@
     </div>
     <div class="sched-filters" id="sched-lt-filters"></div>
     <div class="sched-filters" id="sched-br-filters" style="margin-top:0"></div>
-    <div class="sched-grid" id="sched-grid" style="display:none"></div>
+    <div class="tt-wrap" id="sched-matrix" style="display:none"></div>
+    <div class="day-list" id="sched-daylist"></div>
     <div class="sched-legend" id="sched-legend" style="display:none">
       <span class="sched-chip available">Available</span>
       <span class="sched-chip limited">Few places left</span>
@@ -121,12 +140,30 @@
   }).then(function(r){ return r.ok ? r.json() : []; }).catch(function(){ return []; })
   .then(function(rows){
     if(!rows || !rows.length){ offState(); return; }
-    ['sched-grid','sched-legend','sched-note'].forEach(function(id){ document.getElementById(id).style.display=''; });
+    ['sched-matrix','sched-legend','sched-note'].forEach(function(id){ document.getElementById(id).style.display=''; });
     var DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    var RANK={available:0,limited:1,full:2};
     function h(tag,cls,text){ var el=document.createElement(tag); if(cls)el.className=cls; if(text!=null)el.textContent=text; return el; }
     function t12(hm){ var p=hm.split(':'),H=+p[0],M=p[1],ap=H>=12?'PM':'AM'; H=H%12; if(H===0)H=12; return H+':'+M+' '+ap; }
-    var ltSel=null, brSel=null, lts=[], brs=[];
+
+    // Merge parallel classes: same day + start + lesson type + branch collapse
+    // into one entry carrying the MOST OPEN status (a parent cares whether
+    // any of the three 11 AM groups has a place — not that two are full).
+    var merged={};
     rows.forEach(function(r){
+      var key=r.weekday+'|'+r.start_minute+'|'+(r.lesson_type||'')+'|'+(r.branch||'');
+      var cur=merged[key];
+      if(!cur){ merged[key]={weekday:r.weekday,start_minute:r.start_minute,start_time:r.start_time,end_time:r.end_time,lesson_type:r.lesson_type,branch:r.branch,status:r.status,count:1}; }
+      else{
+        cur.count++;
+        if(RANK[r.status]<RANK[cur.status]) cur.status=r.status;
+        if(r.end_time>cur.end_time) cur.end_time=r.end_time;
+      }
+    });
+    var entries=Object.keys(merged).map(function(k){ return merged[k]; });
+
+    var ltSel=null, brSel=null, lts=[], brs=[];
+    entries.forEach(function(r){
       if(r.lesson_type && lts.indexOf(r.lesson_type)<0) lts.push(r.lesson_type);
       if(r.branch && brs.indexOf(r.branch)<0) brs.push(r.branch);
     });
@@ -142,27 +179,75 @@
         box.appendChild(b);
       });
     }
+    function visible(){
+      return entries.filter(function(r){
+        return (ltSel==null||r.lesson_type===ltSel) && (brSel==null||r.branch===brSel);
+      });
+    }
+    function chipTitle(r){
+      var t=t12(r.start_time)+' \u2013 '+t12(r.end_time)+' \u00b7 '+r.lesson_type;
+      if(r.branch) t+=' \u00b7 '+r.branch;
+      if(r.count>1) t+=' \u00b7 '+r.count+' classes';
+      return t;
+    }
     function render(){
       pills('sched-lt-filters',lts,function(){return ltSel;},function(v){ltSel=v;});
       pills('sched-br-filters',brs,function(){return brSel;},function(v){brSel=v;});
-      var grid=document.getElementById('sched-grid'); grid.innerHTML='';
+      var vis=visible();
+
+      // ── Desktop matrix: rows = distinct start times, cols = days ──
+      var times=[]; vis.forEach(function(r){ if(times.indexOf(r.start_minute)<0) times.push(r.start_minute); });
+      times.sort(function(a,b){return a-b;});
+      var byCell={}; vis.forEach(function(r){ var k=r.start_minute+'|'+r.weekday; (byCell[k]=byCell[k]||[]).push(r); });
+      var mx=document.getElementById('sched-matrix'); mx.innerHTML='';
+      var tbl=h('table','tt'), thead=h('thead'), hr=h('tr');
+      hr.appendChild(h('th','tt-time',''));
+      DAYS.forEach(function(d){ hr.appendChild(h('th',null,d)); });
+      thead.appendChild(hr); tbl.appendChild(thead);
+      var tbody=h('tbody');
+      times.forEach(function(tm){
+        var tr=h('tr');
+        var label=null;
+        for(var d=1; d<=7; d++){ var c=byCell[tm+'|'+d]; if(c){ label=t12(c[0].start_time); break; } }
+        tr.appendChild(h('td','tt-time',label||''));
+        for(var d=1; d<=7; d++){
+          var td=h('td');
+          (byCell[tm+'|'+d]||[]).sort(function(a,b){ return (a.lesson_type||'').localeCompare(b.lesson_type||''); }).forEach(function(r){
+            var chip=h('span','tt-chip '+r.status,r.lesson_type||'Class');
+            chip.title=chipTitle(r);
+            if(brSel==null && brs.length>1 && r.branch){ chip.appendChild(h('small',null,r.branch)); }
+            var endsLate = (parseInt(r.end_time,10)*60 + parseInt(r.end_time.slice(3),10)) - tm > 60;
+            if(endsLate){ chip.appendChild(h('small',null,'till '+t12(r.end_time))); }
+            td.appendChild(chip);
+          });
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      });
+      tbl.appendChild(tbody); mx.appendChild(tbl);
+
+      // ── Mobile: compact per-day list, single-line rows ──
+      var dl=document.getElementById('sched-daylist'); dl.innerHTML='';
       for(var d=1; d<=7; d++){
-        var daySlots=rows.filter(function(r){
-          return r.weekday===d && (ltSel==null||r.lesson_type===ltSel) && (brSel==null||r.branch===brSel);
-        });
-        var col=h('div','sched-day'+(daySlots.length?'':' is-empty'));
-        col.appendChild(h('div','sched-day-h',DAYS[d-1]));
-        if(!daySlots.length){ col.appendChild(h('div','sched-empty','—')); }
+        var daySlots=vis.filter(function(r){return r.weekday===d;}).sort(function(a,b){return a.start_minute-b.start_minute;});
+        if(!daySlots.length) continue;
+        var block=h('div','day-block');
+        block.appendChild(h('div','day-h',DAYS[d-1]));
         daySlots.forEach(function(r){
-          var s=h('div','sched-slot'+(r.status==='full'?' is-full':''));
-          s.appendChild(h('div','sched-time',t12(r.start_time)+' – '+t12(r.end_time)));
-          s.appendChild(h('div','sched-lt',r.lesson_type||''));
-          if(r.branch && brs.length>1) s.appendChild(h('div','sched-br',r.branch));
-          var chip=r.status==='full'?'Full':r.status==='limited'?'Few left':'Available';
-          s.appendChild(h('span','sched-chip '+r.status,chip));
-          col.appendChild(s);
+          var row=h('div','day-row'+(r.status==='full'?' is-full':''));
+          row.appendChild(h('span','dr-time',t12(r.start_time)));
+          var lt=h('span','dr-lt',r.lesson_type||'Class');
+          var subBits=[];
+          if(brSel==null && brs.length>1 && r.branch) subBits.push(r.branch);
+          var endsLate=(parseInt(r.end_time,10)*60+parseInt(r.end_time.slice(3),10))-r.start_minute>60;
+          if(endsLate) subBits.push('till '+t12(r.end_time));
+          if(subBits.length) lt.appendChild(h('small',null,subBits.join(' \u00b7 ')));
+          row.appendChild(lt);
+          var chipTxt=r.status==='full'?'Full':r.status==='limited'?'Few left':'Available';
+          row.appendChild(h('span','sched-chip '+r.status,chipTxt));
+          block.appendChild(row);
         });
-        grid.appendChild(col);
+        dl.appendChild(block);
       }
     }
     render();
