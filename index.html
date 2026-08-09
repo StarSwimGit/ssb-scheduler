@@ -439,6 +439,9 @@
     .price-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:20px;margin-top:24px;max-width:900px;margin-left:auto;margin-right:auto}
     .price-card{position:relative;background:#fff;border:1px solid var(--border);border-radius:20px;padding:28px 24px 22px;display:flex;flex-direction:column;box-shadow:0 14px 34px -22px rgba(31,102,148,.3);transition:transform .18s ease,box-shadow .18s ease}
     .price-card:hover{transform:translateY(-4px);box-shadow:0 24px 48px -22px rgba(31,102,148,.42)}
+    /* A lone card in a tab would stretch across the whole grid — cap it to a
+       normal column width and centre it in the track. */
+    .price-card:only-child{max-width:320px;width:100%;justify-self:center}
     .price-badge{position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:linear-gradient(90deg,#ffc93d,#f2a017);color:#7C3E00;font-size:10.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:4px 14px;border-radius:999px;box-shadow:0 6px 14px -6px rgba(242,160,23,.7);white-space:nowrap}
     .price-card.has-badge{border-color:#FCD34D}
     .price-title{font-size:16.5px;font-weight:800;color:var(--navy)}
