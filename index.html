@@ -485,6 +485,12 @@
     }
 
   </style>
+  <link rel="manifest" href="/manifest.json"/>
+  <meta name="theme-color" content="#0EA5E9"/>
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+  <meta name="apple-mobile-web-app-title" content="Star Swim"/>
 </head>
 <body>
 <!-- Promo top bar (populated at runtime; hidden if no live promo) -->
@@ -1555,6 +1561,11 @@ document.querySelectorAll('.faq details').forEach(function(d){
       renderTabs(); renderCards();
     });
   })();
+  </script>
+  <script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function(){ navigator.serviceWorker.register('/sw.js').catch(function(){}); });
+  }
   </script>
 </body>
 </html>
