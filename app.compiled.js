@@ -5912,6 +5912,7 @@ function App({
     deleteContact: adminDeleteContact,
     onRefresh: loadAdminAll
   }), !loading && side === 'system' && view === 'adminVouchers' && canSystem && /*#__PURE__*/React.createElement(AdminVouchersView, {
+    isSysadmin: isSysadmin,
     vouchers: adminVouchers,
     payees: adminPayees,
     savePayee: adminSavePayee,
@@ -21848,7 +21849,8 @@ function AdminVouchersView({
   deletePayee,
   saveVoucher,
   setVoucherStatus,
-  onRefresh
+  onRefresh,
+  isSysadmin
 }) {
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -22064,8 +22066,9 @@ function AdminVouchersView({
   }, "Approve"), v.status === 'Approved' && /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
     onClick: () => setVoucherStatus(v.id, 'Paid')
-  }, "Mark Paid"), v.status !== 'Void' && v.status !== 'Paid' && /*#__PURE__*/React.createElement("button", {
+  }, "Mark Paid"), v.status !== 'Void' && (v.status !== 'Paid' || isSysadmin) && /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost small",
+    title: v.status === 'Paid' ? 'Amend paid voucher (sysadmin)' : 'Edit voucher',
     onClick: () => setModal({
       kind: 'edit',
       data: v
@@ -22101,6 +22104,7 @@ function AdminVoucherModal({
   onSave,
   onClose
 }) {
+  const amendingPaid = existing?.status === 'Paid';
   const [date, setDate] = useState(existing?.pv_date || new Date().toISOString().slice(0, 10));
   const [payeeId, setPayeeId] = useState(existing?.payee_id || '');
   const [payeeName, setPayeeName] = useState(existing?.payee || '');
@@ -22217,7 +22221,16 @@ function AdminVoucherModal({
       maxHeight: '70vh',
       overflowY: 'auto'
     }
-  }, /*#__PURE__*/React.createElement("div", {
+  }, amendingPaid && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: '#FEF3C7',
+      border: '1px solid #FDE68A',
+      borderRadius: 10,
+      padding: '8px 12px',
+      fontSize: 12.5,
+      color: '#92400E'
+    }
+  }, "⚠ You are amending a voucher already marked ", /*#__PURE__*/React.createElement("b", null, "Paid"), ". Its status stays Paid; your changes overwrite the recorded details. Note the reason in Remarks for the audit trail."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: '1fr 1fr',

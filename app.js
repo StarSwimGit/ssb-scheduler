@@ -3819,7 +3819,7 @@ function App({ currentUser, onLogout }){
         deleteContact={adminDeleteContact}
         onRefresh={loadAdminAll}
       />}
-      {!loading && side==='system' && view==='adminVouchers' && canSystem && <AdminVouchersView
+      {!loading && side==='system' && view==='adminVouchers' && canSystem && <AdminVouchersView isSysadmin={isSysadmin}
         vouchers={adminVouchers}
         payees={adminPayees}
         savePayee={adminSavePayee}
@@ -11285,7 +11285,7 @@ function AdminScanReviewModal({ scanned, onAccept, onClose }){
 }
 
 // ── Payment Vouchers ─────────────────────────────────────────────────────
-function AdminVouchersView({ vouchers, payees, savePayee, deletePayee, saveVoucher, setVoucherStatus, onRefresh }){
+function AdminVouchersView({ vouchers, payees, savePayee, deletePayee, saveVoucher, setVoucherStatus, onRefresh, isSysadmin }){
   const [q,setQ]=useState('');
   const [statusFilter,setStatusFilter]=useState('all');
   const [modal,setModal]=useState(null); // {kind:'edit'|'view'|'payees', data?}
@@ -11379,7 +11379,7 @@ function AdminVouchersView({ vouchers, payees, savePayee, deletePayee, saveVouch
                     <button className="btn btn-ghost small" onClick={()=>printPV(v.id)}>🖨</button>
                     {v.status==='Draft' && <button className="btn btn-ghost small" onClick={()=>setVoucherStatus(v.id,'Approved')}>Approve</button>}
                     {v.status==='Approved' && <button className="btn btn-ghost small" onClick={()=>setVoucherStatus(v.id,'Paid')}>Mark Paid</button>}
-                    {v.status!=='Void' && v.status!=='Paid' && <button className="btn btn-ghost small" onClick={()=>setModal({kind:'edit',data:v})}>✎</button>}
+                    {v.status!=='Void' && (v.status!=='Paid' || isSysadmin) && <button className="btn btn-ghost small" title={v.status==='Paid'?'Amend paid voucher (sysadmin)':'Edit voucher'} onClick={()=>setModal({kind:'edit',data:v})}>✎</button>}
                     {v.status!=='Void' && <button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>{ if(confirm(`Void voucher ${adminPvNo(v)}? The number stays in the sequence but the voucher becomes invalid.`)) setVoucherStatus(v.id,'Void'); }}>Void</button>}
                   </td>
                 </tr>)}
@@ -11394,6 +11394,7 @@ function AdminVouchersView({ vouchers, payees, savePayee, deletePayee, saveVouch
 }
 
 function AdminVoucherModal({ existing, payees, savePayee, onSave, onClose }){
+  const amendingPaid = existing?.status==='Paid';
   const [date,setDate]=useState(existing?.pv_date || new Date().toISOString().slice(0,10));
   const [payeeId,setPayeeId]=useState(existing?.payee_id||'');
   const [payeeName,setPayeeName]=useState(existing?.payee||'');
@@ -11452,6 +11453,9 @@ function AdminVoucherModal({ existing, payees, savePayee, onSave, onClose }){
   return <div className="modal-backdrop" onClick={onClose}><div className="modal-card" onClick={e=>e.stopPropagation()} style={{maxWidth:640}}>
     <div className="modal-head"><div style={{fontWeight:800,fontSize:16}}>{existing?.id?`Edit ${adminPvNo(existing)}`:'New Payment Voucher'}</div><button className="btn btn-ghost small" onClick={onClose}>×</button></div>
     <div style={{padding:14,display:'flex',flexDirection:'column',gap:12,maxHeight:'70vh',overflowY:'auto'}}>
+      {amendingPaid && <div style={{background:'#FEF3C7',border:'1px solid #FDE68A',borderRadius:10,padding:'8px 12px',fontSize:12.5,color:'#92400E'}}>
+        ⚠ You are amending a voucher already marked <b>Paid</b>. Its status stays Paid; your changes overwrite the recorded details. Note the reason in Remarks for the audit trail.
+      </div>}
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
         <div className="field" style={{margin:0}}><label>Date *</label><input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)} /></div>
         <div className="field" style={{margin:0}}><label>Existing payee</label><select className="select" value={payeeId} onChange={e=>pickPayee(e.target.value)}><option value="">— New payee or type below —</option>{(payees||[]).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
