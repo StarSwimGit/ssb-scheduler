@@ -23,6 +23,18 @@
 // ============================================================================
 
 const { useState, useEffect, useMemo } = React;
+// Reactive mobile-breakpoint hook — drives the app-style layout switch
+// (bottom tab bar, daily-first schedule) below 820px.
+function useIsMobile(){
+  const [m,setM] = useState(()=>window.matchMedia('(max-width:820px)').matches);
+  useEffect(()=>{
+    const q = window.matchMedia('(max-width:820px)');
+    const h = e=>setM(e.matches);
+    q.addEventListener ? q.addEventListener('change',h) : q.addListener(h);
+    return ()=>{ q.removeEventListener ? q.removeEventListener('change',h) : q.removeListener(h); };
+  },[]);
+  return m;
+}
 
 // ───────────────────────────────────────────────────────────────────── constants
 
@@ -321,6 +333,12 @@ function App({ currentUser, onLogout }){
     if(!canSchedule && canSystem) return 'system';
     return 'schedule';
   });
+  const isMobile = useIsMobile();
+  const [mobileMoreOpen,setMobileMoreOpen] = useState(false);
+  // The 7-column week grid is unusable on a phone — steer mobile users to
+  // the Daily agenda whenever Weekly would render.
+  useEffect(()=>{ if(isMobile && view==='schedule' && scheduleSection==='week') setScheduleSection('day'); },[isMobile, view, scheduleSection]);
+  useEffect(()=>{ setMobileMoreOpen(false); },[view, side]);
   function switchSide(next){
     setSide(next);
     if(next==='system') setView('adminDirectory');
@@ -3537,9 +3555,44 @@ function App({ currentUser, onLogout }){
       </div>
     </div>{/* end header */}
 
+    {/* ── Mobile bottom app bar (≤820px) — replaces the top nav row ── */}
+    {isMobile && currentUser && <nav className="mobile-tabbar" aria-label="Primary">
+      {side==='schedule' ? <>
+        <button className={`mtab ${view==='schedule'?'active':''}`} onClick={()=>setView('schedule')}><span className="mtab-ic">📅</span>Schedule</button>
+        <button className={`mtab ${view==='programme'?'active':''}`} onClick={()=>{ setView('programme'); setProgrammeSection('week'); }}><span className="mtab-ic">📋</span>Programme</button>
+        <button className={`mtab ${view==='accounts'?'active':''}`} onClick={()=>{ setView('accounts'); setAccountSection('accounts'); }}><span className="mtab-ic">👤</span>Accounts</button>
+        <button className={`mtab ${view==='shop'?'active':''}`} onClick={()=>setView('shop')}><span className="mtab-ic">🛒</span>Shop</button>
+      </> : <>
+        <button className={`mtab ${view==='adminDirectory'?'active':''}`} onClick={()=>setView('adminDirectory')}><span className="mtab-ic">📇</span>Directory</button>
+        <button className={`mtab ${view==='adminVouchers'?'active':''}`} onClick={()=>setView('adminVouchers')}><span className="mtab-ic">🧾</span>Vouchers</button>
+        <button className={`mtab ${view==='adminCrew'?'active':''}`} onClick={()=>setView('adminCrew')}><span className="mtab-ic">👥</span>Crew</button>
+        <button className={`mtab ${view==='adminPromos'?'active':''}`} onClick={()=>setView('adminPromos')}><span className="mtab-ic">📢</span>Promos</button>
+      </>}
+      <button className={`mtab ${mobileMoreOpen?'active':''}`} onClick={()=>setMobileMoreOpen(v=>!v)} style={{position:'relative'}}>
+        <span className="mtab-ic">☰</span>More
+        {side==='schedule' && newMsgCount>0 && <span className="mtab-badge">{newMsgCount>99?'99+':newMsgCount}</span>}
+      </button>
+    </nav>}
+
+    {/* ── "More" sheet — everything that doesn't fit the bar ── */}
+    {isMobile && currentUser && mobileMoreOpen && <div className="more-sheet-backdrop" onClick={()=>setMobileMoreOpen(false)}>
+      <div className="more-sheet" onClick={e=>e.stopPropagation()}>
+        <div className="more-sheet-grab" aria-hidden="true"></div>
+        {side==='schedule' && <>
+          <button className="more-item" onClick={()=>{ setView('messages'); }}>✉️ Messages {newMsgCount>0&&<span className="more-badge">{newMsgCount>99?'99+':newMsgCount}</span>}</button>
+          <button className="more-item" onClick={()=>{ setView('enroll'); }}>🔍 Explore</button>
+          <button className="more-item" onClick={()=>{ window.open('./intake.html','_blank','noopener,noreferrer'); setMobileMoreOpen(false); }}>📝 Intake form ↗</button>
+          {isSysadmin && <button className="more-item" onClick={()=>{ setView('settings'); setAdminSection('pools'); }}>⚙️ Settings</button>}
+        </>}
+        {canUseScheduler(currentUser?.role) && canUseAdminSystem(currentUser?.role) &&
+          <button className="more-item" onClick={()=>{ switchSide(side==='schedule'?'system':'schedule'); }}>{side==='schedule'?'🏢 Switch to System':'📅 Switch to Scheduling'}</button>}
+        <button className="more-item more-item-danger" onClick={()=>{ if(confirm('Sign out?')) onLogout(); }}>🚪 Logout</button>
+      </div>
+    </div>}
+
     {/* ── Sub-bar: schedule tabs ── */}
     {!loading && view==='schedule' && <div className="sub-bar"><div className="sub-bar-inner">
-      <button className={`sub-tab ${scheduleSection==='week'?'active':''}`} onClick={()=>setScheduleSection('week')}>Weekly</button>
+      {!isMobile && <button className={`sub-tab ${scheduleSection==='week'?'active':''}`} onClick={()=>setScheduleSection('week')}>Weekly</button>}
       <button className={`sub-tab ${scheduleSection==='day'?'active':''}`} onClick={()=>setScheduleSection('day')}>Daily</button>
       <button className={`sub-tab ${scheduleSection==='month'?'active':''}`} onClick={()=>setScheduleSection('month')}>Monthly</button>
       {/* Inline week navigation — keeps Prev/Range/Next/This Week sticky with the sub-bar */}

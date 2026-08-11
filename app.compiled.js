@@ -27,6 +27,20 @@ const {
   useEffect,
   useMemo
 } = React;
+// Reactive mobile-breakpoint hook — drives the app-style layout switch
+// (bottom tab bar, daily-first schedule) below 820px.
+function useIsMobile() {
+  const [m, setM] = useState(() => window.matchMedia('(max-width:820px)').matches);
+  useEffect(() => {
+    const q = window.matchMedia('(max-width:820px)');
+    const h = e => setM(e.matches);
+    q.addEventListener ? q.addEventListener('change', h) : q.addListener(h);
+    return () => {
+      q.removeEventListener ? q.removeEventListener('change', h) : q.removeListener(h);
+    };
+  }, []);
+  return m;
+}
 
 // ───────────────────────────────────────────────────────────────────── constants
 
@@ -611,6 +625,16 @@ function App({
     if (!canSchedule && canSystem) return 'system';
     return 'schedule';
   });
+  const isMobile = useIsMobile();
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  // The 7-column week grid is unusable on a phone — steer mobile users to
+  // the Daily agenda whenever Weekly would render.
+  useEffect(() => {
+    if (isMobile && view === 'schedule' && scheduleSection === 'week') setScheduleSection('day');
+  }, [isMobile, view, scheduleSection]);
+  useEffect(() => {
+    setMobileMoreOpen(false);
+  }, [view, side]);
   function switchSide(next) {
     setSide(next);
     if (next === 'system') setView('adminDirectory');else setView('schedule');
@@ -5464,11 +5488,113 @@ function App({
     },
     onClick: () => switchSide(side === 'schedule' ? 'system' : 'schedule'),
     title: `Switch to ${side === 'schedule' ? 'System' : 'Scheduling'} side`
-  }, side === 'schedule' ? '🏢 System ↔' : '📅 Scheduling ↔')))), !loading && view === 'schedule' && /*#__PURE__*/React.createElement("div", {
+  }, side === 'schedule' ? '🏢 System ↔' : '📅 Scheduling ↔')))), isMobile && currentUser && /*#__PURE__*/React.createElement("nav", {
+    className: "mobile-tabbar",
+    "aria-label": "Primary"
+  }, side === 'schedule' ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    className: `mtab ${view === 'schedule' ? 'active' : ''}`,
+    onClick: () => setView('schedule')
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "mtab-ic"
+  }, "📅"), "Schedule"), /*#__PURE__*/React.createElement("button", {
+    className: `mtab ${view === 'programme' ? 'active' : ''}`,
+    onClick: () => {
+      setView('programme');
+      setProgrammeSection('week');
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "mtab-ic"
+  }, "📋"), "Programme"), /*#__PURE__*/React.createElement("button", {
+    className: `mtab ${view === 'accounts' ? 'active' : ''}`,
+    onClick: () => {
+      setView('accounts');
+      setAccountSection('accounts');
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "mtab-ic"
+  }, "👤"), "Accounts"), /*#__PURE__*/React.createElement("button", {
+    className: `mtab ${view === 'shop' ? 'active' : ''}`,
+    onClick: () => setView('shop')
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "mtab-ic"
+  }, "🛒"), "Shop")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    className: `mtab ${view === 'adminDirectory' ? 'active' : ''}`,
+    onClick: () => setView('adminDirectory')
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "mtab-ic"
+  }, "📇"), "Directory"), /*#__PURE__*/React.createElement("button", {
+    className: `mtab ${view === 'adminVouchers' ? 'active' : ''}`,
+    onClick: () => setView('adminVouchers')
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "mtab-ic"
+  }, "🧾"), "Vouchers"), /*#__PURE__*/React.createElement("button", {
+    className: `mtab ${view === 'adminCrew' ? 'active' : ''}`,
+    onClick: () => setView('adminCrew')
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "mtab-ic"
+  }, "👥"), "Crew"), /*#__PURE__*/React.createElement("button", {
+    className: `mtab ${view === 'adminPromos' ? 'active' : ''}`,
+    onClick: () => setView('adminPromos')
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "mtab-ic"
+  }, "📢"), "Promos")), /*#__PURE__*/React.createElement("button", {
+    className: `mtab ${mobileMoreOpen ? 'active' : ''}`,
+    onClick: () => setMobileMoreOpen(v => !v),
+    style: {
+      position: 'relative'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "mtab-ic"
+  }, "☰"), "More", side === 'schedule' && newMsgCount > 0 && /*#__PURE__*/React.createElement("span", {
+    className: "mtab-badge"
+  }, newMsgCount > 99 ? '99+' : newMsgCount))), isMobile && currentUser && mobileMoreOpen && /*#__PURE__*/React.createElement("div", {
+    className: "more-sheet-backdrop",
+    onClick: () => setMobileMoreOpen(false)
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "more-sheet",
+    onClick: e => e.stopPropagation()
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "more-sheet-grab",
+    "aria-hidden": "true"
+  }), side === 'schedule' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    className: "more-item",
+    onClick: () => {
+      setView('messages');
+    }
+  }, "✉️ Messages ", newMsgCount > 0 && /*#__PURE__*/React.createElement("span", {
+    className: "more-badge"
+  }, newMsgCount > 99 ? '99+' : newMsgCount)), /*#__PURE__*/React.createElement("button", {
+    className: "more-item",
+    onClick: () => {
+      setView('enroll');
+    }
+  }, "🔍 Explore"), /*#__PURE__*/React.createElement("button", {
+    className: "more-item",
+    onClick: () => {
+      window.open('./intake.html', '_blank', 'noopener,noreferrer');
+      setMobileMoreOpen(false);
+    }
+  }, "📝 Intake form ↗"), isSysadmin && /*#__PURE__*/React.createElement("button", {
+    className: "more-item",
+    onClick: () => {
+      setView('settings');
+      setAdminSection('pools');
+    }
+  }, "⚙️ Settings")), canUseScheduler(currentUser?.role) && canUseAdminSystem(currentUser?.role) && /*#__PURE__*/React.createElement("button", {
+    className: "more-item",
+    onClick: () => {
+      switchSide(side === 'schedule' ? 'system' : 'schedule');
+    }
+  }, side === 'schedule' ? '🏢 Switch to System' : '📅 Switch to Scheduling'), /*#__PURE__*/React.createElement("button", {
+    className: "more-item more-item-danger",
+    onClick: () => {
+      if (confirm('Sign out?')) onLogout();
+    }
+  }, "🚪 Logout"))), !loading && view === 'schedule' && /*#__PURE__*/React.createElement("div", {
     className: "sub-bar"
   }, /*#__PURE__*/React.createElement("div", {
     className: "sub-bar-inner"
-  }, /*#__PURE__*/React.createElement("button", {
+  }, !isMobile && /*#__PURE__*/React.createElement("button", {
     className: `sub-tab ${scheduleSection === 'week' ? 'active' : ''}`,
     onClick: () => setScheduleSection('week')
   }, "Weekly"), /*#__PURE__*/React.createElement("button", {
