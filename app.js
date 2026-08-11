@@ -8181,6 +8181,11 @@ function AgingReportView({ invoices, pmts, branches }){
 
   const accountMap={};
   filteredInvs.forEach(inv=>{
+    // Void and refunded invoices are excluded from EVERY column. The old
+    // code summed them into Invoiced/Paid while the aging buckets skipped
+    // them — a voided invoice with any recorded payment produced phantom
+    // "Outstanding" that appeared in no bucket and had no open invoices.
+    if(inv.status==='void'||inv.status==='refunded') return;
     const key=inv.account_name;
     if(!accountMap[key]) accountMap[key]={ account:key, invoices:[], totalInvoiced:0, totalPaid:0 };
     accountMap[key].invoices.push(inv);
