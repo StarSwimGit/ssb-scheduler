@@ -1306,9 +1306,11 @@
       .user-name{display:none}
       body{padding-bottom:calc(62px + env(safe-area-inset-bottom))}
       .sub-bar{position:static;padding:6px 10px 4px}
-      .sub-bar-inner{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
-      .sub-bar-inner::-webkit-scrollbar{display:none}
+      /* Two compact rows instead of a sideways drag: tabs on row 1, the
+         week stepper wraps to a full-width row 2 */
+      .sub-bar-inner{flex-wrap:wrap;row-gap:6px}
       .sub-bar-inner > *{flex-shrink:0}
+      .sub-bar-spacer{margin-left:0;flex-basis:100%;display:flex;justify-content:space-between;align-items:center}
       .sub-bar-search{min-width:130px}
       .wrap{padding:10px}
       input,select,textarea{font-size:16px !important}
@@ -1352,6 +1354,14 @@
       /* Time rail: 12:00 PM was clipping at 56px */
       .daily-row{grid-template-columns:64px 1fr !important}
       .daily-time{font-size:10.5px !important;padding:6px 4px !important}
+      /* Compact week stepper in the sub-bar */
+      .stepper-sm .step-btn{padding:4px 9px;font-size:13px}
+      .stepper-sm .period-label{padding:4px 8px;white-space:nowrap}
+      .sub-bar .today-btn{padding:5px 10px;font-size:11px}
+      .sub-bar .sub-tab{padding:6px 11px;font-size:12.5px}
+      /* Day dropdown row (replaces the chip strip) */
+      .daily-mobile-controls{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+      .daily-day-select{flex:1;min-width:0;height:40px;border:1.5px solid var(--border-2);border-radius:11px;background:var(--surface);color:var(--text);font-weight:800;font-family:inherit;padding:0 10px}
     }
     /* Daily filter button + sheet innards (mobile) */
     .daily-filter-btn{margin-left:auto;border:1.5px solid var(--border-2);background:var(--surface);color:var(--text-2);border-radius:999px;padding:6px 13px;font-family:inherit;font-size:12.5px;font-weight:800;cursor:pointer;white-space:nowrap;flex-shrink:0}

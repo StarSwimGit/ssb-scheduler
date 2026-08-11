@@ -545,6 +545,19 @@ function packParallelColumns(items) {
 // ============================================================================
 
 // M2.1: human week-range label, e.g. "May 25 – 31, 2026" or "May 25 – Jun 1, 2026".
+// Compact form for phone sub-bars: "Aug 10–16" / "Aug 31–Sep 6" (no year)
+function weekRangeLabelShort(wkStart) {
+  const start = fromDateStr(wkStart);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  const sM = start.toLocaleDateString(undefined, {
+    month: 'short'
+  });
+  const eM = end.toLocaleDateString(undefined, {
+    month: 'short'
+  });
+  return sM === eM ? `${sM} ${start.getDate()}–${end.getDate()}` : `${sM} ${start.getDate()}–${eM} ${end.getDate()}`;
+}
 function weekRangeLabel(wkStart) {
   const start = fromDateStr(wkStart);
   const end = new Date(start);
@@ -5606,7 +5619,7 @@ function App({
   }, "Monthly"), (scheduleSection === 'week' || scheduleSection === 'day') && /*#__PURE__*/React.createElement("div", {
     className: "sub-bar-spacer"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "period-stepper",
+    className: `period-stepper ${isMobile ? 'stepper-sm' : ''}`,
     style: {
       margin: 0
     }
@@ -5618,9 +5631,9 @@ function App({
   }, "‹"), /*#__PURE__*/React.createElement("div", {
     className: "period-label",
     style: {
-      fontSize: 12
+      fontSize: isMobile ? 11 : 12
     }
-  }, weekRangeLabel(selectedWeekStart)), /*#__PURE__*/React.createElement("button", {
+  }, isMobile ? weekRangeLabelShort(selectedWeekStart) : weekRangeLabel(selectedWeekStart)), /*#__PURE__*/React.createElement("button", {
     className: "step-btn",
     onClick: () => setSelectedDate(addDays(selectedDate, 7)),
     title: "Next week",
@@ -5632,7 +5645,7 @@ function App({
     style: {
       marginLeft: 6
     }
-  }, "This Week")))), !loading && view === 'programme' && /*#__PURE__*/React.createElement("div", {
+  }, isMobile ? 'Now' : 'This Week')))), !loading && view === 'programme' && /*#__PURE__*/React.createElement("div", {
     className: "sub-bar"
   }, /*#__PURE__*/React.createElement("div", {
     className: "sub-bar-inner"
@@ -7020,22 +7033,33 @@ function DailyView({
     className: "btn btn-print",
     onClick: onExportExcel,
     title: "Download this week as a multi-tab attendance roster"
-  }, "Export Excel")), /*#__PURE__*/React.createElement("div", {
-    className: "nav-note",
-    style: isMobile ? {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 8,
-      marginBottom: 8
-    } : undefined
-  }, /*#__PURE__*/React.createElement("span", null, "Showing ", /*#__PURE__*/React.createElement("b", {
+  }, "Export Excel")), isMobile ? /*#__PURE__*/React.createElement("div", {
+    className: "daily-mobile-controls"
+  }, /*#__PURE__*/React.createElement("select", {
+    className: "daily-day-select",
+    value: selectedDate,
+    onChange: e => setSelectedDate(e.target.value),
+    "aria-label": "Select day"
+  }, weekDays.map(({
+    date,
+    ds,
+    idx
+  }) => /*#__PURE__*/React.createElement("option", {
+    key: ds,
+    value: ds
+  }, DAYS_S[idx], " · ", date.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric'
+  }), ds === todayStr() ? ' (today)' : ''))), /*#__PURE__*/React.createElement("button", {
+    className: `daily-filter-btn ${activeFilterCount > 0 ? 'has-active' : ''}`,
+    onClick: () => setFilterSheetOpen(true)
+  }, "⚙ Filters", activeFilterCount > 0 ? ` · ${activeFilterCount}` : '')) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "nav-note"
+  }, "Showing ", /*#__PURE__*/React.createElement("b", {
     style: {
       color: 'var(--text)'
     }
-  }, longDate(selectedDate))), isMobile && /*#__PURE__*/React.createElement("button", {
-    className: `daily-filter-btn ${activeFilterCount > 0 ? 'has-active' : ''}`,
-    onClick: () => setFilterSheetOpen(true)
-  }, "⚙ Filters", activeFilterCount > 0 ? ` · ${activeFilterCount}` : '')), /*#__PURE__*/React.createElement("div", {
+  }, longDate(selectedDate))), /*#__PURE__*/React.createElement("div", {
     className: "daily-day-tabs"
   }, weekDays.map(({
     date,
@@ -7048,7 +7072,7 @@ function DailyView({
   }, DAYS_S[idx], " · ", date.toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric'
-  })))), !isMobile && /*#__PURE__*/React.createElement("div", {
+  }))))), !isMobile && /*#__PURE__*/React.createElement("div", {
     className: "legend-bar legend-bar-v",
     style: {
       marginBottom: 12

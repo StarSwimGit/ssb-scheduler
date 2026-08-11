@@ -283,6 +283,14 @@ function packParallelColumns(items){
 // ============================================================================
 
 // M2.1: human week-range label, e.g. "May 25 – 31, 2026" or "May 25 – Jun 1, 2026".
+// Compact form for phone sub-bars: "Aug 10–16" / "Aug 31–Sep 6" (no year)
+function weekRangeLabelShort(wkStart){
+  const start = fromDateStr(wkStart);
+  const end = new Date(start); end.setDate(start.getDate()+6);
+  const sM = start.toLocaleDateString(undefined,{month:'short'});
+  const eM = end.toLocaleDateString(undefined,{month:'short'});
+  return sM===eM ? `${sM} ${start.getDate()}–${end.getDate()}` : `${sM} ${start.getDate()}–${eM} ${end.getDate()}`;
+}
 function weekRangeLabel(wkStart){
   const start = fromDateStr(wkStart);
   const end = new Date(start); end.setDate(start.getDate()+6);
@@ -3597,12 +3605,12 @@ function App({ currentUser, onLogout }){
       <button className={`sub-tab ${scheduleSection==='month'?'active':''}`} onClick={()=>setScheduleSection('month')}>Monthly</button>
       {/* Inline week navigation — keeps Prev/Range/Next/This Week sticky with the sub-bar */}
       {(scheduleSection==='week' || scheduleSection==='day') && <div className="sub-bar-spacer">
-        <div className="period-stepper" style={{margin:0}}>
+        <div className={`period-stepper ${isMobile?'stepper-sm':''}`} style={{margin:0}}>
           <button className="step-btn" onClick={()=>setSelectedDate(addDays(selectedDate,-7))} title="Previous week" aria-label="Previous week">‹</button>
-          <div className="period-label" style={{fontSize:12}}>{weekRangeLabel(selectedWeekStart)}</div>
+          <div className="period-label" style={{fontSize:isMobile?11:12}}>{isMobile ? weekRangeLabelShort(selectedWeekStart) : weekRangeLabel(selectedWeekStart)}</div>
           <button className="step-btn" onClick={()=>setSelectedDate(addDays(selectedDate,7))} title="Next week" aria-label="Next week">›</button>
         </div>
-        <button className={`today-btn ${selectedWeekStart===currentWeekStart?'is-current':''}`} disabled={selectedWeekStart===currentWeekStart} onClick={()=>setSelectedDate(todayStr())} style={{marginLeft:6}}>This Week</button>
+        <button className={`today-btn ${selectedWeekStart===currentWeekStart?'is-current':''}`} disabled={selectedWeekStart===currentWeekStart} onClick={()=>setSelectedDate(todayStr())} style={{marginLeft:6}}>{isMobile?'Now':'This Week'}</button>
       </div>}
     </div></div>}
 
@@ -4521,15 +4529,21 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
         <button className="btn btn-print" onClick={() => printDailyView(selectedDate)}>Print</button>
         <button className="btn btn-print" onClick={onExportExcel} title="Download this week as a multi-tab attendance roster">Export Excel</button>
       </PeriodNav>}
-      <div className="nav-note" style={isMobile?{display:'flex',alignItems:'center',gap:8,marginBottom:8}:undefined}>
-        <span>Showing <b style={{color:'var(--text)'}}>{longDate(selectedDate)}</b></span>
-        {isMobile && <button className={`daily-filter-btn ${activeFilterCount>0?'has-active':''}`} onClick={()=>setFilterSheetOpen(true)}>
-          ⚙ Filters{activeFilterCount>0?` · ${activeFilterCount}`:''}
-        </button>}
-      </div>
-      <div className="daily-day-tabs">
-        {weekDays.map(({date, ds, idx}) => <button key={ds} className={`daily-day-tab ${selectedDate===ds?'active':''}`} onClick={() => setSelectedDate(ds)}>{DAYS_S[idx]} · {date.toLocaleDateString(undefined,{month:'short', day:'numeric'})}</button>)}
-      </div>
+      {isMobile
+        ? <div className="daily-mobile-controls">
+            <select className="daily-day-select" value={selectedDate} onChange={e=>setSelectedDate(e.target.value)} aria-label="Select day">
+              {weekDays.map(({date, ds, idx}) => <option key={ds} value={ds}>{DAYS_S[idx]} · {date.toLocaleDateString(undefined,{month:'short', day:'numeric'})}{ds===todayStr()?' (today)':''}</option>)}
+            </select>
+            <button className={`daily-filter-btn ${activeFilterCount>0?'has-active':''}`} onClick={()=>setFilterSheetOpen(true)}>
+              ⚙ Filters{activeFilterCount>0?` · ${activeFilterCount}`:''}
+            </button>
+          </div>
+        : <>
+          <div className="nav-note">Showing <b style={{color:'var(--text)'}}>{longDate(selectedDate)}</b></div>
+          <div className="daily-day-tabs">
+            {weekDays.map(({date, ds, idx}) => <button key={ds} className={`daily-day-tab ${selectedDate===ds?'active':''}`} onClick={() => setSelectedDate(ds)}>{DAYS_S[idx]} · {date.toLocaleDateString(undefined,{month:'short', day:'numeric'})}</button>)}
+          </div>
+        </>}
       {!isMobile && <div className="legend-bar legend-bar-v" style={{marginBottom:12}}>
         <div className="legend-row">
           <span className="legend-label">Types</span>
