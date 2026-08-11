@@ -1336,6 +1336,22 @@
       /* Daily: chips live in the filter sheet; keep them compact there */
       .filter-sheet .chip{font-size:12px;padding:6px 12px;border-radius:999px}
       .daily-day-tab{font-size:12px;padding:7px 12px}
+      /* Header: logo only — the two-line brand text crowded everything out */
+      .brand-titles{display:none}
+      .header-row{min-width:0}
+      .header-row > *{min-width:0}
+      .branch-select{max-width:130px;text-overflow:ellipsis}
+      /* Daily event cards: stop content min-width from pushing cards past
+         the container (same auto-track trap as .grid), and let long student
+         names wrap instead of forcing width */
+      .daily-sessions{grid-template-columns:minmax(0,1fr) !important}
+      .daily-event{min-width:0;max-width:100%}
+      .daily-event-stu{white-space:normal;overflow-wrap:anywhere}
+      .daily-event-title{overflow-wrap:anywhere}
+      .daily-event-top{gap:6px}
+      /* Time rail: 12:00 PM was clipping at 56px */
+      .daily-row{grid-template-columns:64px 1fr !important}
+      .daily-time{font-size:10.5px !important;padding:6px 4px !important}
     }
     /* Daily filter button + sheet innards (mobile) */
     .daily-filter-btn{margin-left:auto;border:1.5px solid var(--border-2);background:var(--surface);color:var(--text-2);border-radius:999px;padding:6px 13px;font-family:inherit;font-size:12.5px;font-weight:800;cursor:pointer;white-space:nowrap;flex-shrink:0}
