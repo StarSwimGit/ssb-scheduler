@@ -23,6 +23,20 @@
 // ============================================================================
 
 const { useState, useEffect, useMemo } = React;
+// Section navigation used by Accounts / Settings / Directory sidebars:
+// desktop keeps the left-column button nav; phones get a native dropdown
+// (a wrapping strip of 9–13 pills ate half the screen).
+function SectionNav({ items, value, onChange, ariaLabel }){
+  const isMobile = useIsMobile();
+  if(isMobile){
+    return <select className="section-select" value={value} onChange={e=>onChange(e.target.value)} aria-label={ariaLabel||'Section'}>
+      {items.map(([k,l,extra])=><option key={k} value={k}>{l}{extra!=null?` (${extra})`:''}</option>)}
+    </select>;
+  }
+  return <nav className="side-nav">
+    {items.map(([k,l,extra])=><button key={k} className={`side-nav-btn${value===k?' active':''}`} onClick={()=>onChange(k)}>{extra!=null?<><span>{l}</span><span className="count">{extra}</span></>:l}</button>)}
+  </nav>;
+}
 // Reactive mobile-breakpoint hook — drives the app-style layout switch
 // (bottom tab bar, daily-first schedule) below 820px.
 function useIsMobile(){
@@ -3831,11 +3845,8 @@ function App({ currentUser, onLogout }){
       {/* ── Accounts views (no side-column for billing sub-sections) ── */}
       {/* ── Accounts: left-column nav + content ── */}
       {!loading && view==='accounts' && <div className="side-shell">
-        <nav className="side-nav">
-          {[['accounts','Accounts'],['familyGroups','Groups'],['swimmers','Swimmers'],['invoices','Invoices'],['receipts','Receipts'],['pendingCredits','Pending Credits'],['aging','Aging'],['codes','Discounts'],...(isSysadmin?[['reports','Reports']]:[])].map(([k,l])=>
-            <button key={k} className={`side-nav-btn${accountSection===k?' active':''}`} onClick={()=>setAccountSection(k)}>{l}</button>
-          )}
-        </nav>
+        <SectionNav ariaLabel="Accounts section" value={accountSection} onChange={setAccountSection}
+          items={[['accounts','Accounts'],['familyGroups','Groups'],['swimmers','Swimmers'],['invoices','Invoices'],['receipts','Receipts'],['pendingCredits','Pending Credits'],['aging','Aging'],['codes','Discounts'],...(isSysadmin?[['reports','Reports']]:[])]} />
         <div className="side-content">
           {['accounts','familyGroups','swimmers','invoices','receipts'].includes(accountSection) && <div style={{marginBottom:12,maxWidth:440}}>
             <input className="input" value={accountSearchQ} onChange={e=>setAccountSearchQ(e.target.value)}
@@ -4004,11 +4015,8 @@ function App({ currentUser, onLogout }){
 
       {/* ── Settings: left-column nav + content ── */}
       {!loading && view==='settings' && isSysadmin && <div className="side-shell">
-        <nav className="side-nav">
-          {[['summary','Summary'],['branches','Branches'],['pools','Pools & Hours'],['instructors','Instructors'],['lessonTypes','Lesson Types'],['programme','Programme'],['terms','Terms'],['billingTerms','Billing Terms'],['products','Products'],['paymentMethods','Payment Methods'],['invoiceSettings','Invoice Numbering'],['website','Website'],['users','Users']].map(([k,l])=>
-            <button key={k} className={`side-nav-btn${adminSection===k?' active':''}`} onClick={()=>setAdminSection(k)}>{l}</button>
-          )}
-        </nav>
+        <SectionNav ariaLabel="Settings section" value={adminSection} onChange={setAdminSection}
+          items={[['summary','Summary'],['branches','Branches'],['pools','Pools & Hours'],['instructors','Instructors'],['lessonTypes','Lesson Types'],['programme','Programme'],['terms','Terms'],['billingTerms','Billing Terms'],['products','Products'],['paymentMethods','Payment Methods'],['invoiceSettings','Invoice Numbering'],['website','Website'],['users','Users']]} />
         <div className="side-content">
           {adminSection==='summary' && <SummaryView summary={summary} pools={activePools()} />}
           {adminSection==='branches' && <BranchesAdminView
@@ -10893,6 +10901,7 @@ function adminEsc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replac
 
 // ── Directory ─────────────────────────────────────────────────────────────
 function AdminDirectoryView({ companies, contacts, categories, addCategory, updateCategory, deleteCategory, saveCompany, deleteCompany, saveContact, deleteContact, onRefresh }){
+  const isMobileDir = useIsMobile();
   const [q,setQ]=useState('');
   const [filterCat,setFilterCat]=useState('all');
   const [openCos,setOpenCos]=useState(new Set());
@@ -11044,7 +11053,19 @@ function AdminDirectoryView({ companies, contacts, categories, addCategory, upda
 
     {/* ── Two-column body: category sidebar + company list ── */}
     <div className="side-shell" style={{marginTop:0}}>
-      <nav className="side-nav">
+      {isMobileDir
+        ? <div className="dir-cat-mobile">
+            <select className="section-select" style={{marginBottom:0}} value={filterCat} onChange={e=>setFilterCat(e.target.value)} aria-label="Category filter">
+              <option value="all">All companies ({totalCompanies})</option>
+              {(categories||[]).map(c=>{
+                const n=(companies||[]).filter(co=>co.category_id===c.id).length;
+                return <option key={c.id} value={c.id}>{c.name} ({n})</option>;
+              })}
+              {uncategorisedCount>0 && <option value="none">Uncategorised ({uncategorisedCount})</option>}
+            </select>
+            <button className="btn btn-ghost small" style={{flexShrink:0}} onClick={()=>setModal({kind:'categoryManager'})}>⚙</button>
+          </div>
+        : <nav className="side-nav">
         <div className="dir-cat-heading">Categories</div>
         <button className={`side-nav-btn dir-cat-btn ${filterCat==='all'?'active':''}`} onClick={()=>setFilterCat('all')}>
           <span>All companies</span><span className="count">{totalCompanies}</span>
@@ -11062,7 +11083,7 @@ function AdminDirectoryView({ companies, contacts, categories, addCategory, upda
         <div style={{borderTop:'1px solid var(--border)',marginTop:6,paddingTop:6}}>
           <button className="side-nav-btn" style={{color:'var(--text-3)'}} onClick={()=>setModal({kind:'categoryManager'})}>+ Manage categories</button>
         </div>
-      </nav>
+      </nav>}
 
       <div className="side-content">
         {filteredCompanies.length===0 && independentContacts.length===0

@@ -27,6 +27,37 @@ const {
   useEffect,
   useMemo
 } = React;
+// Section navigation used by Accounts / Settings / Directory sidebars:
+// desktop keeps the left-column button nav; phones get a native dropdown
+// (a wrapping strip of 9–13 pills ate half the screen).
+function SectionNav({
+  items,
+  value,
+  onChange,
+  ariaLabel
+}) {
+  const isMobile = useIsMobile();
+  if (isMobile) {
+    return /*#__PURE__*/React.createElement("select", {
+      className: "section-select",
+      value: value,
+      onChange: e => onChange(e.target.value),
+      "aria-label": ariaLabel || 'Section'
+    }, items.map(([k, l, extra]) => /*#__PURE__*/React.createElement("option", {
+      key: k,
+      value: k
+    }, l, extra != null ? ` (${extra})` : '')));
+  }
+  return /*#__PURE__*/React.createElement("nav", {
+    className: "side-nav"
+  }, items.map(([k, l, extra]) => /*#__PURE__*/React.createElement("button", {
+    key: k,
+    className: `side-nav-btn${value === k ? ' active' : ''}`,
+    onClick: () => onChange(k)
+  }, extra != null ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, l), /*#__PURE__*/React.createElement("span", {
+    className: "count"
+  }, extra)) : l)));
+}
 // Reactive mobile-breakpoint hook — drives the app-style layout switch
 // (bottom tab bar, daily-first schedule) below 820px.
 function useIsMobile() {
@@ -5903,13 +5934,12 @@ function App({
     onRefresh: loadAdminAll
   }), !loading && view === 'accounts' && /*#__PURE__*/React.createElement("div", {
     className: "side-shell"
-  }, /*#__PURE__*/React.createElement("nav", {
-    className: "side-nav"
-  }, [['accounts', 'Accounts'], ['familyGroups', 'Groups'], ['swimmers', 'Swimmers'], ['invoices', 'Invoices'], ['receipts', 'Receipts'], ['pendingCredits', 'Pending Credits'], ['aging', 'Aging'], ['codes', 'Discounts'], ...(isSysadmin ? [['reports', 'Reports']] : [])].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
-    key: k,
-    className: `side-nav-btn${accountSection === k ? ' active' : ''}`,
-    onClick: () => setAccountSection(k)
-  }, l))), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(SectionNav, {
+    ariaLabel: "Accounts section",
+    value: accountSection,
+    onChange: setAccountSection,
+    items: [['accounts', 'Accounts'], ['familyGroups', 'Groups'], ['swimmers', 'Swimmers'], ['invoices', 'Invoices'], ['receipts', 'Receipts'], ['pendingCredits', 'Pending Credits'], ['aging', 'Aging'], ['codes', 'Discounts'], ...(isSysadmin ? [['reports', 'Reports']] : [])]
+  }), /*#__PURE__*/React.createElement("div", {
     className: "side-content"
   }, ['accounts', 'familyGroups', 'swimmers', 'invoices', 'receipts'].includes(accountSection) && /*#__PURE__*/React.createElement("div", {
     style: {
@@ -6141,13 +6171,12 @@ function App({
     deleteAccount: deleteAccount
   }), !loading && view === 'settings' && isSysadmin && /*#__PURE__*/React.createElement("div", {
     className: "side-shell"
-  }, /*#__PURE__*/React.createElement("nav", {
-    className: "side-nav"
-  }, [['summary', 'Summary'], ['branches', 'Branches'], ['pools', 'Pools & Hours'], ['instructors', 'Instructors'], ['lessonTypes', 'Lesson Types'], ['programme', 'Programme'], ['terms', 'Terms'], ['billingTerms', 'Billing Terms'], ['products', 'Products'], ['paymentMethods', 'Payment Methods'], ['invoiceSettings', 'Invoice Numbering'], ['website', 'Website'], ['users', 'Users']].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
-    key: k,
-    className: `side-nav-btn${adminSection === k ? ' active' : ''}`,
-    onClick: () => setAdminSection(k)
-  }, l))), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(SectionNav, {
+    ariaLabel: "Settings section",
+    value: adminSection,
+    onChange: setAdminSection,
+    items: [['summary', 'Summary'], ['branches', 'Branches'], ['pools', 'Pools & Hours'], ['instructors', 'Instructors'], ['lessonTypes', 'Lesson Types'], ['programme', 'Programme'], ['terms', 'Terms'], ['billingTerms', 'Billing Terms'], ['products', 'Products'], ['paymentMethods', 'Payment Methods'], ['invoiceSettings', 'Invoice Numbering'], ['website', 'Website'], ['users', 'Users']]
+  }), /*#__PURE__*/React.createElement("div", {
     className: "side-content"
   }, adminSection === 'summary' && /*#__PURE__*/React.createElement(SummaryView, {
     summary: summary,
@@ -20688,6 +20717,7 @@ function AdminDirectoryView({
   deleteContact,
   onRefresh
 }) {
+  const isMobileDir = useIsMobile();
   const [q, setQ] = useState('');
   const [filterCat, setFilterCat] = useState('all');
   const [openCos, setOpenCos] = useState(new Set());
@@ -20961,7 +20991,35 @@ function AdminDirectoryView({
     style: {
       marginTop: 0
     }
-  }, /*#__PURE__*/React.createElement("nav", {
+  }, isMobileDir ? /*#__PURE__*/React.createElement("div", {
+    className: "dir-cat-mobile"
+  }, /*#__PURE__*/React.createElement("select", {
+    className: "section-select",
+    style: {
+      marginBottom: 0
+    },
+    value: filterCat,
+    onChange: e => setFilterCat(e.target.value),
+    "aria-label": "Category filter"
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "all"
+  }, "All companies (", totalCompanies, ")"), (categories || []).map(c => {
+    const n = (companies || []).filter(co => co.category_id === c.id).length;
+    return /*#__PURE__*/React.createElement("option", {
+      key: c.id,
+      value: c.id
+    }, c.name, " (", n, ")");
+  }), uncategorisedCount > 0 && /*#__PURE__*/React.createElement("option", {
+    value: "none"
+  }, "Uncategorised (", uncategorisedCount, ")")), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost small",
+    style: {
+      flexShrink: 0
+    },
+    onClick: () => setModal({
+      kind: 'categoryManager'
+    })
+  }, "⚙")) : /*#__PURE__*/React.createElement("nav", {
     className: "side-nav"
   }, /*#__PURE__*/React.createElement("div", {
     className: "dir-cat-heading"
