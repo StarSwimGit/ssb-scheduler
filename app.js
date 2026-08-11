@@ -2847,7 +2847,22 @@ function App({ currentUser, onLogout }){
   }
   async function adminSaveVoucher(data, id){
     try{
-      if(id){ await patchRows('admin_payment_vouchers',{id},data); }
+      if(id){
+        const before = (adminVouchers||[]).find(v=>v.id===id) || null;
+        await patchRows('admin_payment_vouchers',{id},data);
+        // Amendment trail — write-once snapshot. Non-fatal if the
+        // voucher_amendments migration hasn't been run yet.
+        try{
+          await insertRows('voucher_amendments',{
+            voucher_id: String(id),
+            voucher_no: before ? adminPvNo(before) : null,
+            status_at_edit: before?.status || null,
+            edited_by: currentUser?.displayName || currentUser?.username || null,
+            before_data: before || null,
+            after_data: data,
+          });
+        }catch(_){ console.warn('voucher_amendments not recorded — run the migration'); }
+      }
       else { await insertRows('admin_payment_vouchers',{...data,status:data.status||'Draft'}); }
       await loadAdminAll();
     } catch(err){ handleErr(err); alert(err.message||'Failed to save voucher'); }
@@ -11380,6 +11395,7 @@ function AdminVouchersView({ vouchers, payees, savePayee, deletePayee, saveVouch
                     {v.status==='Draft' && <button className="btn btn-ghost small" onClick={()=>setVoucherStatus(v.id,'Approved')}>Approve</button>}
                     {v.status==='Approved' && <button className="btn btn-ghost small" onClick={()=>setVoucherStatus(v.id,'Paid')}>Mark Paid</button>}
                     {v.status!=='Void' && (v.status!=='Paid' || isSysadmin) && <button className="btn btn-ghost small" title={v.status==='Paid'?'Amend paid voucher (sysadmin)':'Edit voucher'} onClick={()=>setModal({kind:'edit',data:v})}>✎</button>}
+                    <button className="btn btn-ghost small" title="Amendment history" onClick={()=>setModal({kind:'history',data:v})}>🕘</button>
                     {v.status!=='Void' && <button className="btn btn-ghost small" style={{color:'#DC2626'}} onClick={()=>{ if(confirm(`Void voucher ${adminPvNo(v)}? The number stays in the sequence but the voucher becomes invalid.`)) setVoucherStatus(v.id,'Void'); }}>Void</button>}
                   </td>
                 </tr>)}
@@ -11389,8 +11405,67 @@ function AdminVouchersView({ vouchers, payees, savePayee, deletePayee, saveVouch
         </div>}
 
     {modal?.kind==='edit' && <AdminVoucherModal existing={modal.data} payees={payees} savePayee={savePayee} onSave={async d=>{ await saveVoucher(d, modal.data?.id); setModal(null); }} onClose={()=>setModal(null)} />}
+    {modal?.kind==='history' && <VoucherHistoryModal voucher={modal.data} onClose={()=>setModal(null)} />}
     {modal?.kind==='payees' && <AdminPayeesModal payees={payees} savePayee={savePayee} deletePayee={deletePayee} onClose={()=>setModal(null)} />}
   </div>;
+}
+
+// Read-only amendment trail for one voucher — fetches on open,
+// diffs before/after on the fields that matter.
+function VoucherHistoryModal({ voucher, onClose }){
+  const [rows,setRows]=useState(null); // null = loading
+  useEffect(()=>{
+    let dead=false;
+    selectRows('voucher_amendments','*',`&voucher_id=eq.${voucher.id}&order=created_at.desc`)
+      .then(r=>{ if(!dead) setRows(r||[]); })
+      .catch(()=>{ if(!dead) setRows([]); });
+    return ()=>{ dead=true; };
+  },[voucher.id]);
+  const FIELDS=[
+    ['pv_date','Date'], ['payee','Payee'], ['amount','Amount'],
+    ['payment_method','Method'], ['payment_ref','Ref'],
+    ['prepared_by','Prepared by'], ['approved_by','Approved by'], ['remarks','Remarks'],
+  ];
+  function fmtVal(k,v){
+    if(v==null||v==='') return '—';
+    if(k==='amount') return 'RM '+Number(v).toFixed(2);
+    return String(v);
+  }
+  function diff(a){
+    const b=a.before_data||{}, f=a.after_data||{};
+    const out=[];
+    FIELDS.forEach(([k,label])=>{
+      const bv=b[k], fv=f[k];
+      if(JSON.stringify(bv??null)!==JSON.stringify(fv??null)) out.push({label, from:fmtVal(k,bv), to:fmtVal(k,fv)});
+    });
+    const bi=(b.items||[]).length, fi=(f.items||[]).length;
+    const bt=(b.items||[]).reduce((s,i)=>s+Number(i.amount||0),0);
+    const ft=(f.items||[]).reduce((s,i)=>s+Number(i.amount||0),0);
+    if(bi!==fi || bt!==ft) out.push({label:'Line items', from:`${bi} lines · RM ${bt.toFixed(2)}`, to:`${fi} lines · RM ${ft.toFixed(2)}`});
+    return out;
+  }
+  return <div className="modal-backdrop" onClick={onClose}><div className="modal-card" onClick={e=>e.stopPropagation()} style={{maxWidth:620}}>
+    <div className="modal-head"><div style={{fontWeight:800,fontSize:16}}>🕘 Amendment history — {adminPvNo(voucher)}</div><button className="btn btn-ghost small" onClick={onClose}>×</button></div>
+    <div style={{padding:14,maxHeight:'65vh',overflowY:'auto'}}>
+      {rows===null && <div className="small subtle">Loading…</div>}
+      {rows!==null && rows.length===0 && <div className="small subtle">No amendments recorded for this voucher. Edits made before the amendment log was introduced are not shown.</div>}
+      {rows!==null && rows.map(a=>{
+        const changes=diff(a);
+        return <div key={a.id} style={{border:'1px solid var(--border)',borderRadius:10,padding:'10px 12px',marginBottom:10}}>
+          <div style={{display:'flex',gap:8,alignItems:'baseline',flexWrap:'wrap',marginBottom:6}}>
+            <span style={{fontWeight:700,fontSize:13}}>{new Date(a.created_at).toLocaleString()}</span>
+            <span className="small subtle">by {a.edited_by||'—'}</span>
+            {a.status_at_edit && <span className="pm-pill pm-slate pm-sm">was {a.status_at_edit}</span>}
+          </div>
+          {changes.length===0
+            ? <div className="small subtle">Saved with no field changes.</div>
+            : changes.map((c,i)=><div key={i} className="small" style={{padding:'2px 0'}}>
+                <b>{c.label}:</b> <span style={{color:'#DC2626',textDecoration:'line-through'}}>{c.from}</span> → <span style={{color:'#166534',fontWeight:700}}>{c.to}</span>
+              </div>)}
+        </div>;
+      })}
+    </div>
+  </div></div>;
 }
 
 function AdminVoucherModal({ existing, payees, savePayee, onSave, onClose }){
