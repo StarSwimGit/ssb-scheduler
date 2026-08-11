@@ -6961,60 +6961,13 @@ function DailyView({
     setDailyDragId(null);
     setDailyDragOverId(null);
   }
-  return /*#__PURE__*/React.createElement("div", {
-    className: "grid"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card no-print"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "view-head"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "view-title"
-  }, "Daily View"), /*#__PURE__*/React.createElement("div", {
-    className: "small subtle"
-  }, "Hour-by-hour for the selected day. Every hour is shown even when empty."))), /*#__PURE__*/React.createElement(PeriodNav, {
-    rangeLabel: weekRangeLabel(selectedWeekStart),
-    onPrev: onPrevWeek,
-    onNext: onNextWeek,
-    onToday: onThisWeek,
-    isCurrent: selectedWeekStart === currentWeekStart
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-print",
-    onClick: () => printDailyView(selectedDate)
-  }, "Print"), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-print",
-    onClick: onExportExcel,
-    title: "Download this week as a multi-tab attendance roster"
-  }, "Export Excel")), /*#__PURE__*/React.createElement("div", {
-    className: "nav-note"
-  }, "Showing ", /*#__PURE__*/React.createElement("b", {
-    style: {
-      color: 'var(--text)'
-    }
-  }, longDate(selectedDate))), /*#__PURE__*/React.createElement("div", {
-    className: "daily-day-tabs"
-  }, weekDays.map(({
-    date,
-    ds,
-    idx
-  }) => /*#__PURE__*/React.createElement("button", {
-    key: ds,
-    className: `daily-day-tab ${selectedDate === ds ? 'active' : ''}`,
-    onClick: () => setSelectedDate(ds)
-  }, DAYS_S[idx], " · ", date.toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric'
-  })))), /*#__PURE__*/React.createElement("div", {
-    className: "legend-bar legend-bar-v",
-    style: {
-      marginBottom: 12
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "legend-row"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "legend-label"
-  }, "Types"), /*#__PURE__*/React.createElement("div", {
-    className: "legend"
-  }, (activeLessonTypes || []).map(t => {
+  const isMobile = useIsMobile();
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
+  // Filter chips are rendered in two homes: inline legend on desktop,
+  // bottom sheet on mobile. Build once, mount wherever.
+  const hiddenTypeCount = (activeLessonTypes || []).filter(t => !isTypeEnabled(t.name)).length;
+  const activeFilterCount = hiddenTypeCount + (instructorFilterActive ? 1 : 0);
+  const typeChips = (activeLessonTypes || []).map(t => {
     const c = colorsFor(t.name);
     const on = isTypeEnabled(t.name);
     return /*#__PURE__*/React.createElement("button", {
@@ -7028,18 +6981,8 @@ function DailyView({
       onClick: () => onToggleType(t.name),
       title: on ? 'Showing — click to hide' : 'Hidden — click to show'
     }, t.name);
-  })), /*#__PURE__*/React.createElement("button", {
-    className: `legend-allbtn ${allTypesShown ? '' : 'is-off'}`,
-    onClick: onToggleAllTypes
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "dot"
-  }), allTypesShown ? 'Hide all' : 'Show all')), /*#__PURE__*/React.createElement("div", {
-    className: "legend-row legend-row-instructors"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "legend-label"
-  }, "Instructors"), /*#__PURE__*/React.createElement("div", {
-    className: "legend"
-  }, (activeInstructors || []).length === 0 ? /*#__PURE__*/React.createElement("span", {
+  });
+  const instructorChips = (activeInstructors || []).length === 0 ? /*#__PURE__*/React.createElement("span", {
     className: "small subtle"
   }, "No instructors") : (activeInstructors || []).map(inst => {
     const on = isInstructorActive(inst.id);
@@ -7053,13 +6996,134 @@ function DailyView({
       className: "inst-chip-g",
       "aria-hidden": "true"
     }, gIcon) : null, inst.name);
-  })), /*#__PURE__*/React.createElement("button", {
+  });
+  return /*#__PURE__*/React.createElement("div", {
+    className: "grid"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card no-print"
+  }, !isMobile && /*#__PURE__*/React.createElement("div", {
+    className: "view-head"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "view-title"
+  }, "Daily View"), /*#__PURE__*/React.createElement("div", {
+    className: "small subtle"
+  }, "Hour-by-hour for the selected day. Every hour is shown even when empty."))), !isMobile && /*#__PURE__*/React.createElement(PeriodNav, {
+    rangeLabel: weekRangeLabel(selectedWeekStart),
+    onPrev: onPrevWeek,
+    onNext: onNextWeek,
+    onToday: onThisWeek,
+    isCurrent: selectedWeekStart === currentWeekStart
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-print",
+    onClick: () => printDailyView(selectedDate)
+  }, "Print"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-print",
+    onClick: onExportExcel,
+    title: "Download this week as a multi-tab attendance roster"
+  }, "Export Excel")), /*#__PURE__*/React.createElement("div", {
+    className: "nav-note",
+    style: isMobile ? {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 8
+    } : undefined
+  }, /*#__PURE__*/React.createElement("span", null, "Showing ", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: 'var(--text)'
+    }
+  }, longDate(selectedDate))), isMobile && /*#__PURE__*/React.createElement("button", {
+    className: `daily-filter-btn ${activeFilterCount > 0 ? 'has-active' : ''}`,
+    onClick: () => setFilterSheetOpen(true)
+  }, "⚙ Filters", activeFilterCount > 0 ? ` · ${activeFilterCount}` : '')), /*#__PURE__*/React.createElement("div", {
+    className: "daily-day-tabs"
+  }, weekDays.map(({
+    date,
+    ds,
+    idx
+  }) => /*#__PURE__*/React.createElement("button", {
+    key: ds,
+    className: `daily-day-tab ${selectedDate === ds ? 'active' : ''}`,
+    onClick: () => setSelectedDate(ds)
+  }, DAYS_S[idx], " · ", date.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric'
+  })))), !isMobile && /*#__PURE__*/React.createElement("div", {
+    className: "legend-bar legend-bar-v",
+    style: {
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "legend-row"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "legend-label"
+  }, "Types"), /*#__PURE__*/React.createElement("div", {
+    className: "legend"
+  }, typeChips), /*#__PURE__*/React.createElement("button", {
+    className: `legend-allbtn ${allTypesShown ? '' : 'is-off'}`,
+    onClick: onToggleAllTypes
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dot"
+  }), allTypesShown ? 'Hide all' : 'Show all')), /*#__PURE__*/React.createElement("div", {
+    className: "legend-row legend-row-instructors"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "legend-label"
+  }, "Instructors"), /*#__PURE__*/React.createElement("div", {
+    className: "legend"
+  }, instructorChips), /*#__PURE__*/React.createElement("button", {
     className: `legend-allbtn ${instructorFilterActive ? '' : 'is-off'}`,
     onClick: onClearInstructors,
     disabled: !instructorFilterActive
   }, /*#__PURE__*/React.createElement("span", {
     className: "dot"
-  }), instructorFilterActive ? 'Clear' : 'No filter'))), /*#__PURE__*/React.createElement("div", {
+  }), instructorFilterActive ? 'Clear' : 'No filter'))), isMobile && filterSheetOpen && /*#__PURE__*/React.createElement("div", {
+    className: "more-sheet-backdrop",
+    onClick: () => setFilterSheetOpen(false)
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "more-sheet filter-sheet",
+    onClick: e => e.stopPropagation()
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "more-sheet-grab",
+    "aria-hidden": "true"
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "filter-sheet-head"
+  }, /*#__PURE__*/React.createElement("span", null, "Class types"), /*#__PURE__*/React.createElement("button", {
+    className: "legend-allbtn",
+    onClick: onToggleAllTypes
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dot"
+  }), allTypesShown ? 'Hide all' : 'Show all')), /*#__PURE__*/React.createElement("div", {
+    className: "filter-sheet-chips"
+  }, typeChips), /*#__PURE__*/React.createElement("div", {
+    className: "filter-sheet-head",
+    style: {
+      marginTop: 14
+    }
+  }, /*#__PURE__*/React.createElement("span", null, "Instructors"), /*#__PURE__*/React.createElement("button", {
+    className: "legend-allbtn",
+    onClick: onClearInstructors,
+    disabled: !instructorFilterActive
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dot"
+  }), instructorFilterActive ? 'Clear' : 'No filter')), /*#__PURE__*/React.createElement("div", {
+    className: "filter-sheet-chips"
+  }, instructorChips), /*#__PURE__*/React.createElement("div", {
+    className: "filter-sheet-foot"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-print",
+    onClick: () => {
+      printDailyView(selectedDate);
+    }
+  }, "Print"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-print",
+    onClick: onExportExcel
+  }, "Export Excel"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary",
+    style: {
+      marginLeft: 'auto'
+    },
+    onClick: () => setFilterSheetOpen(false)
+  }, "Done")))), /*#__PURE__*/React.createElement("div", {
     className: "daily-grid"
   }, hourStarts.map(start => {
     const rawItems = items.filter(it => it.startMinute >= start && it.startMinute < start + 60);

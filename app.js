@@ -4497,46 +4497,75 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
   }
 
   function onDailyDragEnd(){ setDailyDragId(null); setDailyDragOverId(null); }
+  const isMobile = useIsMobile();
+  const [filterSheetOpen,setFilterSheetOpen] = useState(false);
+  // Filter chips are rendered in two homes: inline legend on desktop,
+  // bottom sheet on mobile. Build once, mount wherever.
+  const hiddenTypeCount = (activeLessonTypes||[]).filter(t=>!isTypeEnabled(t.name)).length;
+  const activeFilterCount = hiddenTypeCount + ((instructorFilterActive)?1:0);
+  const typeChips = (activeLessonTypes || []).map(t => { const c = colorsFor(t.name); const on = isTypeEnabled(t.name); return <button key={t.id || t.name} className={`chip chip-toggle ${on?'':'chip-off'}`} style={on?{background:c.bg,borderColor:c.bd,color:c.tx}:undefined} onClick={()=>onToggleType(t.name)} title={on?'Showing — click to hide':'Hidden — click to show'}>{t.name}</button>; });
+  const instructorChips = (activeInstructors || []).length === 0 ? <span className="small subtle">No instructors</span> : (activeInstructors || []).map(inst => {
+    const on = isInstructorActive(inst.id);
+    const gIcon = inst.gender === 'female' ? '♀' : (inst.gender === 'male' ? '♂' : '');
+    return <button key={inst.id} className={`chip chip-instructor ${on?'is-on':''}`} onClick={()=>onToggleInstructor(inst.id)} title={on?`Filtering — click to remove ${inst.name}`:`Click to filter to ${inst.name}'s classes`}>{gIcon ? <span className="inst-chip-g" aria-hidden="true">{gIcon}</span> : null}{inst.name}</button>;
+  });
   return <div className="grid">
     <div className="card no-print">
-      <div className="view-head">
+      {!isMobile && <div className="view-head">
         <div>
           <div className="view-title">Daily View</div>
           <div className="small subtle">Hour-by-hour for the selected day. Every hour is shown even when empty.</div>
         </div>
-      </div>
-      <PeriodNav rangeLabel={weekRangeLabel(selectedWeekStart)} onPrev={onPrevWeek} onNext={onNextWeek} onToday={onThisWeek} isCurrent={selectedWeekStart === currentWeekStart}>
+      </div>}
+      {!isMobile && <PeriodNav rangeLabel={weekRangeLabel(selectedWeekStart)} onPrev={onPrevWeek} onNext={onNextWeek} onToday={onThisWeek} isCurrent={selectedWeekStart === currentWeekStart}>
         <button className="btn btn-print" onClick={() => printDailyView(selectedDate)}>Print</button>
         <button className="btn btn-print" onClick={onExportExcel} title="Download this week as a multi-tab attendance roster">Export Excel</button>
-      </PeriodNav>
-      <div className="nav-note">Showing <b style={{color:'var(--text)'}}>{longDate(selectedDate)}</b></div>
+      </PeriodNav>}
+      <div className="nav-note" style={isMobile?{display:'flex',alignItems:'center',gap:8,marginBottom:8}:undefined}>
+        <span>Showing <b style={{color:'var(--text)'}}>{longDate(selectedDate)}</b></span>
+        {isMobile && <button className={`daily-filter-btn ${activeFilterCount>0?'has-active':''}`} onClick={()=>setFilterSheetOpen(true)}>
+          ⚙ Filters{activeFilterCount>0?` · ${activeFilterCount}`:''}
+        </button>}
+      </div>
       <div className="daily-day-tabs">
         {weekDays.map(({date, ds, idx}) => <button key={ds} className={`daily-day-tab ${selectedDate===ds?'active':''}`} onClick={() => setSelectedDate(ds)}>{DAYS_S[idx]} · {date.toLocaleDateString(undefined,{month:'short', day:'numeric'})}</button>)}
       </div>
-      <div className="legend-bar legend-bar-v" style={{marginBottom:12}}>
+      {!isMobile && <div className="legend-bar legend-bar-v" style={{marginBottom:12}}>
         <div className="legend-row">
           <span className="legend-label">Types</span>
-          <div className="legend">
-            {(activeLessonTypes || []).map(t => { const c = colorsFor(t.name); const on = isTypeEnabled(t.name); return <button key={t.id || t.name} className={`chip chip-toggle ${on?'':'chip-off'}`} style={on?{background:c.bg,borderColor:c.bd,color:c.tx}:undefined} onClick={()=>onToggleType(t.name)} title={on?'Showing — click to hide':'Hidden — click to show'}>{t.name}</button>; })}
-          </div>
+          <div className="legend">{typeChips}</div>
           <button className={`legend-allbtn ${allTypesShown?'':'is-off'}`} onClick={onToggleAllTypes}>
             <span className="dot" />{allTypesShown ? 'Hide all' : 'Show all'}
           </button>
         </div>
         <div className="legend-row legend-row-instructors">
           <span className="legend-label">Instructors</span>
-          <div className="legend">
-            {(activeInstructors || []).length === 0 ? <span className="small subtle">No instructors</span> : (activeInstructors || []).map(inst => {
-              const on = isInstructorActive(inst.id);
-              const gIcon = inst.gender === 'female' ? '♀' : (inst.gender === 'male' ? '♂' : '');
-              return <button key={inst.id} className={`chip chip-instructor ${on?'is-on':''}`} onClick={()=>onToggleInstructor(inst.id)} title={on?`Filtering — click to remove ${inst.name}`:`Click to filter to ${inst.name}'s classes`}>{gIcon ? <span className="inst-chip-g" aria-hidden="true">{gIcon}</span> : null}{inst.name}</button>;
-            })}
-          </div>
+          <div className="legend">{instructorChips}</div>
           <button className={`legend-allbtn ${instructorFilterActive?'':'is-off'}`} onClick={onClearInstructors} disabled={!instructorFilterActive}>
             <span className="dot" />{instructorFilterActive ? 'Clear' : 'No filter'}
           </button>
         </div>
-      </div>
+      </div>}
+      {isMobile && filterSheetOpen && <div className="more-sheet-backdrop" onClick={()=>setFilterSheetOpen(false)}>
+        <div className="more-sheet filter-sheet" onClick={e=>e.stopPropagation()}>
+          <div className="more-sheet-grab" aria-hidden="true"></div>
+          <div className="filter-sheet-head">
+            <span>Class types</span>
+            <button className="legend-allbtn" onClick={onToggleAllTypes}><span className="dot"/>{allTypesShown?'Hide all':'Show all'}</button>
+          </div>
+          <div className="filter-sheet-chips">{typeChips}</div>
+          <div className="filter-sheet-head" style={{marginTop:14}}>
+            <span>Instructors</span>
+            <button className="legend-allbtn" onClick={onClearInstructors} disabled={!instructorFilterActive}><span className="dot"/>{instructorFilterActive?'Clear':'No filter'}</button>
+          </div>
+          <div className="filter-sheet-chips">{instructorChips}</div>
+          <div className="filter-sheet-foot">
+            <button className="btn btn-print" onClick={()=>{ printDailyView(selectedDate); }}>Print</button>
+            <button className="btn btn-print" onClick={onExportExcel}>Export Excel</button>
+            <button className="btn btn-primary" style={{marginLeft:'auto'}} onClick={()=>setFilterSheetOpen(false)}>Done</button>
+          </div>
+        </div>
+      </div>}
       <div className="daily-grid">
         {hourStarts.map(start => {
           const rawItems = items.filter(it => it.startMinute >= start && it.startMinute < start + 60);
