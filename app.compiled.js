@@ -478,10 +478,15 @@ function sessionCapacity(session, lessonType) {
   if (max > 0) {
     if (current > max) status = 'over';else if (current === max) status = 'full';else if (current / max >= 0.8) status = 'tight';else status = 'open';
   }
+  // Manual lock: scheduler marked the class full (e.g. wide skill spread
+  // means the instructor can't absorb another swimmer even under ratio).
+  const locked = session.markedFull === true;
+  if (locked && status !== 'over') status = 'full';
   return {
     current,
     max,
-    status
+    status,
+    locked
   };
 }
 function capacityChipColors(status) {
@@ -1635,6 +1640,7 @@ function App({
         poolId: r.pool_id || null,
         familyGroupId: r.family_group_id || null,
         legacyInstructor: r.instructor || '',
+        markedFull: r.marked_full === true,
         rescheduledFromDay: r.rescheduled_from_day != null ? Number(r.rescheduled_from_day) - 1 : null,
         rescheduledFromStartMinute: r.rescheduled_from_start_minute != null ? Number(r.rescheduled_from_start_minute) : null,
         cancelledAt: r.cancelled_at || null,
@@ -2336,7 +2342,9 @@ function App({
     if (sessionExists) {
       const lt = lessonTypeById(pending.lesson_type_id);
       const cap = sessionCapacity(originalSession, lt);
-      if (cap.max > 0 && cap.current >= cap.max) {
+      if (cap.locked) {
+        if (!confirm(`🔒 ${pending.original_session_label} is marked as FULL by the scheduler.\n\nRestore ${swimmerName} anyway? (The lock stays on afterwards.)`)) return false;
+      } else if (cap.max > 0 && cap.current >= cap.max) {
         if (!confirm(`${pending.original_session_label} is now full (${cap.current}/${cap.max}). Restore ${swimmerName} anyway (class will be over capacity)?`)) return false;
       }
       // Date-passed: show a non-blocking advisory alert, then a single confirm
@@ -2438,6 +2446,7 @@ function App({
           duration_minutes: src.durationMinutes,
           lesson_type: src.type,
           lesson_type_id: src.lessonTypeId,
+          marked_full: src.markedFull === true,
           pool_id: src.poolId || null,
           family_group_id: src.familyGroupId || null,
           instructor: src.legacyInstructor || null
@@ -2607,6 +2616,7 @@ function App({
         duration_minutes: src.durationMinutes,
         lesson_type: src.type,
         lesson_type_id: src.lessonTypeId,
+        marked_full: src.markedFull === true,
         pool_id: src.poolId || null,
         family_group_id: src.familyGroupId || null,
         instructor: src.legacyInstructor || null,
@@ -3082,7 +3092,9 @@ function App({
           lessonTypeId: lessonTypeByName(item.type)?.id || null
         };
       }),
+      originalRegularCount: regularStudents.length,
       form: {
+        markedFull: item.markedFull === true,
         type: item.type,
         lessonTypeId: item.lessonTypeId,
         instructorId: firstInst ? firstInst.id : instructorByName(item.legacyInstructor)?.id || null,
@@ -3111,6 +3123,11 @@ function App({
   function openEnroll(item, swimmers) {
     // swimmers may be: a single student object (legacy callers) or an array.
     const list = Array.isArray(swimmers) ? swimmers : swimmers ? [swimmers] : [];
+    if (item.markedFull && list.length) {
+      alert('🔒 This class is marked as FULL by the scheduler.\n\nOpening it without adding — untick "Mark as full" inside if you want to slot this swimmer in (e.g. for a trial), then re-lock afterwards.');
+      openEdit(item);
+      return;
+    }
     const firstInst = item.instructors[0] || null;
     const rows = buildStudentRows(item.students, lessonTypeByName(item.type)?.students_per_instructor);
     list.forEach(student => {
@@ -3240,9 +3257,24 @@ function App({
         pool_id: m.form.poolId || null,
         family_group_id: null,
         instructor: inst ? inst.name : '',
+        marked_full: m.form.markedFull === true,
         rescheduled_from_day: m.rescheduledFromDay != null ? m.rescheduledFromDay + 1 : null,
         rescheduled_from_start_minute: m.rescheduledFromStartMinute ?? null
       };
+      // ── Mark-as-full guard ─────────────────────────────────────────
+      // While locked, saving may not INCREASE the roster. Removing swimmers,
+      // attendance, and other edits stay allowed; unlocking in the same save
+      // (toggle off) naturally lifts the block.
+      if (m.form.markedFull && m.mode === 'edit' && m.originalRegularCount != null) {
+        const newRegular = (m.form.studentRows || []).filter(r => r.studentId || (r.name || '').trim()).length;
+        const newRepl = (m.form.replacementRows || []).filter(r => r.studentId).length;
+        const origTotal = m.originalRegularCount + (m.originalReplacementRows || []).length;
+        if (newRegular + newRepl > origTotal) {
+          alert('🔒 This class is marked as FULL.\n\nNo new swimmers can be added while locked. Untick "Mark as full", save the addition, then re-lock once the trial or extra swimmer is settled.');
+          setSaveBusy(false);
+          return;
+        }
+      }
       let sessionId = m.id;
       // ── Replacement undo check ──────────────────────────────────────
       // If editing an existing session, detect replacement students who were
@@ -4883,6 +4915,7 @@ function App({
           duration_minutes: src.durationMinutes,
           lesson_type: src.type,
           lesson_type_id: src.lessonTypeId,
+          marked_full: src.markedFull === true,
           pool_id: src.poolId || null,
           family_group_id: null,
           instructor: src.legacyInstructor || null
@@ -4945,6 +4978,7 @@ function App({
         duration_minutes: s.durationMinutes,
         lesson_type: s.type,
         lesson_type_id: s.lessonTypeId,
+        marked_full: s.markedFull === true,
         pool_id: s.poolId,
         family_group_id: s.familyGroupId || null,
         instructor: s.legacyInstructor,
@@ -6867,9 +6901,9 @@ function AgendaCard({
       color: chip.tx,
       borderColor: chip.bd
     }
-  }, cap.current, "/", cap.max) : /*#__PURE__*/React.createElement("span", {
+  }, cap.locked ? '🔒' : '', cap.current, "/", cap.max) : /*#__PURE__*/React.createElement("span", {
     className: "cap-chip cap-chip-unknown"
-  }, cap.current)), /*#__PURE__*/React.createElement("div", {
+  }, cap.locked ? '🔒' : '', cap.current)), /*#__PURE__*/React.createElement("div", {
     className: "wa-card-line"
   }, showPoolBadge && pool ? /*#__PURE__*/React.createElement("span", {
     className: "event-pool-pill"
@@ -7311,9 +7345,9 @@ function DailyView({
           color: chip.tx,
           borderColor: chip.bd
         }
-      }, cap.current, "/", cap.max) : /*#__PURE__*/React.createElement("span", {
+      }, cap.locked ? '🔒 ' : '', cap.current, "/", cap.max) : /*#__PURE__*/React.createElement("span", {
         className: "cap-chip cap-chip-lg cap-chip-unknown"
-      }, cap.current))));
+      }, cap.locked ? '🔒 ' : '', cap.current))));
     })) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
       className: "small subtle"
     }, "No sessions"), /*#__PURE__*/React.createElement("button", {
@@ -16541,6 +16575,38 @@ function SessionModal({
   }, /*#__PURE__*/React.createElement("span", null, "⏱ ", /*#__PURE__*/React.createElement("strong", null, formatRange(modal.startMinute, modal.form.durationMinutes))), previewMax > 0 ? /*#__PURE__*/React.createElement("span", {
     className: previewStatus === 'over' ? 'meta-warn' : ''
   }, "👥 ", /*#__PURE__*/React.createElement("strong", null, previewStudents, " / ", previewMax), previewStatus === 'over' ? ' Over' : previewStatus === 'full' ? ' Full' : previewStatus === 'tight' ? ' Tight' : '') : /*#__PURE__*/React.createElement("span", null, "👥 ", /*#__PURE__*/React.createElement("strong", null, previewStudents))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      gridColumn: '1 / -1',
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: 10,
+      background: modal.form.markedFull ? '#FEF3C7' : 'var(--surface)',
+      border: `1.5px solid ${modal.form.markedFull ? '#FDE68A' : 'var(--border-2)'}`,
+      borderRadius: 11,
+      padding: '9px 12px'
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      cursor: 'pointer',
+      fontWeight: 800,
+      fontSize: 13,
+      whiteSpace: 'nowrap'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: modal.form.markedFull === true,
+    onChange: e => setForm({
+      markedFull: e.target.checked
+    })
+  }), "🔒 Mark as full"), /*#__PURE__*/React.createElement("span", {
+    className: "small subtle",
+    style: {
+      lineHeight: 1.45
+    }
+  }, modal.form.markedFull ? 'Locked — no new swimmers can be added, and the public schedule shows this class as Full regardless of headcount. Untick temporarily to slot in a trial, then re-lock.' : 'Lock this class when the instructor can\u2019t take more swimmers even under ratio (e.g. wide skill spread). Shows as Full publicly.')), /*#__PURE__*/React.createElement("div", {
     className: "field",
     style: {
       gridColumn: '1 / -1'

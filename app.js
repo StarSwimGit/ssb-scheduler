@@ -254,7 +254,11 @@ function sessionCapacity(session, lessonType){
     else if(current / max >= 0.8) status = 'tight';
     else status = 'open';
   }
-  return { current, max, status };
+  // Manual lock: scheduler marked the class full (e.g. wide skill spread
+  // means the instructor can't absorb another swimmer even under ratio).
+  const locked = session.markedFull === true;
+  if(locked && status !== 'over') status = 'full';
+  return { current, max, status, locked };
 }
 
 function capacityChipColors(status){
@@ -988,6 +992,7 @@ function App({ currentUser, onLogout }){
         poolId: r.pool_id || null,
         familyGroupId: r.family_group_id || null,
         legacyInstructor: r.instructor || '',
+        markedFull: r.marked_full === true,
         rescheduledFromDay: r.rescheduled_from_day != null ? Number(r.rescheduled_from_day) - 1 : null,
         rescheduledFromStartMinute: r.rescheduled_from_start_minute != null ? Number(r.rescheduled_from_start_minute) : null,
         cancelledAt: r.cancelled_at || null,
@@ -1517,7 +1522,9 @@ function App({ currentUser, onLogout }){
     if(sessionExists){
       const lt = lessonTypeById(pending.lesson_type_id);
       const cap = sessionCapacity(originalSession, lt);
-      if(cap.max > 0 && cap.current >= cap.max){
+      if(cap.locked){
+        if(!confirm(`🔒 ${pending.original_session_label} is marked as FULL by the scheduler.\n\nRestore ${swimmerName} anyway? (The lock stays on afterwards.)`)) return false;
+      } else if(cap.max > 0 && cap.current >= cap.max){
         if(!confirm(`${pending.original_session_label} is now full (${cap.current}/${cap.max}). Restore ${swimmerName} anyway (class will be over capacity)?`)) return false;
       }
       // Date-passed: show a non-blocking advisory alert, then a single confirm
@@ -1623,6 +1630,7 @@ function App({ currentUser, onLogout }){
           duration_minutes: src.durationMinutes,
           lesson_type: src.type,
           lesson_type_id: src.lessonTypeId,
+          marked_full: src.markedFull === true,
           pool_id: src.poolId || null,
           family_group_id: src.familyGroupId || null,
           instructor: src.legacyInstructor || null
@@ -1747,6 +1755,7 @@ function App({ currentUser, onLogout }){
         duration_minutes: src.durationMinutes,
         lesson_type: src.type,
         lesson_type_id: src.lessonTypeId,
+        marked_full: src.markedFull === true,
         pool_id: src.poolId || null,
         family_group_id: src.familyGroupId || null,
         instructor: src.legacyInstructor || null,
@@ -2110,7 +2119,9 @@ function App({ currentUser, onLogout }){
         const dec = decodeReplacementFrom(s.replacementFrom||'');
         return { studentId:s.studentId, name:s.name, replacementFrom:dec.label, originalSessionId:dec.sessionId, lessonTypeId: lessonTypeByName(item.type)?.id || null };
       }),
+      originalRegularCount: regularStudents.length,
       form:{
+        markedFull: item.markedFull === true,
         type:item.type,
         lessonTypeId:item.lessonTypeId,
         instructorId: firstInst ? firstInst.id : (instructorByName(item.legacyInstructor)?.id || null),
@@ -2129,6 +2140,11 @@ function App({ currentUser, onLogout }){
   function openEnroll(item, swimmers){
     // swimmers may be: a single student object (legacy callers) or an array.
     const list = Array.isArray(swimmers) ? swimmers : (swimmers ? [swimmers] : []);
+    if(item.markedFull && list.length){
+      alert('🔒 This class is marked as FULL by the scheduler.\n\nOpening it without adding — untick "Mark as full" inside if you want to slot this swimmer in (e.g. for a trial), then re-lock afterwards.');
+      openEdit(item);
+      return;
+    }
     const firstInst = item.instructors[0] || null;
     const rows = buildStudentRows(item.students, lessonTypeByName(item.type)?.students_per_instructor);
     list.forEach(student => {
@@ -2230,9 +2246,23 @@ function App({ currentUser, onLogout }){
         pool_id: m.form.poolId || null,
         family_group_id: null,
         instructor: inst ? inst.name : '',
+        marked_full: m.form.markedFull === true,
         rescheduled_from_day: m.rescheduledFromDay != null ? m.rescheduledFromDay + 1 : null,
         rescheduled_from_start_minute: m.rescheduledFromStartMinute ?? null
       };
+      // ── Mark-as-full guard ─────────────────────────────────────────
+      // While locked, saving may not INCREASE the roster. Removing swimmers,
+      // attendance, and other edits stay allowed; unlocking in the same save
+      // (toggle off) naturally lifts the block.
+      if(m.form.markedFull && m.mode === 'edit' && m.originalRegularCount != null){
+        const newRegular = (m.form.studentRows||[]).filter(r => r.studentId || (r.name||'').trim()).length;
+        const newRepl    = (m.form.replacementRows||[]).filter(r => r.studentId).length;
+        const origTotal  = m.originalRegularCount + (m.originalReplacementRows||[]).length;
+        if(newRegular + newRepl > origTotal){
+          alert('🔒 This class is marked as FULL.\n\nNo new swimmers can be added while locked. Untick "Mark as full", save the addition, then re-lock once the trial or extra swimmer is settled.');
+          setSaveBusy(false); return;
+        }
+      }
       let sessionId = m.id;
       // ── Replacement undo check ──────────────────────────────────────
       // If editing an existing session, detect replacement students who were
@@ -3201,6 +3231,7 @@ function App({ currentUser, onLogout }){
           duration_minutes: src.durationMinutes,
           lesson_type: src.type,
           lesson_type_id: src.lessonTypeId,
+          marked_full: src.markedFull === true,
           pool_id: src.poolId || null,
           family_group_id: null,
           instructor: src.legacyInstructor || null
@@ -3258,6 +3289,7 @@ function App({ currentUser, onLogout }){
         duration_minutes: s.durationMinutes,
         lesson_type: s.type,
         lesson_type_id: s.lessonTypeId,
+        marked_full: s.markedFull === true,
         pool_id: s.poolId,
         family_group_id: s.familyGroupId || null,
         instructor: s.legacyInstructor,
@@ -4449,7 +4481,7 @@ function AgendaCard({ block, colorsFor, lessonTypeByName, poolById, showPoolBadg
     {missingInst ? <span className="card-warn-corner" title="No instructor assigned — needs reassignment">⚠</span> : null}
     <div className="wa-card-head">
       <span className="wa-card-title">{block.type}</span>
-      {cap.max > 0 ? <span className="cap-chip" style={{background:chip.bg, color:chip.tx, borderColor:chip.bd}}>{cap.current}/{cap.max}</span> : <span className="cap-chip cap-chip-unknown">{cap.current}</span>}
+      {cap.max > 0 ? <span className="cap-chip" style={{background:chip.bg, color:chip.tx, borderColor:chip.bd}}>{cap.locked?'🔒':''}{cap.current}/{cap.max}</span> : <span className="cap-chip cap-chip-unknown">{cap.locked?'🔒':''}{cap.current}</span>}
     </div>
     <div className="wa-card-line">{showPoolBadge && pool ? <span className="event-pool-pill">{pool.name}</span> : null}{compactRange(block.startMinute, block.durationMinutes)}{isRescheduled ? <span className="reschedule-tag" title={`Rescheduled — was ${DAYS_S[block.rescheduledFromDay]} ${minuteToTime(block.rescheduledFromStartMinute)}`}>⇄</span> : null}</div>
     <div className={`wa-card-line wa-card-inst ${missingInst?'inst-missing':''}`}>{missingInst ? <span className="warn-tri" title="Instructor was removed — pick a new one in the modal">⚠</span> : null}<span className={missingInst?'inst-orphan':''}>{instName || 'Unassigned'}</span>{missingInst ? <span className="inst-warn-chip">Needs instructor</span> : null}</div>
@@ -4659,7 +4691,7 @@ function DailyView({ selectedDate, setSelectedDate, sessionsForDate, colorsFor, 
                         {it.students.filter(s=>s.remark).map((s,ri)=><div key={ri} className="daily-event-note">📝 {shortName(s.name)}: {s.remark}</div>)}
                       </div>
                       <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6}}>
-                        {cap.max > 0 ? <span className="cap-chip cap-chip-lg" style={{background:chip.bg, color:chip.tx, borderColor:chip.bd}}>{cap.current}/{cap.max}</span> : <span className="cap-chip cap-chip-lg cap-chip-unknown">{cap.current}</span>}
+                        {cap.max > 0 ? <span className="cap-chip cap-chip-lg" style={{background:chip.bg, color:chip.tx, borderColor:chip.bd}}>{cap.locked?'🔒 ':''}{cap.current}/{cap.max}</span> : <span className="cap-chip cap-chip-lg cap-chip-unknown">{cap.locked?'🔒 ':''}{cap.current}</span>}
                       </div>
                     </div>
                   </div>;
@@ -9085,6 +9117,17 @@ function SessionModal({ modal, setModal, saveBusy, saveSession, deleteSession, o
           {previewMax > 0
             ? <span className={previewStatus==='over'?'meta-warn':''}>👥 <strong>{previewStudents} / {previewMax}</strong>{previewStatus==='over'?' Over':previewStatus==='full'?' Full':previewStatus==='tight'?' Tight':''}</span>
             : <span>👥 <strong>{previewStudents}</strong></span>}
+        </div>
+        <div style={{gridColumn:'1 / -1',display:'flex',alignItems:'flex-start',gap:10,background:modal.form.markedFull?'#FEF3C7':'var(--surface)',border:`1.5px solid ${modal.form.markedFull?'#FDE68A':'var(--border-2)'}`,borderRadius:11,padding:'9px 12px'}}>
+          <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontWeight:800,fontSize:13,whiteSpace:'nowrap'}}>
+            <input type="checkbox" checked={modal.form.markedFull===true} onChange={e=>setForm({markedFull:e.target.checked})}/>
+            🔒 Mark as full
+          </label>
+          <span className="small subtle" style={{lineHeight:1.45}}>
+            {modal.form.markedFull
+              ? 'Locked — no new swimmers can be added, and the public schedule shows this class as Full regardless of headcount. Untick temporarily to slot in a trial, then re-lock.'
+              : 'Lock this class when the instructor can\u2019t take more swimmers even under ratio (e.g. wide skill spread). Shows as Full publicly.'}
+          </span>
         </div>
         <div className="field" style={{gridColumn:'1 / -1'}}>
           <label>Swimmers</label>
