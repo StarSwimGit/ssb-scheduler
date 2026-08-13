@@ -202,8 +202,9 @@ localStorage.setItem(AUTH_KEY, JSON.stringify(auth));
 **User management panel** (`addAppUser` / `resetPassword` / `updateAppUser` /
 `deleteAppUser` / the `app_users` list load) → each becomes a POST to
 `/functions/v1/admin-users` with `Authorization: Bearer <token>` and an
-`action` field (`list` / `create` / `reset` / `set_active` / `delete`). The
-function verifies the token is a `sysadmin` session before acting.
+`action` field (`list` / `create` / `reset` / `patch` / `delete`). The
+function verifies the token is a `sysadmin` session before acting, and `patch`
+whitelists mutable fields (`role`, `is_active`, `display_name`).
 
 Once §6 is live and verified, apply the Phase 0 SQL (§4, step 4).
 

@@ -10,7 +10,7 @@
 //   list                                        → users without password fields
 //   create   { username, password, displayName, role }
 //   reset    { id, newPassword }
-//   set_active { id, is_active }
+//   patch    { id, patch: { role?, is_active?, display_name? } }
 //   delete   { id }
 //
 // Deploy:  supabase functions deploy admin-users
@@ -138,10 +138,18 @@ Deno.serve(async (req: Request): Promise<Response> => {
       return json({ ok: true }, 200);
     }
 
-    if (action === "set_active") {
+    if (action === "patch") {
       const id = body.id;
-      if (!id || typeof body.is_active !== "boolean") return json({ error: "id and is_active are required." }, 400);
-      const { error } = await admin.from("app_users").update({ is_active: body.is_active }).eq("id", id);
+      const patch = body.patch ?? {};
+      if (!id || typeof patch !== "object") return json({ error: "id and patch are required." }, 400);
+      // Whitelist mutable fields — never let the client patch password material
+      // or arbitrary columns through this path.
+      const allowed: Record<string, unknown> = {};
+      if (typeof patch.role === "string") allowed.role = patch.role;
+      if (typeof patch.is_active === "boolean") allowed.is_active = patch.is_active;
+      if (typeof patch.display_name === "string") allowed.display_name = patch.display_name;
+      if (Object.keys(allowed).length === 0) return json({ error: "No permitted fields to update." }, 400);
+      const { error } = await admin.from("app_users").update(allowed).eq("id", id);
       if (error) throw error;
       return json({ ok: true }, 200);
     }

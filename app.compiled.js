@@ -1784,10 +1784,33 @@ function App({
       setContactMessages([]);
     }
   }
+  // Phase 0 (RLS hardening): staff-user management runs server-side via the
+  // admin-users edge function (service role), so the browser never reads or
+  // writes app_users directly. The caller's signed session token authorizes
+  // each request; the function enforces sysadmin-only.
+  async function adminUsersCall(action, payload = {}) {
+    const res = await fetch(`${cfg.supabaseUrl}/functions/v1/admin-users`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: cfg.supabaseAnonKey,
+        Authorization: `Bearer ${currentUser?.token || ''}`
+      },
+      body: JSON.stringify({
+        action,
+        ...payload
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+    return data;
+  }
   async function loadAppUsers() {
     try {
-      const rows = await selectRows('app_users', 'id,username,display_name,role,is_active,created_at,last_login_at', '&order=created_at.asc').catch(() => []);
-      setAppUsers(rows || []);
+      const {
+        users
+      } = await adminUsersCall('list');
+      setAppUsers(users || []);
     } catch (_) {
       setAppUsers([]);
     }
@@ -4245,11 +4268,8 @@ function App({
   }
 
   // ── User management (Settings › Users — sysadmin only) ───────────────────
-  function randomSalt() {
-    const a = new Uint8Array(8);
-    crypto.getRandomValues(a);
-    return 'ss-' + Array.from(a).map(b => b.toString(16).padStart(2, '0')).join('');
-  }
+  // All mutations go through the admin-users edge function; the browser no
+  // longer generates hashes or touches app_users directly (see adminUsersCall).
   async function createAppUser({
     username,
     displayName,
@@ -4266,15 +4286,11 @@ function App({
       return;
     }
     try {
-      const salt = randomSalt();
-      const hash = await sha256Hex(salt + password);
-      await insertRows('app_users', {
+      await adminUsersCall('create', {
         username: u,
-        password_salt: salt,
-        password_hash: hash,
-        display_name: (displayName || '').trim() || u,
-        role: role || 'admin',
-        is_active: true
+        displayName: (displayName || '').trim() || u,
+        password,
+        role: role || 'admin'
       });
       await loadAppUsers();
     } catch (err) {
@@ -4288,13 +4304,9 @@ function App({
       return;
     }
     try {
-      const salt = randomSalt();
-      const hash = await sha256Hex(salt + newPassword);
-      await patchRows('app_users', {
-        id
-      }, {
-        password_salt: salt,
-        password_hash: hash
+      await adminUsersCall('reset', {
+        id,
+        newPassword
       });
       await loadAppUsers();
       alert('Password updated.');
@@ -4305,9 +4317,10 @@ function App({
   }
   async function patchAppUser(id, patch) {
     try {
-      await patchRows('app_users', {
-        id
-      }, patch);
+      await adminUsersCall('patch', {
+        id,
+        patch
+      });
       await loadAppUsers();
     } catch (err) {
       handleErr(err);
@@ -4322,7 +4335,7 @@ function App({
     }
     if (!confirm(`Delete user "${u?.username || ''}"? They will no longer be able to sign in.`)) return;
     try {
-      await deleteRows('app_users', {
+      await adminUsersCall('delete', {
         id
       });
       await loadAppUsers();
@@ -27143,10 +27156,8 @@ function canUseScheduler(role) {
 function canUseAdminSystem(role) {
   return role === 'sysadmin' || role === 'admin';
 }
-async function sha256Hex(str) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
-}
+// Password hashing/verification is server-side only (login edge function).
+// The browser deliberately holds no hashing helper for staff credentials.
 function readAuth() {
   try {
     const raw = localStorage.getItem(AUTH_KEY);
@@ -27183,41 +27194,48 @@ function LoginView({
     setBusy(true);
     setErr('');
     try {
-      const rows = await selectRows('app_users', '*', `&username=eq.${encodeURIComponent(u)}&is_active=eq.true`).catch(() => []);
-      const user = rows?.[0];
-      if (user) {
-        const hash = await sha256Hex((user.password_salt || '') + password);
-        if (hash === user.password_hash) {
-          const auth = {
-            id: user.id,
-            username: user.username,
-            displayName: user.display_name || user.username,
-            role: user.role || 'staff',
-            ts: Date.now()
-          };
-          try {
-            localStorage.setItem(AUTH_KEY, JSON.stringify(auth));
-          } catch (_) {}
-          patchRows('app_users', {
-            id: user.id
-          }, {
-            last_login_at: new Date().toISOString()
-          }).catch(() => {});
-          // Post-merger: admins land in the System side of this same app; no
-          // external redirect needed. Only reject roles that can access neither.
-          if (!canUseScheduler(user.role) && !canUseAdminSystem(user.role)) {
-            try {
-              localStorage.removeItem(AUTH_KEY);
-            } catch (_) {}
-            setErr('This account is not permitted to sign in.');
-            setBusy(false);
-            return;
-          }
-          onLogin(auth);
+      // Phase 0 (RLS hardening): credentials are verified server-side by the
+      // `login` edge function (service role). The browser never reads password
+      // material; it receives a safe profile + a signed session token.
+      const res = await fetch(`${cfg.supabaseUrl}/functions/v1/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: cfg.supabaseAnonKey
+        },
+        body: JSON.stringify({
+          username: u,
+          password
+        })
+      });
+      if (res.ok) {
+        const {
+          user,
+          token
+        } = await res.json();
+        const role = user.role || 'staff';
+        // Post-merger: admins land in the System side of this same app; no
+        // external redirect needed. Only reject roles that can access neither.
+        if (!canUseScheduler(role) && !canUseAdminSystem(role)) {
+          setErr('This account is not permitted to sign in.');
+          setBusy(false);
           return;
         }
+        const auth = {
+          id: user.id,
+          username: user.username,
+          displayName: user.displayName || user.username,
+          role,
+          token,
+          ts: Date.now()
+        };
+        try {
+          localStorage.setItem(AUTH_KEY, JSON.stringify(auth));
+        } catch (_) {}
+        onLogin(auth);
+        return;
       }
-      setErr('Invalid username or password.');
+      setErr(res.status === 401 ? 'Invalid username or password.' : 'Could not sign in. Please try again.');
     } catch (ex) {
       setErr('Could not reach the server. Please try again.');
     } finally {
