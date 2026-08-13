@@ -89,6 +89,14 @@ async function rest(path, opts={}){
   return txt ? JSON.parse(txt) : null;
 }
 async function selectRows(table, select='*', extra=''){ return rest(`${table}?select=${select}${extra}`); }
+// True when a PostgREST error means a column doesn't exist yet (a migration
+// hasn't been run on this deployment). Lets write paths retry with a legacy
+// row shape instead of crashing. Covers PostgREST's schema-cache miss
+// (PGRST204) and Postgres' undefined_column (42703 / "does not exist").
+function isMissingColumnErr(err){
+  const m = (err && err.message) || '';
+  return /PGRST204|42703|schema cache|does not exist/i.test(m);
+}
 // Fetch EVERY row of a table in 1000-row chunks. PostgREST silently caps un-ranged
 // requests at 1000 rows — invoices/payments outgrow that, so all financial tables
 // must load through this helper or records quietly vanish from the UI and reports.
@@ -655,15 +663,45 @@ function App({ currentUser, onLogout }){
     }catch(err){ handleErr(err); alert(err.message||'Failed to reorder categories'); }
   }
 
+  // ── Collision-safe number allocation ───────────────────────────────
+  // The invoice_settings counter can drift out of sync with reality: a
+  // manual DB edit, a deleted-then-recreated invoice, a failed insert that
+  // still bumped the counter, or two devices racing can leave "next_seq"
+  // pointing at a number that's already on a saved row. Reusing it trips a
+  // unique-constraint error (or silently duplicates a human-facing number).
+  // These helpers walk the sequence forward against a FRESH read of the
+  // table until the formatted number is genuinely free, and report how many
+  // numbers were stepped over so the status bar can surface the drift.
+  async function nextFreeInvoiceNumber(sett, startSeq){
+    let seq = Math.max(1, Number(startSeq)||1);
+    const rows = await selectRows('invoices','invoice_number').catch(()=>null);
+    const taken = new Set((rows||invoices||[]).map(i=>i.invoice_number).filter(Boolean));
+    const from = formatInvoiceNumber(sett, seq);
+    let skipped = 0;
+    while(taken.has(formatInvoiceNumber(sett, seq))){ seq++; skipped++; }
+    return { seq, number: formatInvoiceNumber(sett, seq), skipped, from };
+  }
+  async function nextFreeReceiptNumber(sett, startSeq){
+    let seq = Math.max(1, Number(startSeq)||1);
+    const rows = await selectRows('payments','receipt_number').catch(()=>null);
+    const taken = new Set((rows||pmts||[]).map(p=>p.receipt_number).filter(Boolean));
+    const from = formatReceiptNumber(sett, seq);
+    let skipped = 0;
+    while(taken.has(formatReceiptNumber(sett, seq))){ seq++; skipped++; }
+    return { seq, number: formatReceiptNumber(sett, seq), skipped, from };
+  }
+
   // ── Invoice CRUD ───────────────────────────────────────────────────
   async function createInvoice({ accountName, accountEmail, accountPhone, lines, notes, dueDate, branchId }){
     // Read current settings (fresh from DB to get latest seq)
     const settRows = await selectRows('invoice_settings','*').catch(()=>[]);
     const sett = settRows?.[0] || invoiceSettings;
-    const seq = Number(sett.next_invoice_seq)||1;
-    const invoiceNumber = formatInvoiceNumber(sett, seq);
+    const startSeq = Number(sett.next_invoice_seq)||1;
+    // Walk forward past any number already taken (counter drift / races).
+    const { seq, number: invoiceNumber, skipped, from } = await nextFreeInvoiceNumber(sett, startSeq);
     // Increment counter immediately so concurrent creates don't collide
     await patchRows('invoice_settings',{id:1},{next_invoice_seq: seq+1}).catch(()=>{});
+    if(skipped) setStatus(`Invoice # ${from} was already taken — skipped ${skipped} number${skipped===1?'':'s'} to ${invoiceNumber}.`);
     const totalAmount = lines.reduce((s,l)=>s+Number(l.amount||0),0);
     const now = new Date();
     const inserted = await insertRows('invoices',{
@@ -715,9 +753,11 @@ function App({ currentUser, onLogout }){
     // Read current settings (fresh) for receipt number
     const settRows = await selectRows('invoice_settings','*').catch(()=>[]);
     const sett = settRows?.[0] || invoiceSettings;
-    const seq = Number(sett.next_receipt_seq)||1;
-    const receiptNumber = formatReceiptNumber(sett, seq);
+    const startSeq = Number(sett.next_receipt_seq)||1;
+    // Walk forward past any receipt number already taken (counter drift / races).
+    const { seq, number: receiptNumber, skipped, from } = await nextFreeReceiptNumber(sett, startSeq);
     await patchRows('invoice_settings',{id:1},{next_receipt_seq: seq+1}).catch(()=>{});
+    if(skipped) setStatus(`Receipt # ${from} was already taken — skipped ${skipped} number${skipped===1?'':'s'} to ${receiptNumber}.`);
     const inserted = await insertRows('payments',{
       invoice_id:invoiceId, receipt_number:receiptNumber,
       amount:Number(amount), payment_date:paymentDate||todayStr(),
@@ -827,9 +867,11 @@ function App({ currentUser, onLogout }){
     try{
       const settRows = await selectRows('invoice_settings','*').catch(()=>[]);
       const sett = settRows?.[0] || invoiceSettings;
-      const seq = Number(sett.next_receipt_seq) || 1;
-      const receiptNumber = formatReceiptNumber(sett, seq);
+      const startSeq = Number(sett.next_receipt_seq) || 1;
+      // Walk forward past any receipt number already taken (counter drift / races).
+      const { seq, number: receiptNumber, skipped, from } = await nextFreeReceiptNumber(sett, startSeq);
       await patchRows('invoice_settings',{id:1},{next_receipt_seq: seq+1}).catch(()=>{});
+      if(skipped) setStatus(`Receipt # ${from} was already taken — skipped ${skipped} number${skipped===1?'':'s'} to ${receiptNumber}.`);
       await insertRows('payments',{
         invoice_id: invoiceId, receipt_number: receiptNumber, kind: 'refund',
         amount: -amt, payment_date: refundDate || todayStr(),
@@ -1805,12 +1847,20 @@ function App({ currentUser, onLogout }){
     } catch(e){ console.warn('T&C acceptances not available (run the student profile migration):', e?.message || e); setTcAcceptances([]); }
   }
 
-  async function saveTcAcceptance({ studentId, guardianName, guardianEmail, lessonTypeName }){
+  async function saveTcAcceptance({ studentId, guardianName, guardianEmail, lessonTypeName, signatureName, signedVia }){
     try{
       const acceptanceId = `TC-${Date.now().toString(36).toUpperCase().slice(-7)}`;
       const now = new Date().toISOString();
-      // Upsert — one record per swimmer, updates on re-acceptance.
-      await rest('tc_acceptances?on_conflict=student_id', { method:'POST', headers:{ Prefer:'return=representation,resolution=merge-duplicates' }, body: JSON.stringify([{ student_id:studentId, acceptance_id:acceptanceId, accepted_at:now, guardian_name:guardianName, guardian_email:guardianEmail, lesson_type_name:lessonTypeName }]) });
+      const ua = (typeof navigator !== 'undefined' && navigator.userAgent) ? navigator.userAgent.slice(0,300) : null;
+      // Legacy row shape — always accepted. Digital-signature columns are
+      // spliced on top only when the migration has been run.
+      const legacyRow = { student_id:studentId, acceptance_id:acceptanceId, accepted_at:now, guardian_name:guardianName, guardian_email:guardianEmail||null, lesson_type_name:lessonTypeName };
+      const fullRow = { ...legacyRow, signature_name:(signatureName||guardianName||'').trim()||null, signed_via:signedVia||'app', user_agent:ua };
+      const upsert = (row) => rest('tc_acceptances?on_conflict=student_id', { method:'POST', headers:{ Prefer:'return=representation,resolution=merge-duplicates' }, body: JSON.stringify([row]) });
+      // Try the full row; if the signature columns aren't there yet, fall
+      // back to the legacy shape so signing still works pre-migration.
+      try{ await upsert(fullRow); }
+      catch(e){ if(isMissingColumnErr(e)) await upsert(legacyRow); else throw e; }
       // Mirror acceptance info onto the student row for quick list display.
       await patchRows('students', { id: studentId }, { tc_accepted_at: now, tc_acceptance_id: acceptanceId });
       await Promise.all([loadTcAcceptances(), loadStudents()]);
@@ -8746,6 +8796,7 @@ function TermsAdminView({ branches, currentBranchId, defaultTerms, onSave }){
 function TCView({ students, lessonTypes, lessonTypeById, onSaveAcceptance }){
   const [studentId, setStudentId] = useState('');
   const [agreed, setAgreed] = useState(false);
+  const [sigName, setSigName] = useState('');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(null); // { acceptanceId, studentName, email }
   const [scrolled, setScrolled] = useState(false);
@@ -8753,15 +8804,23 @@ function TCView({ students, lessonTypes, lessonTypeById, onSaveAcceptance }){
   const student = students.find(s => s.id === studentId) || null;
   const lt = student?.lessonTypeIds?.[0] ? lessonTypeById(student.lessonTypeIds[0]) : null;
   const alreadySigned = !!student?.tcAcceptedAt;
+  // Digital signature: the typed name must match the guardian name on file
+  // (falls back to the swimmer's own name for adult self-enrolment).
+  const onFileName = (student?.guardianName || student?.name || '').trim();
+  const sigMatches = !!sigName.trim() && sigName.trim().toLowerCase() === onFileName.toLowerCase();
 
   function handleScroll(e){ if(e.target.scrollTop + e.target.clientHeight >= e.target.scrollHeight - 40) setScrolled(true); }
 
   async function handleAccept(){
     if(!student || !agreed || busy) return;
-    if(!student.guardianEmail){ alert('No guardian email on file — please add an email address to this swimmer\'s profile before signing the T&C.'); return; }
+    if(!sigMatches){ alert(`To sign, type the guardian name exactly as on file: "${onFileName}".`); return; }
     try{
       setBusy(true);
-      const acceptanceId = await onSaveAcceptance({ studentId: student.id, guardianName: student.guardianName || student.name, guardianEmail: student.guardianEmail, lessonTypeName: lt?.name || '—' });
+      const acceptanceId = await onSaveAcceptance({ studentId: student.id, guardianName: student.guardianName || student.name, guardianEmail: student.guardianEmail || null, lessonTypeName: lt?.name || '—', signatureName: sigName.trim(), signedVia: 'app' });
+      // Optional confirmation email — only when a guardian email is on file.
+      // A missing email no longer blocks signing (the typed signature is the
+      // binding record); we simply skip the mailto step.
+      if(!student.guardianEmail){ setDone({ acceptanceId, studentName: student.name, email: null }); setAgreed(false); setScrolled(false); setSigName(''); return; }
       const subj = encodeURIComponent(`Swimming Lesson Terms & Conditions — ${student.name} — ${TC_COMPANY}`);
       const dateStr = new Date().toLocaleString('en-MY', { dateStyle:'long', timeStyle:'short' });
       const emailBody = encodeURIComponent(
@@ -8796,7 +8855,7 @@ Warm regards,
 ${TC_COMPANY} Administration`);
       window.open(`mailto:${encodeURIComponent(student.guardianEmail)}?subject=${subj}&body=${emailBody}`);
       setDone({ acceptanceId, studentName: student.name, email: student.guardianEmail });
-      setAgreed(false); setScrolled(false);
+      setAgreed(false); setScrolled(false); setSigName('');
     } catch(e){ alert(e?.message || 'Failed to record acceptance'); }
     finally{ setBusy(false); }
   }
@@ -8813,7 +8872,7 @@ ${TC_COMPANY} Administration`);
             fallbackLabel={null}
             studentById={Object.fromEntries(students.map(s=>[s.id,s]))}
             candidates={students.filter(s=>!s.tcAcceptedAt).slice().sort((a,b)=>a.name.localeCompare(b.name))}
-            onPick={(stu)=>{ setStudentId(stu?stu.id:''); setAgreed(false); setScrolled(false); setDone(null); }}
+            onPick={(stu)=>{ setStudentId(stu?stu.id:''); setAgreed(false); setScrolled(false); setSigName(''); setDone(null); }}
             conflict={null}
           />
           <div className="hint" style={{marginTop:4}}>Only swimmers without a signed T&amp;C are shown. Already-signed swimmers are filtered out.</div>
@@ -8845,7 +8904,9 @@ ${TC_COMPANY} Administration`);
       ? <div className="card tc-success">
           <div style={{fontSize:20,fontWeight:800,marginBottom:6}}>✅ Accepted — {done.studentName}</div>
           <div className="small">Acceptance ID: <strong>{done.acceptanceId}</strong></div>
-          <div className="small subtle" style={{marginTop:4}}>Your email client has been opened with a confirmation email pre-addressed to <strong>{done.email}</strong>. Please review and click Send. The email instructs them to reply if they do not agree.</div>
+          {done.email
+            ? <div className="small subtle" style={{marginTop:4}}>Your email client has been opened with a confirmation email pre-addressed to <strong>{done.email}</strong>. Please review and click Send. The email instructs them to reply if they do not agree.</div>
+            : <div className="small subtle" style={{marginTop:4}}>Signature recorded. No guardian email is on file, so no confirmation email was sent — add one in the Swimmers tab if you'd like a copy emailed on the next signing.</div>}
           <button className="btn btn-ghost small" style={{marginTop:10}} onClick={()=>setDone(null)}>Sign another swimmer</button>
         </div>
       : <div className="card">
@@ -8854,12 +8915,26 @@ ${TC_COMPANY} Administration`);
             <span>I have read and fully understood the Terms &amp; Conditions of {TC_COMPANY}. I agree to be bound by this Agreement on behalf of myself and/or the enrolled swimmer named above, and confirm all information provided is accurate.</span>
           </label>
           {!scrolled && <div className="small subtle" style={{marginTop:6,marginLeft:28}}>Please scroll through the full document above before accepting.</div>}
+          {/* Digital signature — typed name must match the on-file guardian name. */}
+          <div className="field" style={{marginTop:14,opacity:(scrolled&&agreed&&student)?1:0.4,transition:'opacity .2s'}}>
+            <label>Digital signature — type the guardian's full name to sign</label>
+            <input
+              type="text"
+              value={sigName}
+              disabled={!scrolled||!agreed||!student}
+              onChange={e=>setSigName(e.target.value)}
+              placeholder={student?`Type "${onFileName}" to sign`:'Select a swimmer first'}
+              style={{fontFamily:'"Segoe Script","Brush Script MT",cursive',fontSize:18}}
+            />
+            {student && sigName.trim() && !sigMatches && <div className="hint" style={{color:'var(--red-tx)',marginTop:4}}>⚠ Must match the guardian name on file: <strong>{onFileName}</strong></div>}
+            {student && sigMatches && <div className="hint" style={{color:'var(--green-tx)',marginTop:4}}>✓ Signature matches — ready to accept.</div>}
+          </div>
           <div style={{display:'flex',justifyContent:'flex-end',marginTop:14}}>
-            <button className="btn btn-primary" disabled={!agreed||!student||busy||!student.guardianEmail} onClick={handleAccept} style={{padding:'10px 24px',fontSize:15}}>
+            <button className="btn btn-primary" disabled={!agreed||!student||busy||!sigMatches} onClick={handleAccept} style={{padding:'10px 24px',fontSize:15}}>
               {busy ? 'Processing…' : '✍️ I Accept These Terms'}
             </button>
           </div>
-          {student && !student.guardianEmail && <div className="hint" style={{color:'var(--red-tx)',marginTop:6,textAlign:'right'}}>⚠ A guardian email address is required before accepting.</div>}
+          {student && !student.guardianEmail && <div className="hint" style={{marginTop:6,textAlign:'right'}}>No guardian email on file — signing still works; a confirmation email just won't be sent.</div>}
         </div>}
   </div>;
 }

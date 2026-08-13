@@ -22,6 +22,13 @@ async function patchRows(table, match, payload){
   const q = Object.entries(match).map(([k,v]) => `&${encodeURIComponent(k)}=eq.${encodeURIComponent(v)}`).join('');
   return rest(`${table}?select=*${q}`, { method:'PATCH', headers:{ Prefer:'return=representation' }, body: JSON.stringify(payload) });
 }
+// True when a PostgREST error means a column doesn't exist yet (the T&C
+// digital-signature migration hasn't been run on this deployment). Lets the
+// acceptance write retry with the legacy row shape instead of failing.
+function isMissingColumnErr(err){
+  const m = (err && err.message) || '';
+  return /PGRST204|42703|schema cache|does not exist/i.test(m);
+}
 
 // ── Date / age helpers (must match app.js logic so the admin app sees
 // the same computed age that's shown on this form) ──
@@ -123,6 +130,10 @@ function IntakeForm(){
 
   const [tcOpen, setTcOpen] = useState(false);
   const [tcAccepted, setTcAccepted] = useState(false);
+  // Digital signature — guardian types their full name to sign. Must match
+  // the Parent / Guardian name entered above; recorded as the acceptance's
+  // signature_name for the audit trail.
+  const [sigName, setSigName] = useState('');
   // Referral / discount code captured at intake (free-text, optional). Validation
   // and redemption happen later at invoice time; we just record what was given.
   const [referralCode, setReferralCode] = useState('');
@@ -151,6 +162,8 @@ function IntakeForm(){
       if(!eRel.trim()) return 'Please enter the emergency contact relationship (or check "Same as Parent/Guardian").';
     }
     if(!tcAccepted) return 'Please read and accept the Terms & Conditions to submit.';
+    if(!sigName.trim()) return 'Please type your full name to sign the Terms & Conditions.';
+    if(sigName.trim().toLowerCase() !== gName.trim().toLowerCase()) return 'Your typed signature must match the Parent / Guardian name entered above.';
     return null;
   }
 
@@ -198,12 +211,19 @@ function IntakeForm(){
         if(studentId){
           const acceptanceId = `TC-${Date.now().toString(36).toUpperCase().slice(-7)}`;
           const acceptedAt = new Date().toISOString();
+          const ua = (typeof navigator !== 'undefined' && navigator.userAgent) ? navigator.userAgent.slice(0,300) : null;
+          // Legacy row shape (always accepted) + digital-signature columns
+          // spliced on top. Retries legacy if the migration hasn't been run.
+          const legacyRow = { student_id: studentId, acceptance_id: acceptanceId, accepted_at: acceptedAt, guardian_name: gName.trim(), guardian_email: gEmail.trim(), lesson_type_name: null };
+          const fullRow = { ...legacyRow, signature_name: sigName.trim(), signed_via: 'intake', user_agent: ua };
+          const upsert = (row) => rest('tc_acceptances?on_conflict=student_id', {
+            method:'POST',
+            headers:{ Prefer:'return=representation,resolution=merge-duplicates' },
+            body: JSON.stringify([row])
+          });
           try{
-            await rest('tc_acceptances?on_conflict=student_id', {
-              method:'POST',
-              headers:{ Prefer:'return=representation,resolution=merge-duplicates' },
-              body: JSON.stringify([{ student_id: studentId, acceptance_id: acceptanceId, accepted_at: acceptedAt, guardian_name: gName.trim(), guardian_email: gEmail.trim(), lesson_type_name: null }])
-            });
+            try{ await upsert(fullRow); }
+            catch(e){ if(isMissingColumnErr(e)) await upsert(legacyRow); else throw e; }
             await patchRows('students', { id: studentId }, { tc_accepted_at: acceptedAt, tc_acceptance_id: acceptanceId });
           } catch(e){ console.warn('TC acceptance failed for', c.name, e); }
           registered.push({ name: c.name.trim(), age: computedAge, acceptanceId });
@@ -222,7 +242,7 @@ function IntakeForm(){
     setGName(''); setGEmail(''); setGPhone('');
     setChildren([{ name:'', dob:'', gender:null }]);
     setSameAsGuardian(false); setEName(''); setEPhone(''); setERel('');
-    setTcAccepted(false); setTcOpen(false); setReferralCode('');
+    setTcAccepted(false); setTcOpen(false); setReferralCode(''); setSigName('');
     setErr(''); setDone(null);
     window.scrollTo({ top:0, behavior:'smooth' });
   }
@@ -341,6 +361,19 @@ function IntakeForm(){
         <input type="checkbox" checked={tcAccepted} onChange={e=>setTcAccepted(e.target.checked)} />
         <span className="check-row-text">I have read and fully understood the Terms &amp; Conditions of <strong>{TC_COMPANY}</strong>. I agree to be bound by this Agreement on behalf of myself and/or the enrolled swimmer(s) above, and confirm all information provided is accurate.</span>
       </label>
+      {/* Digital signature — typed name must match the guardian name above. */}
+      <div className="field" style={{marginTop:12}}>
+        <label>Digital Signature<span className="req">*</span> — type your full name to sign</label>
+        <input
+          className="input"
+          value={sigName}
+          onChange={e=>setSigName(e.target.value)}
+          placeholder={gName.trim() ? `Type "${gName.trim()}" to sign` : 'Enter the Parent / Guardian name above first'}
+          style={{fontFamily:'"Segoe Script","Brush Script MT",cursive',fontSize:18}}
+        />
+        {sigName.trim() && gName.trim() && sigName.trim().toLowerCase() !== gName.trim().toLowerCase() &&
+          <div className="hint" style={{color:'#b91c1c',marginTop:4}}>⚠ Must match the Parent / Guardian name above: <strong>{gName.trim()}</strong></div>}
+      </div>
     </div>
 
     <button type="button" className="submit-btn" onClick={handleSubmit} disabled={submitting}>
