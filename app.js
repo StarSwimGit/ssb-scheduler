@@ -12986,8 +12986,14 @@ const ADMIN_SYSTEM_URL='https://system.mystarswim.com/';
 //   admin          — Admin & Procurement system only.
 function canUseScheduler(role){ return role==='sysadmin' || role==='schedule_admin'; }
 function canUseAdminSystem(role){ return role==='sysadmin' || role==='admin'; }
-// Password hashing/verification is server-side only (login edge function).
-// The browser deliberately holds no hashing helper for staff credentials.
+// Legacy client-side hash — used ONLY by the login fallback below, for the
+// window between shipping the edge-function wiring and deploying the `login`
+// function. Once app_users is locked down (Phase 0 SQL), this path reads no
+// rows and the server function is authoritative. Remove after Phase 0 lands.
+async function sha256Hex(str){
+  const buf=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
 function readAuth(){
   try{
     const raw=localStorage.getItem(AUTH_KEY);
@@ -13012,27 +13018,46 @@ function LoginView({ onLogin }){
       // Phase 0 (RLS hardening): credentials are verified server-side by the
       // `login` edge function (service role). The browser never reads password
       // material; it receives a safe profile + a signed session token.
-      const res=await fetch(`${cfg.supabaseUrl}/functions/v1/login`, {
-        method:'POST',
-        headers:{ 'Content-Type':'application/json', apikey: cfg.supabaseAnonKey },
-        body: JSON.stringify({ username:u, password })
-      });
-      if(res.ok){
-        const { user, token }=await res.json();
-        const role=user.role||'staff';
-        // Post-merger: admins land in the System side of this same app; no
-        // external redirect needed. Only reject roles that can access neither.
-        if(!canUseScheduler(role) && !canUseAdminSystem(role)){
-          setErr('This account is not permitted to sign in.');
-          setBusy(false);
-          return;
+      let user=null, token=null, viaFn=false;
+      try{
+        const res=await fetch(`${cfg.supabaseUrl}/functions/v1/login`, {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', apikey: cfg.supabaseAnonKey },
+          body: JSON.stringify({ username:u, password })
+        });
+        if(res.status===401){ setErr('Invalid username or password.'); setBusy(false); return; }
+        if(res.ok){ const d=await res.json(); user=d.user; token=d.token; viaFn=true; }
+        // Any other status (e.g. 404 before the function is deployed) falls
+        // through to the legacy path below.
+      }catch(_){ /* function unreachable — fall through to legacy path */ }
+
+      // Legacy fallback — active only until the `login` function is deployed.
+      // After the Phase 0 SQL lock, this read returns no rows and is inert.
+      if(!viaFn){
+        const rows=await selectRows('app_users','*',`&username=eq.${encodeURIComponent(u)}&is_active=eq.true`).catch(()=>[]);
+        const row=rows?.[0];
+        if(row){
+          const hash=await sha256Hex((row.password_salt||'')+password);
+          if(hash===row.password_hash){
+            user={ id:row.id, username:row.username, displayName:row.display_name||row.username, role:row.role||'staff' };
+            patchRows('app_users',{id:row.id},{last_login_at:new Date().toISOString()}).catch(()=>{});
+          }
         }
-        const auth={ id:user.id, username:user.username, displayName:user.displayName||user.username, role, token, ts:Date.now() };
-        try{ localStorage.setItem(AUTH_KEY, JSON.stringify(auth)); }catch(_){}
-        onLogin(auth);
+      }
+
+      if(!user){ setErr('Invalid username or password.'); setBusy(false); return; }
+      const role=user.role||'staff';
+      // Post-merger: admins land in the System side of this same app; no
+      // external redirect needed. Only reject roles that can access neither.
+      if(!canUseScheduler(role) && !canUseAdminSystem(role)){
+        setErr('This account is not permitted to sign in.');
+        setBusy(false);
         return;
       }
-      setErr(res.status===401 ? 'Invalid username or password.' : 'Could not sign in. Please try again.');
+      const auth={ id:user.id, username:user.username, displayName:user.displayName||user.username, role, token:token||null, ts:Date.now() };
+      try{ localStorage.setItem(AUTH_KEY, JSON.stringify(auth)); }catch(_){}
+      onLogin(auth);
+      return;
     }catch(ex){ setErr('Could not reach the server. Please try again.'); }
     finally{ setBusy(false); }
   }

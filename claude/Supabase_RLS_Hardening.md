@@ -206,6 +206,17 @@ localStorage.setItem(AUTH_KEY, JSON.stringify(auth));
 function verifies the token is a `sysadmin` session before acting, and `patch`
 whitelists mutable fields (`role`, `is_active`, `display_name`).
 
+**Transitional login fallback (shipped).** So the app wiring could go to
+`main` before the functions are deployed without locking anyone out, the login
+flow tries `/functions/v1/login` first and **falls back to the legacy
+client-side `app_users` check** on any non-200/401 (e.g. a 404 before the
+function exists). Behaviour while the function is absent is identical to today;
+it upgrades automatically once the function is deployed; and after the Phase 0
+SQL lock the fallback read returns no rows, leaving the function authoritative.
+Remove the fallback (and the legacy `sha256Hex` helper) once Phase 0 is fully
+landed. **Note:** the Settings › Users panel has no such fallback — it is
+sysadmin-only and simply inert until the `admin-users` function is deployed.
+
 Once §6 is live and verified, apply the Phase 0 SQL (§4, step 4).
 
 ---
